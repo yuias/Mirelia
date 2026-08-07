@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Headless harness: every library operation must be exercisable here
+       without the UI. Also the fastest test bed for scan/query semantics. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>mirelia-cli</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mirelia.Library\Mirelia.Library.csproj" />
+    <ProjectReference Include="..\Mirelia.Query\Mirelia.Query.csproj" />
+    <ProjectReference Include="..\Mirelia.AudioBridge\Mirelia.AudioBridge.csproj" />
+  </ItemGroup>
+
+</Project>

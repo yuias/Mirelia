@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Mirelia.App/Mirelia.App.csproj" />
+    <Project Path="src/Mirelia.AudioBridge/Mirelia.AudioBridge.csproj" />
+    <Project Path="src/Mirelia.Cli/Mirelia.Cli.csproj" />
+    <Project Path="src/Mirelia.Library/Mirelia.Library.csproj" />
+    <Project Path="src/Mirelia.Query/Mirelia.Query.csproj" />
+    <Project Path="src/Mirelia.Sync/Mirelia.Sync.csproj" />
+  </Folder>
+</Solution>

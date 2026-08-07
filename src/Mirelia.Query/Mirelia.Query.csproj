@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- DSL parser and expression-tree-to-SQL compiler. -->
+
+</Project>

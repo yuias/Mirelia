@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Domain, scanning, tags, DB, query engine. Must never depend on Avalonia. -->
+
+</Project>

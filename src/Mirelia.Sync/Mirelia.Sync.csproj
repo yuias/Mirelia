@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- OpenSubsonic-compatible HTTP sync server. Becomes an ASP.NET Core
+       minimal-API host at M7; a plain class library until then. -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mirelia.Library\Mirelia.Library.csproj" />
+  </ItemGroup>
+
+</Project>
