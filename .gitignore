@@ -56,5 +56,11 @@ CodeCoverage/
 TestResult.xml
 nunit-*.xml
 
+# Rust
+native/audio-core-rs/target/
+
+# CMake out-of-source builds
+build/
+
 # Claude CodeCoverage
 .claude/
