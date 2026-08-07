@@ -41,8 +41,9 @@ CREATE TABLE track (
     year              INTEGER,
     date_text         TEXT,                      -- original, unparsed
 
-    -- sorting -------------------------------------------------------------
+    -- sorting / matching --------------------------------------------------
     title_sort        TEXT NOT NULL,
+    title_search      TEXT NOT NULL DEFAULT '',   -- normalized for =~ matching
     -- (album/artist sort keys live on their own tables)
 
     -- technical -----------------------------------------------------------
@@ -85,27 +86,32 @@ CREATE INDEX ix_track_fileid ON track(volume_id, file_id);
 -- Interned string tables. UNIQUE(name) keeps the string heap small and makes
 -- browse-by-artist a plain index scan.
 CREATE TABLE artist (
-    id        INTEGER PRIMARY KEY,
-    name      TEXT NOT NULL UNIQUE,
-    name_sort TEXT NOT NULL
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    name_sort   TEXT NOT NULL,
+    name_search TEXT NOT NULL
 );
 CREATE TABLE album (
     id              INTEGER PRIMARY KEY,
     name            TEXT NOT NULL,
     name_sort       TEXT NOT NULL,
+    name_search     TEXT NOT NULL,
     album_artist_id INTEGER REFERENCES artist(id),
     UNIQUE(name, album_artist_id)
 );
 CREATE TABLE genre (
-    id        INTEGER PRIMARY KEY,
-    name      TEXT NOT NULL UNIQUE,
-    name_sort TEXT NOT NULL
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    name_sort   TEXT NOT NULL,
+    name_search TEXT NOT NULL
 );
 
 -- Full-text search over the fields users actually type into the search box.
+-- contentless_delete requires SQLite 3.43+; LibraryDatabase.Open asserts it.
 CREATE VIRTUAL TABLE track_fts USING fts5(
     title, artist, album, album_artist, composer, genre,
-    content='', tokenize='unicode61 remove_diacritics 2'
+    content='', contentless_delete=1,
+    tokenize='unicode61 remove_diacritics 2'
 );
 
 CREATE TABLE playlist (
@@ -153,15 +159,15 @@ Notes:
 - `library_generation` is a monotonically increasing counter bumped on any
   write that could change smart-playlist membership. Cached smart-playlist
   results are keyed on it.
-- Sort-key derivation rules live in the kickoff §4.4 and will move here when
-  the scanner lands (M1). The `*_sort` columns exist from v1 so yomi
-  backfill never requires a rescan.
-- `*_search` shadow columns for normalized matching (`=~`) are added
-  alongside the scanner in M1 and will be recorded as schema v2 if they miss
-  the v1 cut.
+- Sort keys: explicit sort tag (normalized) wins; otherwise derived via
+  NFKC → katakana→hiragana → casefold → leading-article strip. The rules
+  live in `Mirelia.Query.Text.TextNormalizer` — write side (scanner) and
+  read side (`=~` compiler) share them by construction.
+- `*_search` shadow columns hold the same normalization applied to the raw
+  value, without article stripping.
 
 ## Migration log
 
 | Version | Date | Change |
 |---|---|---|
-| 1 | 2026-08-08 | Initial schema (not yet applied by code; scanner lands in M1) |
+| 1 | 2026-08-08 | Initial schema, applied by `LibraryDatabase.Open` |

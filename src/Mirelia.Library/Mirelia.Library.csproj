@@ -1,5 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Domain, scanning, tags, DB, query engine. Must never depend on Avalonia. -->
+  <!-- Domain, scanning, tags, DB, query execution. Must never depend on Avalonia. -->
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />
+    <PackageReference Include="TagLibSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Mirelia.Query\Mirelia.Query.csproj" />
+  </ItemGroup>
 
 </Project>

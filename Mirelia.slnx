@@ -7,4 +7,8 @@
     <Project Path="src/Mirelia.Query/Mirelia.Query.csproj" />
     <Project Path="src/Mirelia.Sync/Mirelia.Sync.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Mirelia.Library.Tests/Mirelia.Library.Tests.csproj" />
+    <Project Path="tests/Mirelia.Query.Tests/Mirelia.Query.Tests.csproj" />
+  </Folder>
 </Solution>
