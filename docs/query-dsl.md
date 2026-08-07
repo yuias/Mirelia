@@ -7,6 +7,21 @@ editor are two views of one thing and must round-trip through it.
 Status: grammar frozen at kickoff; field vocabulary grows during M1/M4.
 Implementation lives in `src/Mirelia.Query`.
 
+## v1 implementation decisions
+
+- `any(...)` accepts a **quoted string only** (the grammar's inner `or_expr`
+  is reserved for a later version).
+- A bare number on a duration field means **seconds** (`duration > 180` ==
+  `duration > 180s`).
+- Relative-date units `mo` and `y` are fixed 30-day / 365-day approximations;
+  calendar-aware arithmetic is post-v1.
+- `~=` (regex) matches the raw column value, case-insensitively, with a
+  bounded execution time; the other text operators match the normalized
+  `*_search` shadow columns.
+- `@now` is resolved when the query is compiled, not per row.
+- Keywords are case-insensitive on input; the canonical printed form
+  uppercases keywords and lowercases field names.
+
 ## Grammar
 
 ```ebnf
