@@ -1,13 +1,35 @@
 using System.Reflection;
 using Mirelia.AudioBridge;
+using Mirelia.Library.Database;
+using Mirelia.Library.Querying;
+using Mirelia.Library.Scanning;
+using Mirelia.Query.Compilation;
+using Mirelia.Query.Parsing;
 
 return args switch
 {
     ["--version"] or ["-v"] => PrintVersion(),
     ["native-smoke"] => NativeSmoke(),
+    ["scan", var dir, .. var rest] => Scan(dir, ParseDbOption(rest)),
+    ["query", var dsl, .. var rest] => RunQuery(dsl, ParseDbOption(rest)),
     [] or ["--help"] or ["-h"] => PrintHelp(0),
     _ => PrintHelp(2),
 };
+
+static string? ParseDbOption(string[] rest) => rest switch
+{
+    ["--db", var path] => path,
+    [] => null,
+    _ => throw new ArgumentException($"Unknown arguments: {string.Join(' ', rest)}"),
+};
+
+static string DefaultDbPath()
+{
+    return Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "Mirelia",
+        "library.db");
+}
 
 static int PrintVersion()
 {
@@ -35,6 +57,72 @@ static int NativeSmoke()
     }
 }
 
+static int Scan(string dir, string? dbPath)
+{
+    if (!Directory.Exists(dir))
+    {
+        Console.Error.WriteLine($"scan: directory not found: {dir}");
+        return 1;
+    }
+
+    string db = dbPath ?? DefaultDbPath();
+    Console.WriteLine($"scanning {dir} into {db}");
+
+    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    using var database = LibraryDatabase.Open(db);
+    var scanner = new LibraryScanner(database);
+    int lastReported = 0;
+    ScanResult result = scanner.Scan(dir, new Progress<int>(n =>
+    {
+        if (n - lastReported >= 500)
+        {
+            lastReported = n;
+            Console.WriteLine($"  {n} files...");
+        }
+    }));
+    stopwatch.Stop();
+
+    Console.WriteLine(
+        $"done in {stopwatch.Elapsed.TotalSeconds:F1}s: " +
+        $"{result.Added} added, {result.Updated} updated, " +
+        $"{result.Unchanged} unchanged, {result.Skipped} skipped");
+    return 0;
+}
+
+static int RunQuery(string dsl, string? dbPath)
+{
+    string db = dbPath ?? DefaultDbPath();
+    if (!File.Exists(db))
+    {
+        Console.Error.WriteLine($"query: database not found: {db} (run scan first)");
+        return 1;
+    }
+
+    CompiledQuery compiled;
+    try
+    {
+        compiled = SqlCompiler.Compile(QueryParser.Parse(dsl));
+    }
+    catch (Exception ex) when (ex is QueryParseException or QueryCompileException)
+    {
+        Console.Error.WriteLine($"query: {ex.Message}");
+        return 1;
+    }
+
+    using var database = LibraryDatabase.Open(db);
+    List<long> ids = TrackQueryRunner.Run(database, compiled);
+    foreach (TrackSummary row in TrackQueryRunner.Hydrate(database, ids))
+    {
+        TimeSpan duration = TimeSpan.FromMilliseconds(row.DurationMs);
+        Console.WriteLine(
+            $"{row.Artist ?? "?"} - {row.Title ?? "?"} [{row.Album ?? "?"}] " +
+            $"({(int)duration.TotalMinutes}:{duration.Seconds:D2})");
+    }
+
+    Console.WriteLine($"{ids.Count} track(s)");
+    return 0;
+}
+
 static int PrintHelp(int exitCode)
 {
     Console.WriteLine(
@@ -42,11 +130,13 @@ static int PrintHelp(int exitCode)
         mirelia-cli — headless Mirelia harness
 
         Usage:
-          mirelia-cli --version      Print the version and exit.
-          mirelia-cli native-smoke   Load the native audio backend and negotiate the ABI.
-          mirelia-cli --help         Show this help.
+          mirelia-cli scan <dir> [--db <path>]     Scan a folder into the library.
+          mirelia-cli query <dsl> [--db <path>]    Run a smart-playlist query.
+          mirelia-cli native-smoke                 Load the native audio backend.
+          mirelia-cli --version                    Print the version and exit.
 
-        Milestone M1 adds: scan <dir>, query '<dsl>'.
+        The default database is %APPDATA%/Mirelia/library.db.
+        Query DSL reference: docs/query-dsl.md
         """);
     return exitCode;
 }
