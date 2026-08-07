@@ -37,6 +37,9 @@ jobs:
       - name: .NET build (warnings as errors)
         run: dotnet build Mirelia.slnx -warnaserror
 
+      - name: .NET tests
+        run: dotnet test Mirelia.slnx --no-build
+
       - name: CLI runs
         run: dotnet run --project src/Mirelia.Cli --no-build -- --version
 
