@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Set up Rust
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup component add clippy
+
+      - name: Cargo build (release)
+        run: cargo build --release --manifest-path native/audio-core-rs/Cargo.toml
+
+      - name: Cargo clippy
+        run: cargo clippy --manifest-path native/audio-core-rs/Cargo.toml --all-targets -- -D warnings
+
+      - name: Cargo test
+        run: cargo test --manifest-path native/audio-core-rs/Cargo.toml
+
+      - name: .NET build (warnings as errors)
+        run: dotnet build Mirelia.slnx -warnaserror
+
+      - name: CLI runs
+        run: dotnet run --project src/Mirelia.Cli --no-build -- --version
+
+      - name: Native smoke test
+        run: dotnet run --project src/Mirelia.Cli --no-build -- native-smoke
+
+      - name: Configure ABI conformance suite
+        run: cmake -S native/tests/abi-conformance -B build/conformance
+
+      - name: Build ABI conformance suite
+        run: cmake --build build/conformance --config Release
+
+      - name: Run ABI conformance suite (Windows)
+        if: runner.os == 'Windows'
+        run: build/conformance/Release/abi-conformance.exe native/audio-core-rs/target/release/audio_core_rs.dll
+
+      - name: Run ABI conformance suite (macOS)
+        if: runner.os == 'macOS'
+        run: build/conformance/abi-conformance native/audio-core-rs/target/release/libaudio_core_rs.dylib
