@@ -1,0 +1,10 @@
+[package]
+name = "mirelia-decode"
+description = "Mirelia decoder layer: symphonia glue, gapless trimming (lands in M2)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

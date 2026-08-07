@@ -1,0 +1,10 @@
+[package]
+name = "mirelia-audio"
+description = "Mirelia audio engine core: graph, ring buffer, clock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
