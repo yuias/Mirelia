@@ -18,6 +18,7 @@ public static class TagReader
 
         return new TrackMetadata
         {
+            DateText = ReadDateText(file),
             Title = Clean(tag.Title),
             Artist = Join(tag.Performers),
             AlbumArtist = Join(tag.AlbumArtists),
@@ -70,6 +71,59 @@ public static class TagReader
     {
         return file.Properties.Codecs.Any(c =>
             c?.Description?.Contains(needle, StringComparison.OrdinalIgnoreCase) == true);
+    }
+
+    /// <summary>
+    /// The raw release-date string (often a full YYYY-MM-DD), which
+    /// TagLib#'s numeric Year property throws away. Checked per tag family.
+    /// </summary>
+    private static string? ReadDateText(TagLib.File file)
+    {
+        if (file.GetTag(TagLib.TagTypes.Id3v2) is TagLib.Id3v2.Tag id3)
+        {
+            foreach (string frameId in (string[])["TDRC", "TDRL", "TYER"])
+            {
+                TagLib.Id3v2.TextInformationFrame? frame =
+                    TagLib.Id3v2.TextInformationFrame.Get(id3, frameId, false);
+                string? text = frame?.Text.FirstOrDefault();
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    return text.Trim();
+                }
+            }
+        }
+
+        if (file.GetTag(TagLib.TagTypes.Apple) is TagLib.Mpeg4.AppleTag apple)
+        {
+            // "©day": 0xA9 'd' 'a' 'y'.
+            string? text = apple
+                .GetText(new TagLib.ByteVector(0xA9, (byte)'d', (byte)'a', (byte)'y'))
+                .FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                return text.Trim();
+            }
+        }
+
+        if (file.GetTag(TagLib.TagTypes.Xiph) is TagLib.Ogg.XiphComment xiph)
+        {
+            string? text = xiph.GetField("DATE").FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                return text.Trim();
+            }
+        }
+
+        if (file.GetTag(TagLib.TagTypes.RiffInfo) is TagLib.Riff.InfoTag info)
+        {
+            string? text = info.GetValuesAsStrings("ICRD").FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                return text.Trim();
+            }
+        }
+
+        return null;
     }
 
     private static string? Clean(string? s)

@@ -12,7 +12,7 @@ return args switch
 {
     ["--version"] or ["-v"] => PrintVersion(),
     ["native-smoke"] => NativeSmoke(),
-    ["scan", var dir, .. var rest] => Scan(dir, ParseDbOption(rest)),
+    ["scan", var dir, .. var rest] => Scan(dir, rest),
     ["query", var dsl, .. var rest] => RunQuery(dsl, ParseDbOption(rest)),
     ["play", var file] => Play(file, exclusive: false),
     ["play", var file, "--exclusive"] => Play(file, exclusive: true),
@@ -77,8 +77,16 @@ static int NativeSmoke()
     }
 }
 
-static int Scan(string dir, string? dbPath)
+static int Scan(string dir, string[] rest)
 {
+    (rest, string? dbPath) = ExtractDbOption(rest);
+    bool force = rest.Contains("--force");
+    if (rest.Any(a => a != "--force"))
+    {
+        Console.Error.WriteLine($"scan: unknown arguments: {string.Join(' ', rest)}");
+        return 2;
+    }
+
     if (!Directory.Exists(dir))
     {
         Console.Error.WriteLine($"scan: directory not found: {dir}");
@@ -86,7 +94,7 @@ static int Scan(string dir, string? dbPath)
     }
 
     string db = dbPath ?? DefaultDbPath();
-    Console.WriteLine($"scanning {dir} into {db}");
+    Console.WriteLine($"scanning {dir} into {db}{(force ? " (force)" : string.Empty)}");
 
     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
     using var database = LibraryDatabase.Open(db);
@@ -99,7 +107,7 @@ static int Scan(string dir, string? dbPath)
             lastReported = n;
             Console.WriteLine($"  {n} files...");
         }
-    }));
+    }), force);
     stopwatch.Stop();
 
     Console.WriteLine(

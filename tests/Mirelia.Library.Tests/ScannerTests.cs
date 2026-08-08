@@ -92,6 +92,33 @@ public sealed class ScannerTests : IDisposable
     }
 
     [Fact]
+    public void FullReleaseDatesSurviveAsDateText()
+    {
+        // The FLAC fixture carries DATE=2021-07-15; the numeric year column
+        // keeps 2021 while date_text preserves the full string.
+        Assert.Equal("2021-07-15", _db.Scalar(
+            "SELECT date_text FROM track WHERE codec = 'flac'"));
+        Assert.Equal(2021L, _db.Scalar(
+            "SELECT year FROM track WHERE codec = 'flac'"));
+    }
+
+    [Fact]
+    public void ForcedRescanRereadsUnchangedFiles()
+    {
+        _db.Execute("UPDATE track SET date_text = NULL");
+        ScanResult forced = new LibraryScanner(_db).Scan(_workDir, force: true);
+        Assert.Equal(5, forced.Updated);
+        Assert.Equal("2021-07-15", _db.Scalar(
+            "SELECT date_text FROM track WHERE codec = 'flac'"));
+    }
+
+    [Fact]
+    public void ScanRemembersWatchFolders()
+    {
+        Assert.Contains(Path.GetFullPath(_workDir), LibraryScanner.GetWatchFolders(_db));
+    }
+
+    [Fact]
     public void WavRiffInfoArtistLandsOnArtist()
     {
         // TagLib# surfaces RIFF INFO's IART as album artist; the scanner

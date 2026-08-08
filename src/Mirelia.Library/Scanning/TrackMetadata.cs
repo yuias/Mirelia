@@ -49,6 +49,9 @@ public sealed record TrackMetadata
     /// <summary>Release year; null if untagged.</summary>
     public int? Year { get; init; }
 
+    /// <summary>Raw release-date string (often YYYY-MM-DD); null if untagged.</summary>
+    public string? DateText { get; init; }
+
     /// <summary>Duration in milliseconds.</summary>
     public required long DurationMs { get; init; }
 

@@ -14,6 +14,8 @@
     <Menu DockPanel.Dock="Top">
       <MenuItem Header="_File">
         <MenuItem Header="Add Folder…" Click="OnAddFolderClick" />
+        <MenuItem Header="Rescan Library" Click="OnRescanClick"
+                  ToolTip.Tip="Re-reads tags of every file in all scanned folders" />
         <Separator />
         <MenuItem Header="Exit" Click="OnExitClick" />
       </MenuItem>

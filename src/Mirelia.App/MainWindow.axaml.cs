@@ -219,6 +219,14 @@ public partial class MainWindow : Window
 
     private void OnExitClick(object? sender, RoutedEventArgs e) => Close();
 
+    private async void OnRescanClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is { } vm)
+        {
+            await vm.RescanLibraryAsync();
+        }
+    }
+
     private async void OnRgScanClick(object? sender, RoutedEventArgs e)
     {
         if (ViewModel is { } vm)

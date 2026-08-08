@@ -88,8 +88,12 @@ public sealed class LibraryScanner(LibraryDatabase db)
         }
     }
 
-    /// <summary>Scans <paramref name="root"/> recursively.</summary>
-    public ScanResult Scan(string root, IProgress<int>? progress = null)
+    /// <summary>
+    /// Scans <paramref name="root"/> recursively and remembers it as a
+    /// watch folder. With <paramref name="force"/>, unchanged files are
+    /// re-read anyway (tag refresh after scanner improvements).
+    /// </summary>
+    public ScanResult Scan(string root, IProgress<int>? progress = null, bool force = false)
     {
         int added = 0, updated = 0, unchanged = 0, skipped = 0, processed = 0;
 
@@ -102,6 +106,7 @@ public sealed class LibraryScanner(LibraryDatabase db)
         LibraryDatabase.TransactionScope tx = db.BeginTransaction();
         try
         {
+            RememberWatchFolder(root);
             foreach (string path in Directory.EnumerateFiles(root, "*", options))
             {
                 if (!Extensions.Contains(Path.GetExtension(path)))
@@ -109,7 +114,7 @@ public sealed class LibraryScanner(LibraryDatabase db)
                     continue;
                 }
 
-                switch (ScanOne(path))
+                switch (ScanOne(path, force))
                 {
                     case FileOutcome.Added:
                         added++;
@@ -159,7 +164,32 @@ public sealed class LibraryScanner(LibraryDatabase db)
         Skipped,
     }
 
-    private FileOutcome ScanOne(string path)
+    /// <summary>All remembered watch folders.</summary>
+    public static List<string> GetWatchFolders(LibraryDatabase db)
+    {
+        using SqliteCommand cmd = db.Command("SELECT path FROM watch_folder ORDER BY id");
+        using SqliteDataReader reader = cmd.ExecuteReader();
+        var result = new List<string>();
+        while (reader.Read())
+        {
+            result.Add(reader.GetString(0));
+        }
+
+        return result;
+    }
+
+    private void RememberWatchFolder(string root)
+    {
+        db.Execute(
+            """
+            INSERT INTO watch_folder (path, last_scan_unix) VALUES ($p, $now)
+            ON CONFLICT(path) DO UPDATE SET last_scan_unix = excluded.last_scan_unix
+            """,
+            ("$p", Path.GetFullPath(root)),
+            ("$now", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+    }
+
+    private FileOutcome ScanOne(string path, bool force = false)
     {
         var info = new FileInfo(path);
         string fullPath = info.FullName;
@@ -175,7 +205,7 @@ public sealed class LibraryScanner(LibraryDatabase db)
             if (reader.Read())
             {
                 existingId = reader.GetInt64(0);
-                if (reader.GetInt64(1) == info.Length && reader.GetInt64(2) == mtime)
+                if (!force && reader.GetInt64(1) == info.Length && reader.GetInt64(2) == mtime)
                 {
                     return FileOutcome.Unchanged;
                 }
@@ -216,7 +246,7 @@ public sealed class LibraryScanner(LibraryDatabase db)
             INSERT INTO track (
                 path, path_lower, size_bytes, mtime_unix,
                 title, album_id, artist_id, album_artist_id, composer_id, genre_id,
-                track_no, disc_no, year,
+                track_no, disc_no, year, date_text,
                 title_sort, title_search,
                 duration_ms, sample_rate, channels, bit_depth, bitrate_kbps,
                 codec, is_lossless,
@@ -224,7 +254,7 @@ public sealed class LibraryScanner(LibraryDatabase db)
             VALUES (
                 $path, $path_lower, $size, $mtime,
                 $title, $album_id, $artist_id, $album_artist_id, $composer_id, $genre_id,
-                $track_no, $disc_no, $year,
+                $track_no, $disc_no, $year, $date_text,
                 $title_sort, $title_search,
                 $duration_ms, $sample_rate, $channels, $bit_depth, $bitrate_kbps,
                 $codec, $is_lossless,
@@ -242,6 +272,7 @@ public sealed class LibraryScanner(LibraryDatabase db)
                 track_no = excluded.track_no,
                 disc_no = excluded.disc_no,
                 year = excluded.year,
+                date_text = excluded.date_text,
                 title_sort = excluded.title_sort,
                 title_search = excluded.title_search,
                 duration_ms = excluded.duration_ms,
@@ -267,6 +298,7 @@ public sealed class LibraryScanner(LibraryDatabase db)
             ("$track_no", meta.TrackNo),
             ("$disc_no", meta.DiscNo),
             ("$year", meta.Year),
+            ("$date_text", meta.DateText),
             ("$title_sort", titleSort),
             ("$title_search", TextNormalizer.NormalizeSearch(displayTitle)),
             ("$duration_ms", meta.DurationMs),

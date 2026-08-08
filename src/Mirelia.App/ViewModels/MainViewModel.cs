@@ -349,6 +349,24 @@ public sealed partial class MainViewModel : ObservableObject
             (failed > 0 ? $", {failed} failed" : string.Empty);
     }
 
+    /// <summary>Force re-scans all watch folders (tag refresh).</summary>
+    public async Task RescanLibraryAsync()
+    {
+        StatusText = "Rescanning library…";
+        var progress = new Progress<int>(n =>
+        {
+            if (n % 500 == 0)
+            {
+                StatusText = $"Rescanning library… {n} files";
+            }
+        });
+        Library.Scanning.ScanResult result = await _library.RescanAllAsync(progress);
+        StatusText =
+            $"Rescan finished: {result.Added} added, {result.Updated} updated, " +
+            $"{result.Skipped} skipped";
+        await ReloadAsync();
+    }
+
     /// <summary>Scans dropped files/folders into the library.</summary>
     public async Task AddDroppedPathsAsync(IReadOnlyList<string> paths)
     {
