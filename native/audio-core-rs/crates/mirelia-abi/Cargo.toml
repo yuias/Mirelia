@@ -12,6 +12,10 @@ crate-type = ["cdylib"]
 
 [dependencies]
 mirelia-audio.workspace = true
+mirelia-decode.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+mirelia-out-wasapi = { path = "../mirelia-out-wasapi" }
 
 [lints]
 workspace = true

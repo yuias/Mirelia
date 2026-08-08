@@ -34,4 +34,6 @@ runtime.
 
 | Crate | Replaces | Why |
 |---|---|---|
-| (workspace only at M0) | — | Engine crates gain `symphonia`, `windows`, `coreaudio-sys` etc. at M2; each addition gets its own row here or a new ADR |
+| `symphonia` 0.5 (M2) | FFmpeg / OS decoders | Pure-Rust decode for the whole v1 format set with gapless trimming and sample-accurate seek. Pinned to 0.5: 0.6.0 shipped 2026-05 with a reworked API; migrate deliberately. Known gap: AAC is LC-only — HE-AAC (SBR) files fail to decode until a plugin or OS decoder covers them |
+| `windows` 0.62 (M2) | hand-written WASAPI FFI | Official Microsoft bindings for WASAPI/MMDevice; shared mode + `AUTOCONVERTPCM` now, `IAudioClient3` exclusive in M5 |
+| `coreaudio-sys` (planned) | — | macOS output backend, scheduled after the Windows milestones |
