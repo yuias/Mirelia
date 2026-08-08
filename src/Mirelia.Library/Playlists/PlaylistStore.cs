@@ -1,0 +1,388 @@
+using Microsoft.Data.Sqlite;
+using Mirelia.Library.Database;
+using Mirelia.Library.Querying;
+using Mirelia.Query;
+using Mirelia.Query.Ast;
+using Mirelia.Query.Compilation;
+using Mirelia.Query.Parsing;
+
+namespace Mirelia.Library.Playlists;
+
+/// <summary>Playlist kinds, matching <c>playlist.kind</c> values.</summary>
+public enum PlaylistKind
+{
+    /// <summary>Ordered track list maintained by the user.</summary>
+    Static,
+
+    /// <summary>Rule-based; membership comes from evaluating the DSL.</summary>
+    Smart,
+
+    /// <summary>Grouping node in the playlist tree (UI lands post-M4).</summary>
+    Folder,
+}
+
+/// <summary>One playlist row.</summary>
+/// <param name="Id">Playlist id.</param>
+/// <param name="Name">Display name; unique across playlists.</param>
+/// <param name="Kind">Static, smart, or folder.</param>
+/// <param name="ParentId">Folder parent, or null at root.</param>
+/// <param name="QueryText">Canonical DSL source; smart playlists only.</param>
+public sealed record PlaylistInfo(
+    long Id,
+    string Name,
+    PlaylistKind Kind,
+    long? ParentId,
+    string? QueryText);
+
+/// <summary>
+/// Playlist persistence and evaluation. The canonical persisted form of a
+/// smart playlist is its DSL text (kickoff §6.1); this store canonicalizes
+/// on save and caches evaluation results keyed on
+/// <c>(playlist id, library_generation)</c> per §6.3.
+/// </summary>
+public sealed class PlaylistStore(LibraryDatabase db)
+{
+    private readonly Dictionary<long, (long Generation, long[] Ids)> _smartCache = [];
+
+    /// <summary>All playlists, ordered for display.</summary>
+    public List<PlaylistInfo> List()
+    {
+        using SqliteCommand cmd = db.Command(
+            "SELECT id, name, kind, parent_id, query_text FROM playlist ORDER BY sort_order, id");
+        using SqliteDataReader reader = cmd.ExecuteReader();
+        var result = new List<PlaylistInfo>();
+        while (reader.Read())
+        {
+            result.Add(new PlaylistInfo(
+                reader.GetInt64(0),
+                reader.GetString(1),
+                ParseKind(reader.GetString(2)),
+                reader.IsDBNull(3) ? null : reader.GetInt64(3),
+                reader.IsDBNull(4) ? null : reader.GetString(4)));
+        }
+
+        return result;
+    }
+
+    /// <summary>Finds a playlist by exact name.</summary>
+    public PlaylistInfo? FindByName(string name)
+        => List().FirstOrDefault(p => p.Name == name);
+
+    /// <summary>Creates an empty static playlist.</summary>
+    public PlaylistInfo CreateStatic(string name)
+        => Insert(name, PlaylistKind.Static, queryText: null);
+
+    /// <summary>
+    /// Creates a smart playlist. The query is parsed, compiled (validating
+    /// fields), checked for playlist-reference cycles, and persisted in
+    /// canonical printed form.
+    /// </summary>
+    /// <exception cref="QueryParseException">Malformed DSL.</exception>
+    /// <exception cref="QueryCompileException">Unknown fields or cycles.</exception>
+    public PlaylistInfo CreateSmart(string name, string queryText)
+    {
+        string canonical = Validate(name, queryText);
+        return Insert(name, PlaylistKind.Smart, canonical);
+    }
+
+    /// <summary>Replaces a smart playlist's query, with the same validation as create.</summary>
+    public void UpdateSmartQuery(long id, string queryText)
+    {
+        PlaylistInfo playlist = Require(id);
+        if (playlist.Kind != PlaylistKind.Smart)
+        {
+            throw new InvalidOperationException($"'{playlist.Name}' is not a smart playlist.");
+        }
+
+        string canonical = Validate(playlist.Name, queryText);
+        db.Execute(
+            "UPDATE playlist SET query_text = $q, modified_unix = $now WHERE id = $id",
+            ("$q", canonical),
+            ("$now", Now()),
+            ("$id", id));
+        _smartCache.Remove(id);
+    }
+
+    /// <summary>Renames a playlist; names stay unique.</summary>
+    public void Rename(long id, string newName)
+    {
+        RequireUniqueName(newName, exceptId: id);
+        db.Execute(
+            "UPDATE playlist SET name = $n, modified_unix = $now WHERE id = $id",
+            ("$n", newName),
+            ("$now", Now()),
+            ("$id", id));
+    }
+
+    /// <summary>Deletes a playlist; entries cascade.</summary>
+    public void Delete(long id)
+    {
+        db.Execute("DELETE FROM playlist WHERE id = $id", ("$id", id));
+        _smartCache.Remove(id);
+        // Smart playlists referencing this one by name change membership.
+        db.BumpLibraryGeneration();
+    }
+
+    /// <summary>Track ids of a static playlist, in position order.</summary>
+    public List<long> GetStaticTracks(long playlistId)
+    {
+        using SqliteCommand cmd = db.Command(
+            "SELECT track_id FROM playlist_entry WHERE playlist_id = $p ORDER BY position",
+            ("$p", playlistId));
+        using SqliteDataReader reader = cmd.ExecuteReader();
+        var ids = new List<long>();
+        while (reader.Read())
+        {
+            ids.Add(reader.GetInt64(0));
+        }
+
+        return ids;
+    }
+
+    /// <summary>Appends tracks to a static playlist (duplicates allowed).</summary>
+    public void AddTracks(long playlistId, IEnumerable<long> trackIds)
+    {
+        PlaylistInfo playlist = Require(playlistId);
+        if (playlist.Kind != PlaylistKind.Static)
+        {
+            throw new InvalidOperationException($"'{playlist.Name}' is not a static playlist.");
+        }
+
+        using LibraryDatabase.TransactionScope tx = db.BeginTransaction();
+        long next = (long)db.Scalar(
+            "SELECT COALESCE(MAX(position) + 1, 0) FROM playlist_entry WHERE playlist_id = $p",
+            ("$p", playlistId))!;
+        foreach (long trackId in trackIds)
+        {
+            db.Execute(
+                "INSERT INTO playlist_entry (playlist_id, position, track_id) VALUES ($p, $pos, $t)",
+                ("$p", playlistId),
+                ("$pos", next++),
+                ("$t", trackId));
+        }
+
+        Touch(playlistId);
+        db.BumpLibraryGeneration();
+        tx.Commit();
+    }
+
+    /// <summary>Removes entries at the given positions.</summary>
+    public void RemoveAt(long playlistId, IReadOnlyCollection<int> positions)
+    {
+        Reorder(playlistId, ids =>
+        {
+            var drop = new HashSet<int>(positions);
+            return ids.Where((_, i) => !drop.Contains(i)).ToList();
+        });
+    }
+
+    /// <summary>Moves the entry at <paramref name="from"/> to <paramref name="to"/>.</summary>
+    public void Move(long playlistId, int from, int to)
+    {
+        Reorder(playlistId, ids =>
+        {
+            if (from < 0 || from >= ids.Count || to < 0 || to >= ids.Count)
+            {
+                return ids;
+            }
+
+            long moved = ids[from];
+            ids.RemoveAt(from);
+            ids.Insert(to, moved);
+            return ids;
+        });
+    }
+
+    /// <summary>
+    /// Membership of any playlist: entries for static, evaluated (and
+    /// cached per library generation) for smart.
+    /// </summary>
+    public long[] Evaluate(PlaylistInfo playlist)
+    {
+        if (playlist.Kind != PlaylistKind.Smart)
+        {
+            return [.. GetStaticTracks(playlist.Id)];
+        }
+
+        long generation = db.GetLibraryGeneration();
+        if (_smartCache.TryGetValue(playlist.Id, out (long Generation, long[] Ids) cached)
+            && cached.Generation == generation)
+        {
+            return cached.Ids;
+        }
+
+        // @now is resolved here, so time-relative playlists refresh on any
+        // library write; a coarse but correct staleness bound for v1 (§6.3).
+        CompiledQuery compiled = SqlCompiler.Compile(QueryParser.Parse(playlist.QueryText ?? ""));
+        long[] ids = [.. TrackQueryRunner.Run(db, compiled)];
+        _smartCache[playlist.Id] = (generation, ids);
+        return ids;
+    }
+
+    // ---- internals -----------------------------------------------------
+
+    private string Validate(string name, string queryText)
+    {
+        ParsedQuery parsed = QueryParser.Parse(queryText);
+        _ = SqlCompiler.Compile(parsed); // field/type validation
+        RejectCycles(name, parsed);
+        return DslPrinter.Print(parsed);
+    }
+
+    /// <summary>
+    /// DFS over playlist-name references: adding <paramref name="name"/>
+    /// with <paramref name="query"/> must not close a reference loop (§6.3).
+    /// </summary>
+    private void RejectCycles(string name, ParsedQuery query)
+    {
+        Dictionary<string, List<string>> edges = List()
+            .Where(p => p.Kind == PlaylistKind.Smart && p.QueryText is not null)
+            .ToDictionary(
+                p => p.Name,
+                p => CollectPlaylistRefs(QueryParser.Parse(p.QueryText!).Where));
+        edges[name] = CollectPlaylistRefs(query.Where);
+
+        var visiting = new HashSet<string>();
+        var done = new HashSet<string>();
+        Visit(name);
+        return;
+
+        void Visit(string node)
+        {
+            if (done.Contains(node) || !edges.ContainsKey(node))
+            {
+                return;
+            }
+
+            if (!visiting.Add(node))
+            {
+                throw new QueryCompileException(
+                    $"Playlist reference cycle involving '{node}'");
+            }
+
+            foreach (string next in edges[node])
+            {
+                Visit(next);
+            }
+
+            visiting.Remove(node);
+            done.Add(node);
+        }
+    }
+
+    private static List<string> CollectPlaylistRefs(QueryExpr expr)
+    {
+        var refs = new List<string>();
+        Walk(expr);
+        return refs;
+
+        void Walk(QueryExpr e)
+        {
+            switch (e)
+            {
+                case PlaylistMembership p:
+                    refs.Add(p.PlaylistName);
+                    break;
+                case OrExpr or_:
+                    foreach (QueryExpr op in or_.Operands)
+                    {
+                        Walk(op);
+                    }
+
+                    break;
+                case AndExpr and:
+                    foreach (QueryExpr op in and.Operands)
+                    {
+                        Walk(op);
+                    }
+
+                    break;
+                case NotExpr not:
+                    Walk(not.Operand);
+                    break;
+            }
+        }
+    }
+
+    private void Reorder(long playlistId, Func<List<long>, List<long>> transform)
+    {
+        using LibraryDatabase.TransactionScope tx = db.BeginTransaction();
+        List<long> ids = GetStaticTracks(playlistId);
+        List<long> reordered = transform(ids);
+
+        db.Execute("DELETE FROM playlist_entry WHERE playlist_id = $p", ("$p", playlistId));
+        for (int i = 0; i < reordered.Count; i++)
+        {
+            db.Execute(
+                "INSERT INTO playlist_entry (playlist_id, position, track_id) VALUES ($p, $pos, $t)",
+                ("$p", playlistId),
+                ("$pos", i),
+                ("$t", reordered[i]));
+        }
+
+        Touch(playlistId);
+        db.BumpLibraryGeneration();
+        tx.Commit();
+    }
+
+    private PlaylistInfo Insert(string name, PlaylistKind kind, string? queryText)
+    {
+        RequireUniqueName(name, exceptId: null);
+        long now = Now();
+        long id = (long)db.Scalar("""
+            INSERT INTO playlist (name, kind, sort_order, query_text, created_unix, modified_unix)
+            VALUES ($n, $k, (SELECT COALESCE(MAX(sort_order) + 1, 0) FROM playlist), $q, $now, $now)
+            RETURNING id
+            """,
+            ("$n", name),
+            ("$k", KindText(kind)),
+            ("$q", queryText),
+            ("$now", now))!;
+        return new PlaylistInfo(id, name, kind, null, queryText);
+    }
+
+    private PlaylistInfo Require(long id)
+    {
+        return List().FirstOrDefault(p => p.Id == id)
+            ?? throw new InvalidOperationException($"Playlist {id} does not exist.");
+    }
+
+    private void RequireUniqueName(string name, long? exceptId)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new InvalidOperationException("Playlist name must not be empty.");
+        }
+
+        PlaylistInfo? existing = FindByName(name);
+        if (existing is not null && existing.Id != exceptId)
+        {
+            // Names are the DSL's playlist reference key, so they must be unique.
+            throw new InvalidOperationException($"A playlist named '{name}' already exists.");
+        }
+    }
+
+    private void Touch(long playlistId)
+    {
+        db.Execute(
+            "UPDATE playlist SET modified_unix = $now WHERE id = $id",
+            ("$now", Now()),
+            ("$id", playlistId));
+    }
+
+    private static long Now() => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+    private static string KindText(PlaylistKind kind) => kind switch
+    {
+        PlaylistKind.Static => "static",
+        PlaylistKind.Smart => "smart",
+        _ => "folder",
+    };
+
+    private static PlaylistKind ParseKind(string kind) => kind switch
+    {
+        "static" => PlaylistKind.Static,
+        "smart" => PlaylistKind.Smart,
+        _ => PlaylistKind.Folder,
+    };
+}
