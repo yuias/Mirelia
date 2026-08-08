@@ -72,11 +72,18 @@ public static class TrackPager
         TrackSortOrder.Album => "al.name_sort, t.disc_no, t.track_no, t.title_sort",
         TrackSortOrder.Title => "t.title_sort",
         TrackSortOrder.RecentlyAdded => "t.added_unix DESC, t.id DESC",
-        TrackSortOrder.Year => "t.year, al.name_sort, t.disc_no, t.track_no",
+        // date_key normalizes mixed date spellings (2025, 2025/10/5,
+        // 2025-08-12) into one sortable yyyymmdd int; undated tracks sink
+        // to the end.
+        TrackSortOrder.Year =>
+            "COALESCE(t.date_key, 99999999), al.name_sort, t.disc_no, t.track_no",
         // Compound sorts: the album's aggregate keys the album blocks,
         // album order keys the tracks inside (window fns are fine in ORDER BY).
+        // MAX skips NULLs, so one undated track cannot sink its album; only
+        // fully undated albums fall to the end via the outer COALESCE.
         TrackSortOrder.AlbumByYear =>
-            "MAX(t.year) OVER (PARTITION BY t.album_id), al.name_sort, t.disc_no, t.track_no",
+            "COALESCE(MAX(t.date_key) OVER (PARTITION BY t.album_id), 99999999), "
+            + "al.name_sort, t.disc_no, t.track_no",
         TrackSortOrder.AlbumByRecentlyAdded =>
             "MAX(t.added_unix) OVER (PARTITION BY t.album_id) DESC, al.name_sort, t.disc_no, t.track_no",
         _ => "t.id",

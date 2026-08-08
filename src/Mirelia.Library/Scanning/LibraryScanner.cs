@@ -295,7 +295,7 @@ public sealed class LibraryScanner(LibraryDatabase db)
             INSERT INTO track (
                 path, path_lower, size_bytes, mtime_unix,
                 title, album_id, artist_id, album_artist_id, composer_id, genre_id,
-                track_no, disc_no, year, date_text,
+                track_no, disc_no, year, date_text, date_key,
                 title_sort, title_search,
                 duration_ms, sample_rate, channels, bit_depth, bitrate_kbps,
                 codec, is_lossless,
@@ -303,7 +303,7 @@ public sealed class LibraryScanner(LibraryDatabase db)
             VALUES (
                 $path, $path_lower, $size, $mtime,
                 $title, $album_id, $artist_id, $album_artist_id, $composer_id, $genre_id,
-                $track_no, $disc_no, $year, $date_text,
+                $track_no, $disc_no, $year, $date_text, $date_key,
                 $title_sort, $title_search,
                 $duration_ms, $sample_rate, $channels, $bit_depth, $bitrate_kbps,
                 $codec, $is_lossless,
@@ -322,6 +322,7 @@ public sealed class LibraryScanner(LibraryDatabase db)
                 disc_no = excluded.disc_no,
                 year = excluded.year,
                 date_text = excluded.date_text,
+                date_key = excluded.date_key,
                 title_sort = excluded.title_sort,
                 title_search = excluded.title_search,
                 duration_ms = excluded.duration_ms,
@@ -348,6 +349,7 @@ public sealed class LibraryScanner(LibraryDatabase db)
             ("$disc_no", meta.DiscNo),
             ("$year", meta.Year),
             ("$date_text", meta.DateText),
+            ("$date_key", DateKey.Compute(meta.DateText, meta.Year)),
             ("$title_sort", titleSort),
             ("$title_search", TextNormalizer.NormalizeSearch(displayTitle)),
             ("$duration_ms", meta.DurationMs),

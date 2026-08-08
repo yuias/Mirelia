@@ -22,11 +22,14 @@ public sealed class ViewSettingsTests : IDisposable
     }
 
     [Fact]
-    public void FreshDatabaseIsSchemaV2()
+    public void FreshDatabaseIsCurrentSchema()
     {
-        Assert.Equal("2", _db.Scalar("SELECT value FROM meta WHERE key = 'schema_version'"));
+        Assert.Equal("3", _db.Scalar("SELECT value FROM meta WHERE key = 'schema_version'"));
         Assert.Equal(1L, _db.Scalar(
             "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'view_settings'"));
+        // v3's date_key column exists (the query throws if it does not);
+        // an empty table yields SQL NULL, surfaced as DBNull.
+        Assert.Equal(DBNull.Value, _db.Scalar("SELECT MAX(date_key) FROM track"));
     }
 
     [Fact]
@@ -97,9 +100,10 @@ public sealed class ViewSettingsTests : IDisposable
         return (long)_db.Scalar("""
             INSERT INTO track (
                 path, path_lower, size_bytes, mtime_unix, title, album_id,
-                track_no, year, title_sort, title_search, duration_ms,
+                track_no, year, date_key, title_sort, title_search, duration_ms,
                 sample_rate, channels, codec, is_lossless, added_unix, modified_unix)
-            VALUES ($t, lower($t), 1, 0, $t, $al, $no, $y, lower($t), lower($t),
+            VALUES ($t, lower($t), 1, 0, $t, $al, $no, $y, $y * 10000 + 101,
+                    lower($t), lower($t),
                     1000, 44100, 2, 'flac', 1, $added, 0)
             RETURNING id
             """,

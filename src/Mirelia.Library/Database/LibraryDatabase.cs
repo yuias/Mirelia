@@ -155,6 +155,39 @@ public sealed class LibraryDatabase : IDisposable
         Connection.Dispose();
     }
 
+    /// <summary>
+    /// Computes date_key for every row that lacks one, from date_text or
+    /// year. Runs inside the v3 migration so existing libraries sort
+    /// correctly without a rescan; harmless to call again.
+    /// </summary>
+    public void BackfillDateKeys()
+    {
+        var pending = new List<(long Id, string? DateText, int? Year)>();
+        using (SqliteCommand cmd = Command(
+            "SELECT id, date_text, year FROM track WHERE date_key IS NULL"))
+        using (SqliteDataReader reader = cmd.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                pending.Add((
+                    reader.GetInt64(0),
+                    reader.IsDBNull(1) ? null : reader.GetString(1),
+                    reader.IsDBNull(2) ? null : reader.GetInt32(2)));
+            }
+        }
+
+        foreach ((long id, string? dateText, int? year) in pending)
+        {
+            if (Scanning.DateKey.Compute(dateText, year) is { } key)
+            {
+                Execute(
+                    "UPDATE track SET date_key = $k WHERE id = $id",
+                    ("$k", key),
+                    ("$id", id));
+            }
+        }
+    }
+
     private void RequireSqliteVersion()
     {
         // contentless_delete FTS5 tables need SQLite 3.43+.
@@ -226,6 +259,14 @@ public sealed class LibraryDatabase : IDisposable
         {
             Execute(Schema.V2);
             Execute("UPDATE meta SET value = '2' WHERE key = 'schema_version'");
+            version = 2;
+        }
+
+        if (version == 2)
+        {
+            Execute(Schema.V3);
+            BackfillDateKeys();
+            Execute("UPDATE meta SET value = '3' WHERE key = 'schema_version'");
         }
 
         tx.Commit();

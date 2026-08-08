@@ -177,9 +177,20 @@ CREATE TABLE view_settings (
 );
 ```
 
+## Schema v3 additions
+
+```sql
+-- Normalized release-date sort key: yyyymmdd as INTEGER, missing month/day
+-- as 01 (so "2025" sorts as 2025-01-01). Computed from date_text (which
+-- keeps the raw spelling for display) with year as fallback; backfilled
+-- from existing rows during the migration.
+ALTER TABLE track ADD COLUMN date_key INTEGER;
+```
+
 ## Migration log
 
 | Version | Date | Change |
 |---|---|---|
 | 1 | 2026-08-08 | Initial schema, applied by `LibraryDatabase.Open` |
 | 2 | 2026-08-08 | `view_settings` table for per-view columns/sort |
+| 3 | 2026-08-08 | `track.date_key` normalized date sort key, backfilled |

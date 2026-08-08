@@ -8,7 +8,15 @@ namespace Mirelia.Library.Database;
 internal static class Schema
 {
     /// <summary>Current schema version written to <c>meta['schema_version']</c>.</summary>
-    internal const int CurrentVersion = 2;
+    internal const int CurrentVersion = 3;
+
+    /// <summary>
+    /// Schema v3: normalized release-date sort key (yyyymmdd int; year-only
+    /// dates as yyyy0101). Backfilled from date_text/year at migration time.
+    /// </summary>
+    internal const string V3 = """
+        ALTER TABLE track ADD COLUMN date_key INTEGER;
+        """;
 
     /// <summary>Schema v2: per-view UI settings (columns, sort), keyed by scope.</summary>
     internal const string V2 = """
