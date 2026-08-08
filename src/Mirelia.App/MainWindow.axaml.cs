@@ -128,8 +128,16 @@ public partial class MainWindow : Window
 
     private void OnGridPointerPressed(object? sender, PointerPressedEventArgs e)
     {
+        // Arm row-dragging only for presses that land on an actual row.
+        // Without this check, scrollbar-thumb and header drags get hijacked
+        // into a drag&drop gesture and the grid stops scrolling.
+        bool onRow = (e.Source as Visual)?
+            .GetSelfAndVisualAncestors()
+            .OfType<DataGridRow>()
+            .Any() == true;
+
         _dragOrigin = e.GetPosition(this);
-        _dragPress = e.GetCurrentPoint(this).Properties.IsLeftButtonPressed ? e : null;
+        _dragPress = onRow && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed ? e : null;
     }
 
     private async void OnGridPointerMoved(object? sender, PointerEventArgs e)
