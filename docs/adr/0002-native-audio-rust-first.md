@@ -37,3 +37,23 @@ runtime.
 | `symphonia` 0.5 (M2) | FFmpeg / OS decoders | Pure-Rust decode for the whole v1 format set with gapless trimming and sample-accurate seek. Pinned to 0.5: 0.6.0 shipped 2026-05 with a reworked API; migrate deliberately. Known gap: AAC is LC-only — HE-AAC (SBR) files fail to decode until a plugin or OS decoder covers them |
 | `windows` 0.62 (M2) | hand-written WASAPI FFI | Official Microsoft bindings for WASAPI/MMDevice; shared mode + `AUTOCONVERTPCM` now, `IAudioClient3` exclusive in M5 |
 | `coreaudio-sys` (planned) | — | macOS output backend, scheduled after the Windows milestones |
+
+## Planned upgrade: symphonia 0.6+
+
+The 0.5 pin is deliberate but temporary. Migration plan:
+
+- **When:** after M5, once the conformance suite fully covers gapless
+  (delay/padding fixtures), seek accuracy on headerless VBR, and position
+  precision. Those tests are the safety net that makes the API migration a
+  mechanical exercise instead of a re-verification project.
+- **What to re-verify on 0.6:** gapless trimming behaviour (0.5 handles it
+  inside `enable_gapless`; confirm the 0.6 equivalent), sample-accurate
+  seek semantics (`SeekMode::Accurate` landing point), the AAC
+  first-block-priming workaround (may become unnecessary), and decoded
+  output equality against 0.5 on the fixture set (bit-compare lossless
+  decodes).
+- **Also evaluate:** whether 0.6 adds HE-AAC (SBR) support — if so, the
+  known AAC-LC-only gap closes for free and the decoder row above gets
+  updated.
+- All symphonia usage is confined to `mirelia-decode`, so the migration
+  cannot leak past one crate.
