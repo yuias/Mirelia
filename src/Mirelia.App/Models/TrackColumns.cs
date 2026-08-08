@@ -22,7 +22,7 @@ public static class TrackColumns
         new("albumartist", "Album Artist", nameof(TrackRow.AlbumArtist), 1.0, true),
         new("genre", "Genre", nameof(TrackRow.Genre), 100, false),
         new("time", "Time", nameof(TrackRow.Duration), 64, false),
-        new("date", "Date", nameof(TrackRow.Date), 90, false),
+        new("date", "Date", nameof(TrackRow.Date), 100, false),
         new("codec", "Codec", nameof(TrackRow.Codec), 64, false),
         new("bitrate", "kbps", nameof(TrackRow.Bitrate), 60, false),
         new("added", "Added", nameof(TrackRow.Added), 90, false),
