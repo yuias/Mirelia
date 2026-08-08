@@ -86,6 +86,37 @@ public static class TrackPager
         return db.Scalar("SELECT path FROM track WHERE id = $id", ("$id", id)) as string;
     }
 
+    /// <summary>Stored ReplayGain track gain in dB, or null if not scanned.</summary>
+    public static double? GetTrackGain(LibraryDatabase db, long id)
+    {
+        return db.Scalar("SELECT rg_track_gain FROM track WHERE id = $id", ("$id", id)) as double?;
+    }
+
+    /// <summary>Tracks that have no ReplayGain values yet.</summary>
+    public static List<(long Id, string Path)> GetTracksMissingReplayGain(LibraryDatabase db)
+    {
+        using SqliteCommand cmd = db.Command(
+            "SELECT id, path FROM track WHERE rg_track_gain IS NULL ORDER BY id");
+        using SqliteDataReader reader = cmd.ExecuteReader();
+        var result = new List<(long, string)>();
+        while (reader.Read())
+        {
+            result.Add((reader.GetInt64(0), reader.GetString(1)));
+        }
+
+        return result;
+    }
+
+    /// <summary>Stores scanned ReplayGain values for one track.</summary>
+    public static void SetTrackReplayGain(LibraryDatabase db, long id, double gainDb, double peak)
+    {
+        db.Execute(
+            "UPDATE track SET rg_track_gain = $g, rg_track_peak = $p WHERE id = $id",
+            ("$g", gainDb),
+            ("$p", peak),
+            ("$id", id));
+    }
+
     /// <summary>Hydrates one page of rows; missing ids are simply absent.</summary>
     public static Dictionary<long, TrackPageRow> HydratePage(
         LibraryDatabase db, IReadOnlyList<long> ids)

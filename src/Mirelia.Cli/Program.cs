@@ -19,6 +19,7 @@ return args switch
     ["seed", var count, .. var rest] => Seed(count, ParseDbOption(rest)),
     ["playlist", .. var plArgs] => PlaylistCommand(plArgs),
     ["export", var name, .. var rest] => Export(name, rest),
+    ["rgscan", .. var rest] => RgScan(ParseDbOption(rest)),
     [] or ["--help"] or ["-h"] => PrintHelp(0),
     _ => PrintHelp(2),
 };
@@ -375,6 +376,48 @@ static int Export(string name, string[] rest)
         Console.Error.WriteLine($"export: {ex.Message}");
         return 1;
     }
+}
+
+static int RgScan(string? dbPath)
+{
+    string db = dbPath ?? DefaultDbPath();
+    if (!File.Exists(db))
+    {
+        Console.Error.WriteLine($"rgscan: database not found: {db}");
+        return 1;
+    }
+
+    using var database = LibraryDatabase.Open(db);
+    List<(long Id, string Path)> pending = TrackPager.GetTracksMissingReplayGain(database);
+    if (pending.Count == 0)
+    {
+        Console.WriteLine("rgscan: nothing to scan");
+        return 0;
+    }
+
+    using var engine = AudioEngine.Create();
+    int done = 0, failed = 0;
+    foreach ((long id, string path) in pending)
+    {
+        try
+        {
+            (float gain, float peak) = engine.ScanLoudness(path);
+            TrackPager.SetTrackReplayGain(database, id, gain, peak);
+            done++;
+        }
+        catch (AudioEngineException)
+        {
+            failed++;
+        }
+
+        if ((done + failed) % 50 == 0)
+        {
+            Console.WriteLine($"  {done + failed}/{pending.Count}...");
+        }
+    }
+
+    Console.WriteLine($"rgscan: {done} scanned, {failed} failed");
+    return 0;
 }
 
 static PlaylistInfo RequirePlaylist(PlaylistStore store, string name)

@@ -175,6 +175,47 @@ public sealed class AudioEngine : IDisposable
         return result;
     }
 
+    /// <summary>Lists playback devices.</summary>
+    public IReadOnlyList<AudioDeviceInfo> EnumerateDevices()
+    {
+        ThrowIfDisposed();
+        Check(NativeMethods.kn_devices_enumerate(_handle, out nint devices, out nuint count));
+        try
+        {
+            var result = new List<AudioDeviceInfo>((int)count);
+            int size = System.Runtime.InteropServices.Marshal
+                .SizeOf<NativeMethods.KnDeviceInfo>();
+            for (nuint i = 0; i < count; i++)
+            {
+                NativeMethods.KnDeviceInfo native = System.Runtime.InteropServices.Marshal
+                    .PtrToStructure<NativeMethods.KnDeviceInfo>(devices + (nint)i * size);
+                result.Add(new AudioDeviceInfo(
+                    System.Runtime.InteropServices.Marshal.PtrToStringUTF8(native.Id) ?? string.Empty,
+                    System.Runtime.InteropServices.Marshal.PtrToStringUTF8(native.Name) ?? "(unknown)",
+                    native.IsDefault != 0,
+                    native.NativeRate,
+                    native.NativeChannels));
+            }
+
+            return result;
+        }
+        finally
+        {
+            NativeMethods.kn_devices_free(_handle);
+        }
+    }
+
+    /// <summary>
+    /// EBU R128 scan: ReplayGain 2 track gain (dB) and true peak (linear).
+    /// Blocking — call from a worker thread.
+    /// </summary>
+    public (float GainDb, float Peak) ScanLoudness(string path)
+    {
+        ThrowIfDisposed();
+        Check(NativeMethods.kn_scan_loudness(_handle, path, out float gain, out float peak));
+        return (gain, peak);
+    }
+
     /// <summary>Reads stream metadata without playing.</summary>
     public unsafe AudioProbeResult Probe(string path)
     {

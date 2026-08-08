@@ -46,6 +46,19 @@ public enum AudioSlot
     Next = 1,
 }
 
+/// <summary>One playback device from <see cref="AudioEngine.EnumerateDevices"/>.</summary>
+/// <param name="Id">Stable, backend-scoped identifier.</param>
+/// <param name="Name">Human-readable name.</param>
+/// <param name="IsDefault">True for the system default render device.</param>
+/// <param name="NativeRate">Current mix/native sample rate.</param>
+/// <param name="NativeChannels">Current channel count.</param>
+public readonly record struct AudioDeviceInfo(
+    string Id,
+    string Name,
+    bool IsDefault,
+    uint NativeRate,
+    ushort NativeChannels);
+
 /// <summary>Stream metadata from <see cref="AudioEngine.Probe"/>.</summary>
 /// <param name="SampleRate">Sample rate in Hz.</param>
 /// <param name="Channels">Channel count.</param>

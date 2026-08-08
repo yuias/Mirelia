@@ -141,6 +141,33 @@ internal static partial class NativeMethods
     [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
     internal static partial KnResult kn_probe(nint engine, string path, out KnProbeResult result);
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct KnDeviceInfo
+    {
+        public nint Id;
+        public nint Name;
+        public nint Backend;
+        public int IsDefault;
+        public uint NativeRate;
+        public ushort NativeChannels;
+        public uint SupportedRateMask;
+        public uint SupportedFormatMask;
+        public int SupportsExclusive;
+        public uint MinPeriodFrames;
+        public uint DefaultPeriodFrames;
+    }
+
+    [LibraryImport(LibraryName)]
+    internal static partial KnResult kn_devices_enumerate(
+        nint engine, out nint devices, out nuint count);
+
+    [LibraryImport(LibraryName)]
+    internal static partial void kn_devices_free(nint engine);
+
+    [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial KnResult kn_scan_loudness(
+        nint engine, string path, out float gainDb, out float peak);
+
     /// <summary>
     /// Reads the thread-local last-error string left by the most recent
     /// failing native call.
