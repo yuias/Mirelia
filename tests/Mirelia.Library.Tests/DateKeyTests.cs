@@ -11,6 +11,9 @@ public sealed class DateKeyTests
     [InlineData("2025", null, 20250101)]
     [InlineData("2025-08-12", null, 20250812)]
     [InlineData("2025/10/5", null, 20251005)]
+    [InlineData("2022/9/1", null, 20220901)] // both parts unpadded
+    [InlineData("2022-9-1", null, 20220901)]
+    [InlineData("2022/9", null, 20220901)] // unpadded month, no day
     [InlineData("2026/12/20", null, 20261220)]
     [InlineData("2025.03.07", null, 20250307)]
     [InlineData("2025-08", null, 20250801)]
