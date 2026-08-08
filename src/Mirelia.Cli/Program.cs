@@ -14,7 +14,8 @@ return args switch
     ["native-smoke"] => NativeSmoke(),
     ["scan", var dir, .. var rest] => Scan(dir, ParseDbOption(rest)),
     ["query", var dsl, .. var rest] => RunQuery(dsl, ParseDbOption(rest)),
-    ["play", var file] => Play(file),
+    ["play", var file] => Play(file, exclusive: false),
+    ["play", var file, "--exclusive"] => Play(file, exclusive: true),
     ["seed", var count, .. var rest] => Seed(count, ParseDbOption(rest)),
     ["playlist", .. var plArgs] => PlaylistCommand(plArgs),
     ["export", var name, .. var rest] => Export(name, rest),
@@ -141,7 +142,7 @@ static int RunQuery(string dsl, string? dbPath)
     return 0;
 }
 
-static int Play(string file)
+static int Play(string file, bool exclusive)
 {
     if (!File.Exists(file))
     {
@@ -160,9 +161,11 @@ static int Play(string file)
             (probe.BitDepth is { } bits ? $", {bits} bit" : string.Empty) +
             (probe.BitrateKbps is { } kbps ? $", {kbps} kbps" : string.Empty));
 
-        engine.OpenDevice();
+        (uint rate, ushort ch) = engine.OpenDevice(exclusive: exclusive);
         engine.Load(AudioSlot.Current, path, userToken: 1);
         engine.Play();
+        Console.WriteLine(
+            $"device: {(exclusive ? "exclusive" : "shared")} @ {rate} Hz {ch} ch");
         Console.WriteLine("[space] pause/resume, [←/→] seek 5s, [q] quit");
 
         bool interactive = !Console.IsInputRedirected;

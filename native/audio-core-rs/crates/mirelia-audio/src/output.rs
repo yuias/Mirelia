@@ -12,6 +12,26 @@ pub struct StreamFormat {
     pub channels: u16,
 }
 
+/// Device access mode, mirroring `kn_share_mode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ShareMode {
+    /// OS mixer path; format conversion is the mixer's problem.
+    #[default]
+    Shared,
+    /// Exclusive/hog access: bit-perfect, source-rate, no mixer.
+    Exclusive,
+}
+
+/// Per-stream options beyond the PCM format.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StreamOptions {
+    /// Access mode to open the device with.
+    pub mode: ShareMode,
+    /// Apply TPDF dither when the device takes integer samples
+    /// (exclusive mode only; shared mode stays float end to end).
+    pub dither: bool,
+}
+
 /// One playback device, as reported by a backend.
 #[derive(Debug, Clone)]
 pub struct DeviceInfo {
@@ -90,6 +110,7 @@ pub trait OutputBackend: Send {
         &mut self,
         device_id: Option<&str>,
         format: StreamFormat,
+        options: StreamOptions,
         callback: RenderCallback,
     ) -> Result<Box<dyn OutputStream>, OutputError>;
 }

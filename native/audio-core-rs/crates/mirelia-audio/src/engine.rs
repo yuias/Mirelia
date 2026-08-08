@@ -23,7 +23,8 @@ use mirelia_decode::{DecodeError, Decoder};
 
 use crate::events::{EngineEvent, EventKind};
 use crate::output::{
-    DeviceInfo, OutputBackend, OutputError, OutputStream, RenderInfo, StreamFormat,
+    DeviceInfo, OutputBackend, OutputError, OutputStream, RenderInfo, ShareMode, StreamFormat,
+    StreamOptions,
 };
 use crate::spsc::{self, Consumer, Producer, SpscCore};
 use crate::{EngineConfig, Position, State, host_time_ns};
@@ -184,6 +185,7 @@ enum Cmd {
 
 struct DeviceRequest {
     id: Option<String>,
+    mode: ShareMode,
 }
 
 struct DeviceState {
@@ -250,11 +252,13 @@ impl Engine {
         &mut self,
         device_id: Option<&str>,
         desired: Option<StreamFormat>,
+        mode: ShareMode,
     ) -> Result<StreamFormat, EngineError> {
         self.close_device();
         let probe = self.backend.probe_device(device_id)?;
         self.request = Some(DeviceRequest {
             id: device_id.map(str::to_owned),
+            mode,
         });
         if let Some(fmt) = desired {
             self.ensure_stream(fmt)?;
@@ -475,9 +479,13 @@ impl Engine {
             ring.capacity(),
         );
 
+        let options = StreamOptions {
+            mode: request.mode,
+            dither: self.config.dither_to_int,
+        };
         let stream = self
             .backend
-            .open_stream(request.id.as_deref(), fmt, callback)?;
+            .open_stream(request.id.as_deref(), fmt, options, callback)?;
         self.shared.pub_rate.store(fmt.sample_rate, Ordering::Release);
         self.device = Some(DeviceState {
             format: fmt,
@@ -926,6 +934,7 @@ mod tests {
             &mut self,
             _device_id: Option<&str>,
             format: StreamFormat,
+            _options: StreamOptions,
             mut callback: crate::output::RenderCallback,
         ) -> Result<Box<dyn OutputStream>, OutputError> {
             let stop = Arc::new(AtomicBool::new(false));
@@ -987,7 +996,7 @@ mod tests {
     fn plays_a_track_to_completion() {
         let mut e = engine();
         let mut seen = Vec::new();
-        e.open_device(None, None).unwrap();
+        e.open_device(None, None, ShareMode::Shared).unwrap();
         e.load(Slot::Current, load_params("fixture.wav", 7)).unwrap();
         e.play().unwrap();
 
@@ -1005,7 +1014,7 @@ mod tests {
     fn auto_advances_into_next_slot() {
         let mut e = engine();
         let mut seen = Vec::new();
-        e.open_device(None, None).unwrap();
+        e.open_device(None, None, ShareMode::Shared).unwrap();
         e.load(Slot::Current, load_params("fixture.wav", 1)).unwrap();
         e.load(Slot::Next, load_params("fixture.flac", 2)).unwrap();
         e.play().unwrap();
@@ -1020,7 +1029,7 @@ mod tests {
     fn seek_rebases_position() {
         let mut e = engine();
         let mut seen = Vec::new();
-        e.open_device(None, None).unwrap();
+        e.open_device(None, None, ShareMode::Shared).unwrap();
         e.load(Slot::Current, load_params("fixture.flac", 3)).unwrap();
         e.play().unwrap();
         e.seek(10_000).unwrap();
@@ -1035,7 +1044,7 @@ mod tests {
         let mut e = engine();
         assert!(matches!(e.play(), Err(EngineError::State(_))));
         assert!(matches!(e.seek(0), Err(EngineError::State(_))));
-        e.open_device(None, None).unwrap();
+        e.open_device(None, None, ShareMode::Shared).unwrap();
         assert!(matches!(e.play(), Err(EngineError::State(_))));
     }
 
@@ -1064,6 +1073,7 @@ mod tests {
             &mut self,
             _device_id: Option<&str>,
             format: StreamFormat,
+            _options: StreamOptions,
             mut callback: crate::output::RenderCallback,
         ) -> Result<Box<dyn OutputStream>, OutputError> {
             let stop = Arc::new(AtomicBool::new(false));
@@ -1107,7 +1117,7 @@ mod tests {
             Box::new(CapturingBackend { sink: sink.clone() }),
         );
         let mut seen = Vec::new();
-        e.open_device(None, None).unwrap();
+        e.open_device(None, None, ShareMode::Shared).unwrap();
         e.load(Slot::Current, load_params("gapless-a.flac", 1)).unwrap();
         e.load(Slot::Next, load_params("gapless-b.flac", 2)).unwrap();
         // Let the decode worker prefill so playback starts without a stall.
@@ -1141,7 +1151,7 @@ mod tests {
     fn pause_freezes_position() {
         let mut e = engine();
         let mut seen = Vec::new();
-        e.open_device(None, None).unwrap();
+        e.open_device(None, None, ShareMode::Shared).unwrap();
         e.load(Slot::Current, load_params("fixture.wav", 9)).unwrap();
         e.play().unwrap();
         assert!(wait_for_event(&mut e, &mut seen, EventKind::TrackStarted, Duration::from_secs(5)));

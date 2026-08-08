@@ -1,13 +1,17 @@
-//! Mirelia WASAPI output backend, shared mode.
+//! Mirelia WASAPI output backend: shared and exclusive mode.
 //!
-//! Streams open event-driven with AUTOCONVERTPCM, so the engine can always
-//! run at the source format and let the OS mixer convert; bit-perfect
-//! exclusive mode (`IAudioClient3`) lands in M5.
+//! Shared streams open event-driven with AUTOCONVERTPCM, so the engine can
+//! always run at the source format and let the OS mixer convert. Exclusive
+//! streams negotiate the device's best integer/float format at the source
+//! rate (bit-perfect: no mixer, no SRC) and convert f32 → device format on
+//! the render thread with optional TPDF dither.
 //!
 //! The render loop body is the engine's callback; this crate only waits on
-//! the WASAPI event, maps the device buffer, and reports queued frames.
+//! the WASAPI event, maps the device buffer, and converts.
 
 #![cfg(windows)]
+
+mod convert;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,14 +20,16 @@ use std::thread::JoinHandle;
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::Media::Audio::{
-    AUDCLNT_E_DEVICE_INVALIDATED, AUDCLNT_SHAREMODE_SHARED,
-    AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+    AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED, AUDCLNT_E_DEVICE_IN_USE, AUDCLNT_E_DEVICE_INVALIDATED,
+    AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED, AUDCLNT_E_UNSUPPORTED_FORMAT, AUDCLNT_SHAREMODE_EXCLUSIVE,
+    AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
     AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, DEVICE_STATE_ACTIVE, IAudioClient,
     IAudioRenderClient, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator, WAVEFORMATEX,
     WAVEFORMATEXTENSIBLE, WAVEFORMATEXTENSIBLE_0, eConsole, eRender,
 };
 use windows::Win32::Media::KernelStreaming::{
-    SPEAKER_FRONT_CENTER, SPEAKER_FRONT_LEFT, SPEAKER_FRONT_RIGHT, WAVE_FORMAT_EXTENSIBLE,
+    KSDATAFORMAT_SUBTYPE_PCM, SPEAKER_FRONT_CENTER, SPEAKER_FRONT_LEFT, SPEAKER_FRONT_RIGHT,
+    WAVE_FORMAT_EXTENSIBLE,
 };
 use windows::Win32::Media::Multimedia::KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
 use windows::Win32::System::Com::{
@@ -32,8 +38,10 @@ use windows::Win32::System::Com::{
 use windows::Win32::System::Threading::{CreateEventW, SetEvent, WaitForSingleObject};
 use windows::core::PCWSTR;
 
+use convert::{DeviceFormat, Dither};
 use mirelia_audio::output::{
-    DeviceInfo, OutputBackend, OutputError, OutputStream, RenderCallback, RenderInfo, StreamFormat,
+    DeviceInfo, OutputBackend, OutputError, OutputStream, RenderCallback, RenderInfo, ShareMode,
+    StreamFormat, StreamOptions,
 };
 
 /// WASAPI render backend. Create one per engine.
@@ -56,8 +64,13 @@ fn com_init() {
 }
 
 fn internal(context: &str, e: windows::core::Error) -> OutputError {
-    if e.code() == AUDCLNT_E_DEVICE_INVALIDATED {
+    let code = e.code();
+    if code == AUDCLNT_E_DEVICE_INVALIDATED {
         OutputError::DeviceLost(format!("{context}: {e}"))
+    } else if code == AUDCLNT_E_DEVICE_IN_USE || code == AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED {
+        OutputError::DeviceBusy(format!("{context}: {e}"))
+    } else if code == AUDCLNT_E_UNSUPPORTED_FORMAT {
+        OutputError::Format(format!("{context}: {e}"))
     } else {
         OutputError::Internal(format!("{context}: {e}"))
     }
@@ -124,29 +137,185 @@ fn mix_format(device: &IMMDevice) -> Result<(u32, u16), OutputError> {
     }
 }
 
-fn make_format(format: StreamFormat) -> WAVEFORMATEXTENSIBLE {
-    let channels = u32::from(format.channels);
-    let block_align = format.channels * 4;
-    let mask = match format.channels {
+fn channel_mask(channels: u16) -> u32 {
+    match channels {
         1 => SPEAKER_FRONT_CENTER,
         2 => SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT,
         n => (1u32 << n) - 1,
+    }
+}
+
+/// Builds a WAVEFORMATEXTENSIBLE for one candidate device format.
+fn make_wfx(format: StreamFormat, device_format: DeviceFormat, valid_bits: u16) -> WAVEFORMATEXTENSIBLE {
+    let bytes = device_format.bytes_per_sample() as u16;
+    let sub_format = match device_format {
+        DeviceFormat::F32 => KSDATAFORMAT_SUBTYPE_IEEE_FLOAT,
+        _ => KSDATAFORMAT_SUBTYPE_PCM,
     };
     WAVEFORMATEXTENSIBLE {
         Format: WAVEFORMATEX {
             wFormatTag: WAVE_FORMAT_EXTENSIBLE as u16,
             nChannels: format.channels,
             nSamplesPerSec: format.sample_rate,
-            nAvgBytesPerSec: format.sample_rate * channels * 4,
-            nBlockAlign: block_align,
-            wBitsPerSample: 32,
+            nAvgBytesPerSec: format.sample_rate * u32::from(format.channels) * u32::from(bytes),
+            nBlockAlign: format.channels * bytes,
+            wBitsPerSample: bytes * 8,
             cbSize: (size_of::<WAVEFORMATEXTENSIBLE>() - size_of::<WAVEFORMATEX>()) as u16,
         },
         Samples: WAVEFORMATEXTENSIBLE_0 {
-            wValidBitsPerSample: 32,
+            wValidBitsPerSample: valid_bits,
         },
-        dwChannelMask: mask,
-        SubFormat: KSDATAFORMAT_SUBTYPE_IEEE_FLOAT,
+        dwChannelMask: channel_mask(format.channels),
+        SubFormat: sub_format,
+    }
+}
+
+/// Finds the best exclusive-mode format at the source rate: float first,
+/// then integer by descending depth (32, 24-in-32, 24 packed, 16).
+fn negotiate_exclusive(
+    client: &IAudioClient,
+    format: StreamFormat,
+) -> Result<(DeviceFormat, WAVEFORMATEXTENSIBLE), OutputError> {
+    let candidates: [(DeviceFormat, u16); 5] = [
+        (DeviceFormat::F32, 32),
+        (DeviceFormat::S32, 32),
+        (DeviceFormat::S32, 24),
+        (DeviceFormat::S24Packed, 24),
+        (DeviceFormat::S16, 16),
+    ];
+    for (device_format, valid_bits) in candidates {
+        let wfx = make_wfx(format, device_format, valid_bits);
+        let hr = unsafe {
+            client.IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, &wfx.Format, None)
+        };
+        if hr.is_ok() {
+            return Ok((device_format, wfx));
+        }
+    }
+
+    Err(OutputError::Format(format!(
+        "device does not support {} Hz / {} ch in exclusive mode",
+        format.sample_rate, format.channels
+    )))
+}
+
+struct ExclusiveSetup {
+    client: IAudioClient,
+    render: IAudioRenderClient,
+    event: HANDLE,
+    buffer_frames: u32,
+    device_format: DeviceFormat,
+}
+
+/// Exclusive event-driven initialization, including the documented
+/// BUFFER_SIZE_NOT_ALIGNED dance (recompute the period from the aligned
+/// buffer size and initialize a fresh client).
+fn setup_exclusive(
+    device: &IMMDevice,
+    format: StreamFormat,
+) -> Result<ExclusiveSetup, OutputError> {
+    unsafe {
+        let client: IAudioClient = device
+            .Activate(CLSCTX_ALL, None)
+            .map_err(|e| internal("activate audio client", e))?;
+        let (device_format, wfx) = negotiate_exclusive(&client, format)?;
+
+        let mut default_period = 0i64;
+        let mut min_period = 0i64;
+        client
+            .GetDevicePeriod(Some(&mut default_period), Some(&mut min_period))
+            .map_err(|e| internal("GetDevicePeriod", e))?;
+
+        // Event-driven exclusive requires buffer duration == periodicity.
+        let mut client = client;
+        let mut period = default_period;
+        for attempt in 0..2 {
+            match client.Initialize(
+                AUDCLNT_SHAREMODE_EXCLUSIVE,
+                AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                period,
+                period,
+                &wfx.Format,
+                None,
+            ) {
+                Ok(()) => break,
+                Err(e) if e.code() == AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED && attempt == 0 => {
+                    let frames = client
+                        .GetBufferSize()
+                        .map_err(|e| internal("GetBufferSize (align)", e))?;
+                    period = (f64::from(frames) / f64::from(format.sample_rate) * 10_000_000.0)
+                        .round() as i64;
+                    client = device
+                        .Activate(CLSCTX_ALL, None)
+                        .map_err(|e| internal("re-activate audio client", e))?;
+                }
+                Err(e) => return Err(internal("Initialize (exclusive)", e)),
+            }
+        }
+
+        let event =
+            CreateEventW(None, false, false, None).map_err(|e| internal("CreateEvent", e))?;
+        client
+            .SetEventHandle(event)
+            .map_err(|e| internal("SetEventHandle", e))?;
+        let render: IAudioRenderClient = client
+            .GetService()
+            .map_err(|e| internal("GetService(IAudioRenderClient)", e))?;
+        let buffer_frames = client
+            .GetBufferSize()
+            .map_err(|e| internal("GetBufferSize", e))?;
+
+        Ok(ExclusiveSetup {
+            client,
+            render,
+            event,
+            buffer_frames,
+            device_format,
+        })
+    }
+}
+
+fn setup_shared(
+    device: &IMMDevice,
+    format: StreamFormat,
+) -> Result<ExclusiveSetup, OutputError> {
+    unsafe {
+        let client: IAudioClient = device
+            .Activate(CLSCTX_ALL, None)
+            .map_err(|e| internal("activate audio client", e))?;
+        let wfx = make_wfx(format, DeviceFormat::F32, 32);
+        client
+            .Initialize(
+                AUDCLNT_SHAREMODE_SHARED,
+                AUDCLNT_STREAMFLAGS_EVENTCALLBACK
+                    | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
+                    | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
+                0,
+                0,
+                &wfx.Format,
+                None,
+            )
+            .map_err(|e| internal("Initialize (shared)", e))?;
+
+        let event =
+            CreateEventW(None, false, false, None).map_err(|e| internal("CreateEvent", e))?;
+        client
+            .SetEventHandle(event)
+            .map_err(|e| internal("SetEventHandle", e))?;
+        let render: IAudioRenderClient = client
+            .GetService()
+            .map_err(|e| internal("GetService(IAudioRenderClient)", e))?;
+        let buffer_frames = client
+            .GetBufferSize()
+            .map_err(|e| internal("GetBufferSize", e))?;
+
+        Ok(ExclusiveSetup {
+            client,
+            render,
+            event,
+            buffer_frames,
+            device_format: DeviceFormat::F32,
+        })
     }
 }
 
@@ -198,6 +367,7 @@ impl OutputBackend for WasapiBackend {
         &mut self,
         device_id: Option<&str>,
         format: StreamFormat,
+        options: StreamOptions,
         mut callback: RenderCallback,
     ) -> Result<Box<dyn OutputStream>, OutputError> {
         // COM interfaces are not Send in windows-rs, so the whole stream —
@@ -212,58 +382,33 @@ impl OutputBackend for WasapiBackend {
         let join = std::thread::Builder::new()
             .name("mirelia-render".into())
             .spawn(move || {
-                let setup = || -> Result<(IAudioClient, IAudioRenderClient, HANDLE, u32), OutputError> {
-                    let enumerator = enumerator()?;
-                    let device = device_for(&enumerator, owned_id.as_deref())?;
-                    unsafe {
-                        let client: IAudioClient = device
-                            .Activate(CLSCTX_ALL, None)
-                            .map_err(|e| internal("activate audio client", e))?;
+                com_init();
+                let setup = enumerator()
+                    .and_then(|e| device_for(&e, owned_id.as_deref()))
+                    .and_then(|device| match options.mode {
+                        ShareMode::Shared => setup_shared(&device, format),
+                        ShareMode::Exclusive => setup_exclusive(&device, format),
+                    });
 
-                        let wf = make_format(format);
-                        client
-                            .Initialize(
-                                AUDCLNT_SHAREMODE_SHARED,
-                                AUDCLNT_STREAMFLAGS_EVENTCALLBACK
-                                    | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
-                                    | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
-                                0,
-                                0,
-                                &wf.Format,
-                                None,
-                            )
-                            .map_err(|e| internal("Initialize (shared)", e))?;
-
-                        let event = CreateEventW(None, false, false, None)
-                            .map_err(|e| internal("CreateEvent", e))?;
-                        client
-                            .SetEventHandle(event)
-                            .map_err(|e| internal("SetEventHandle", e))?;
-
-                        let render: IAudioRenderClient = client
-                            .GetService()
-                            .map_err(|e| internal("GetService(IAudioRenderClient)", e))?;
-                        let buffer_frames = client
-                            .GetBufferSize()
-                            .map_err(|e| internal("GetBufferSize", e))?;
-                        Ok((client, render, event, buffer_frames))
-                    }
-                };
-
-                match setup() {
-                    Ok((client, render, event, buffer_frames)) => {
-                        let _ = result_tx.send(Ok(event.0 as isize));
+                match setup {
+                    Ok(s) => {
+                        let _ = result_tx.send(Ok(s.event.0 as isize));
+                        let mut scratch =
+                            vec![0.0f32; s.buffer_frames as usize * channels];
+                        let mut dither = Dither::new(
+                            options.dither && s.device_format != DeviceFormat::F32,
+                        );
                         unsafe {
                             render_loop(
-                                &client,
-                                &render,
-                                event,
-                                buffer_frames,
+                                &s,
+                                options.mode,
                                 channels,
+                                &mut scratch,
+                                &mut dither,
                                 &stop_render,
                                 &mut callback,
                             );
-                            let _ = CloseHandle(event);
+                            let _ = CloseHandle(s.event);
                         }
                     }
                     Err(e) => {
@@ -292,55 +437,70 @@ impl OutputBackend for WasapiBackend {
     }
 }
 
-/// The render loop. Everything inside the `while` runs with RT constraints;
-/// the engine callback does the actual filling.
+/// The render loop for both modes. Shared mode writes f32 directly into
+/// the device buffer; exclusive fills a preallocated f32 scratch and
+/// converts. Everything inside the `while` runs with RT constraints.
 unsafe fn render_loop(
-    client: &IAudioClient,
-    render: &IAudioRenderClient,
-    event: HANDLE,
-    buffer_frames: u32,
+    s: &ExclusiveSetup,
+    mode: ShareMode,
     channels: usize,
+    scratch: &mut [f32],
+    dither: &mut Dither,
     stop: &AtomicBool,
     callback: &mut RenderCallback,
 ) {
     unsafe {
-        if client.Start().is_err() {
+        if s.client.Start().is_err() {
             return;
         }
 
         while !stop.load(Ordering::Acquire) {
-            if WaitForSingleObject(event, 2000) != WAIT_OBJECT_0 {
+            if WaitForSingleObject(s.event, 2000) != WAIT_OBJECT_0 {
                 continue;
             }
             if stop.load(Ordering::Acquire) {
                 break;
             }
 
-            let Ok(padding) = client.GetCurrentPadding() else {
-                break; // device invalidated
+            let (avail, queued) = match mode {
+                ShareMode::Shared => {
+                    let Ok(padding) = s.client.GetCurrentPadding() else {
+                        break; // device invalidated
+                    };
+                    (s.buffer_frames - padding, padding)
+                }
+                // Event-driven exclusive: each event frees one full period.
+                ShareMode::Exclusive => (s.buffer_frames, s.buffer_frames),
             };
-            let avail = buffer_frames - padding;
             if avail == 0 {
                 continue;
             }
 
-            let Ok(ptr) = render.GetBuffer(avail) else {
+            let Ok(ptr) = s.render.GetBuffer(avail) else {
                 break;
             };
-            let buf =
-                std::slice::from_raw_parts_mut(ptr as *mut f32, avail as usize * channels);
-            callback(
-                buf,
-                &RenderInfo {
-                    device_queued_frames: padding,
-                },
-            );
-            if render.ReleaseBuffer(avail, 0).is_err() {
+            let samples = avail as usize * channels;
+            let info = RenderInfo {
+                device_queued_frames: queued,
+            };
+            match (mode, s.device_format) {
+                (ShareMode::Shared, _) | (_, DeviceFormat::F32) => {
+                    let buf = std::slice::from_raw_parts_mut(ptr.cast::<f32>(), samples);
+                    callback(buf, &info);
+                }
+                _ => {
+                    let buf = &mut scratch[..samples];
+                    callback(buf, &info);
+                    convert::write_samples(buf, ptr, s.device_format, dither);
+                }
+            }
+
+            if s.render.ReleaseBuffer(avail, 0).is_err() {
                 break;
             }
         }
 
-        let _ = client.Stop();
+        let _ = s.client.Stop();
     }
 }
 

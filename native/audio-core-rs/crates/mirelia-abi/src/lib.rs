@@ -160,6 +160,7 @@ fn make_backend() -> Box<dyn OutputBackend> {
             &mut self,
             _id: Option<&str>,
             _format: StreamFormat,
+            _options: mirelia_audio::output::StreamOptions,
             _callback: mirelia_audio::output::RenderCallback,
         ) -> Result<Box<dyn mirelia_audio::output::OutputStream>, mirelia_audio::output::OutputError>
         {
@@ -404,12 +405,11 @@ pub unsafe extern "C" fn kn_engine_open_device(
     if e.is_null() {
         return fail(KN_ERR_INVALID_ARG, "kn_engine_open_device: null engine");
     }
-    if mode != 0 {
-        return fail(
-            KN_ERR_UNSUPPORTED,
-            "kn_engine_open_device: exclusive mode lands in M5",
-        );
-    }
+    let share_mode = match mode {
+        0 => mirelia_audio::output::ShareMode::Shared,
+        1 => mirelia_audio::output::ShareMode::Exclusive,
+        _ => return fail(KN_ERR_INVALID_ARG, "kn_engine_open_device: unknown share mode"),
+    };
     let wrapper = unsafe { &mut *e };
     let id = match unsafe { utf8_arg(device_id) } {
         Ok(id) => id,
@@ -425,7 +425,7 @@ pub unsafe extern "C" fn kn_engine_open_device(
         })
     };
 
-    match wrapper.engine.open_device(id.as_deref(), desired_fmt) {
+    match wrapper.engine.open_device(id.as_deref(), desired_fmt, share_mode) {
         Ok(actual) => {
             if !out_actual.is_null() {
                 unsafe {

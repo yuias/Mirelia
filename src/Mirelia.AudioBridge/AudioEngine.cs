@@ -55,14 +55,21 @@ public sealed class AudioEngine : IDisposable
     }
 
     /// <summary>
-    /// Opens an output device (null = system default, shared mode) and
-    /// returns the negotiated sample rate and channel count.
+    /// Opens an output device (null = system default) and returns the
+    /// negotiated sample rate and channel count. Exclusive mode is
+    /// bit-perfect (no OS mixer) but can fail with
+    /// <see cref="KnResult.DeviceBusy"/> or <see cref="KnResult.Format"/>.
     /// </summary>
-    public (uint SampleRate, ushort Channels) OpenDevice(string? deviceId = null)
+    public (uint SampleRate, ushort Channels) OpenDevice(
+        string? deviceId = null, bool exclusive = false)
     {
         ThrowIfDisposed();
         Check(NativeMethods.kn_engine_open_device(
-            _handle, deviceId, mode: 0, desired: nint.Zero, out NativeMethods.KnStreamFormat actual));
+            _handle,
+            deviceId,
+            mode: exclusive ? 1 : 0,
+            desired: nint.Zero,
+            out NativeMethods.KnStreamFormat actual));
         return (actual.SampleRate, actual.Channels);
     }
 
