@@ -77,6 +77,9 @@
                 CanUserResizeColumns="True"
                 CanUserReorderColumns="True"
                 SelectionMode="Extended"
+                GridLinesVisibility="Horizontal"
+                HorizontalGridLinesBrush="#14808080"
+                RowHeight="26"
                 DoubleTapped="OnGridDoubleTapped">
         <DataGrid.Columns>
           <DataGridTextColumn Header="#" Binding="{Binding TrackNo}" Width="44" />

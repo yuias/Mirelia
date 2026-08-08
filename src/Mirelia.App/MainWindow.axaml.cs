@@ -9,18 +9,25 @@ namespace Mirelia.App;
 /// <summary>Main shell window; UI-only glue lives here, state in the view-model.</summary>
 public partial class MainWindow : Window
 {
+    // 6% gray banding reads correctly on both light and dark themes.
+    private static readonly Avalonia.Media.IBrush BandingBrush =
+        new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.FromArgb(0x0F, 0x80, 0x80, 0x80));
+
     /// <summary>Initializes the window.</summary>
     public MainWindow()
     {
         InitializeComponent();
 
         // Visibility-driven hydration: rows realized by the grid pull their
-        // page from the database (see VirtualTrackList).
+        // page from the database (see VirtualTrackList). The same hook does
+        // row banding by data index — reliable under row recycling, where
+        // positional CSS selectors are not.
         Grid.LoadingRow += (_, e) =>
         {
             if (e.Row.DataContext is Models.TrackRow row)
             {
                 ViewModel?.Tracks?.NotifyVisible(row.Index);
+                e.Row.Background = row.Index % 2 == 1 ? BandingBrush : null;
             }
         };
     }
