@@ -29,6 +29,25 @@ public enum SourceKind
     RecentlyAdded,
 }
 
+/// <summary>A node of the playlist tree (folders contain children).</summary>
+public sealed class PlaylistNode
+{
+    /// <summary>The underlying playlist row.</summary>
+    public required PlaylistInfo Info { get; init; }
+
+    /// <summary>Child nodes; empty for non-folders.</summary>
+    public ObservableCollection<PlaylistNode> Children { get; } = [];
+
+    /// <summary>True for folder nodes.</summary>
+    public bool IsFolder => Info.Kind == PlaylistKind.Folder;
+
+    /// <summary>Inverse of <see cref="IsFolder"/>, for icon visibility bindings.</summary>
+    public bool IsPlaylist => !IsFolder;
+
+    /// <summary>Display name.</summary>
+    public string Name => Info.Name;
+}
+
 /// <summary>Main window state: sources, search, the virtualized track grid.</summary>
 public sealed partial class MainViewModel : ObservableObject
 {
@@ -46,6 +65,9 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private PlaylistInfo? _selectedPlaylist;
+
+    [ObservableProperty]
+    private PlaylistNode? _selectedNode;
 
     [ObservableProperty]
     private string _searchText = string.Empty;
@@ -69,12 +91,19 @@ public sealed partial class MainViewModel : ObservableObject
         new("Recently Added", SourceKind.RecentlyAdded),
     ];
 
-    /// <summary>Left-pane playlists.</summary>
+    /// <summary>All playlists, flat (menus and lookups).</summary>
     public ObservableCollection<PlaylistInfo> Playlists { get; } = [];
+
+    /// <summary>The playlist tree shown in the left pane.</summary>
+    public ObservableCollection<PlaylistNode> PlaylistTree { get; } = [];
 
     /// <summary>Static playlists only — valid targets for adding tracks.</summary>
     public IEnumerable<PlaylistInfo> StaticPlaylists
         => Playlists.Where(p => p.Kind == PlaylistKind.Static);
+
+    /// <summary>Folders — valid "move to" targets.</summary>
+    public IEnumerable<PlaylistInfo> Folders
+        => Playlists.Where(p => p.Kind == PlaylistKind.Folder);
 
     /// <summary>Sort choices for the toolbar selector.</summary>
     public IReadOnlyList<TrackSortOrder> SortOrders { get; } =
@@ -108,7 +137,7 @@ public sealed partial class MainViewModel : ObservableObject
         await ReloadAsync();
     }
 
-    /// <summary>Re-reads playlists from the store.</summary>
+    /// <summary>Re-reads playlists from the store and rebuilds the tree.</summary>
     public async Task RefreshPlaylistsAsync()
     {
         List<PlaylistInfo> playlists = await _library.GetPlaylistsAsync();
@@ -119,8 +148,56 @@ public sealed partial class MainViewModel : ObservableObject
             Playlists.Add(p);
         }
 
+        var nodes = playlists.ToDictionary(p => p.Id, p => new PlaylistNode { Info = p });
+        PlaylistTree.Clear();
+        foreach (PlaylistInfo p in playlists)
+        {
+            PlaylistNode node = nodes[p.Id];
+            if (p.ParentId is { } parentId && nodes.TryGetValue(parentId, out PlaylistNode? parent))
+            {
+                parent.Children.Add(node);
+            }
+            else
+            {
+                PlaylistTree.Add(node);
+            }
+        }
+
         SelectedPlaylist = playlists.FirstOrDefault(p => p.Id == selectedId);
         OnPropertyChanged(nameof(StaticPlaylists));
+        OnPropertyChanged(nameof(Folders));
+    }
+
+    /// <summary>Creates a playlist folder; returns error text or null.</summary>
+    public async Task<string?> CreateFolderAsync(string name)
+    {
+        try
+        {
+            await _library.CreateFolderAsync(name.Trim());
+        }
+        catch (InvalidOperationException ex)
+        {
+            return ex.Message;
+        }
+
+        await RefreshPlaylistsAsync();
+        return null;
+    }
+
+    /// <summary>Moves a playlist/folder into a folder (null = top level).</summary>
+    public async Task MovePlaylistAsync(PlaylistInfo playlist, long? parentId)
+    {
+        try
+        {
+            await _library.SetPlaylistParentAsync(playlist.Id, parentId);
+        }
+        catch (InvalidOperationException ex)
+        {
+            StatusText = ex.Message;
+            return;
+        }
+
+        await RefreshPlaylistsAsync();
     }
 
     /// <summary>
@@ -259,7 +336,17 @@ public sealed partial class MainViewModel : ObservableObject
         if (value is not null)
         {
             SelectedPlaylist = null;
+            SelectedNode = null;
             _ = ReloadAsync();
+        }
+    }
+
+    partial void OnSelectedNodeChanged(PlaylistNode? value)
+    {
+        // Folder selection keeps the current view; playlists load.
+        if (value is { IsPlaylist: true })
+        {
+            SelectedPlaylist = value.Info;
         }
     }
 
@@ -330,10 +417,28 @@ public sealed partial class MainViewModel : ObservableObject
     private async Task ShowNowPlayingAsync(long id)
     {
         Dictionary<long, TrackPageRow> rows = await _library.HydrateAsync([id]);
-        if (rows.TryGetValue(id, out TrackPageRow? row))
+        if (!rows.TryGetValue(id, out TrackPageRow? row))
         {
-            Transport.SetNowPlaying(row.Title, row.Artist);
+            return;
         }
+
+        Avalonia.Media.Imaging.Bitmap? artwork = null;
+        byte[]? bytes = await _library.GetArtworkAsync(id);
+        if (bytes is not null)
+        {
+            try
+            {
+                using var stream = new MemoryStream(bytes);
+                // Panel width is ~180 logical px; decode small to keep memory flat.
+                artwork = Avalonia.Media.Imaging.Bitmap.DecodeToWidth(stream, 400);
+            }
+            catch (Exception)
+            {
+                // Broken embedded images are not worth surfacing.
+            }
+        }
+
+        Transport.SetNowPlaying(row.Title, row.Artist, row.Album, artwork);
     }
 
 }

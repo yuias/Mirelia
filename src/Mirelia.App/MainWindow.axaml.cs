@@ -48,10 +48,14 @@ public partial class MainWindow : Window
         Grid.AddHandler(PointerMovedEvent, OnGridPointerMoved, RoutingStrategies.Tunnel);
 
         // Drop targets: playlists take track ids, the window takes files.
-        PlaylistList.AddHandler(DragDrop.DragOverEvent, OnPlaylistDragOver);
-        PlaylistList.AddHandler(DragDrop.DropEvent, OnPlaylistDrop);
+        PlaylistTreeView.AddHandler(DragDrop.DragOverEvent, OnPlaylistDragOver);
+        PlaylistTreeView.AddHandler(DragDrop.DropEvent, OnPlaylistDrop);
         AddHandler(DragDrop.DragOverEvent, OnWindowDragOver);
         AddHandler(DragDrop.DropEvent, OnWindowDrop);
+
+        // Tree context menus are built in code: the "Move to" submenu is
+        // per-node and data-driven, which XAML templates handle poorly.
+        PlaylistTreeView.AddHandler(ContextRequestedEvent, OnTreeContextRequested);
     }
 
     private MainViewModel? ViewModel => DataContext as MainViewModel;
@@ -154,13 +158,14 @@ public partial class MainWindow : Window
         await DragDrop.DoDragDropAsync(press, transfer, DragDropEffects.Copy);
     }
 
-    private static PlaylistInfo? PlaylistUnder(DragEventArgs e)
+    private static PlaylistInfo? PlaylistUnder(RoutedEventArgs e)
     {
-        return (e.Source as Visual)?
+        var node = (e.Source as Visual)?
             .GetSelfAndVisualAncestors()
-            .OfType<ListBoxItem>()
+            .OfType<TreeViewItem>()
             .FirstOrDefault()?
-            .DataContext as PlaylistInfo;
+            .DataContext as PlaylistNode;
+        return node?.Info;
     }
 
     private void OnPlaylistDragOver(object? sender, DragEventArgs e)
@@ -204,39 +209,72 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnRenamePlaylist(object? sender, RoutedEventArgs e)
+    private async void OnNewFolderClick(object? sender, RoutedEventArgs e)
     {
-        if (ViewModel is not { } vm
-            || (sender as MenuItem)?.DataContext is not PlaylistInfo playlist)
+        if (ViewModel is { } vm)
+        {
+            var dialog = new InputDialog(
+                "New Folder", "Folder name", string.Empty, vm.CreateFolderAsync);
+            await dialog.ShowDialog<string?>(this);
+        }
+    }
+
+    private void OnTreeContextRequested(object? sender, ContextRequestedEventArgs e)
+    {
+        if (ViewModel is not { } vm || PlaylistUnder(e) is not { } playlist)
         {
             return;
         }
 
-        var dialog = new InputDialog(
-            "Rename Playlist",
-            "New name",
-            playlist.Name,
-            value => vm.RenamePlaylistAsync(playlist, value));
-        await dialog.ShowDialog<string?>(this);
-    }
+        e.Handled = true;
+        var menu = new ContextMenu();
 
-    private async void OnDeletePlaylist(object? sender, RoutedEventArgs e)
-    {
-        if (ViewModel is { } vm
-            && (sender as MenuItem)?.DataContext is PlaylistInfo playlist)
+        var rename = new MenuItem { Header = "Rename…" };
+        rename.Click += async (_, _) =>
         {
-            await vm.DeletePlaylistAsync(playlist);
-        }
-    }
+            var dialog = new InputDialog(
+                "Rename", "New name", playlist.Name,
+                value => vm.RenamePlaylistAsync(playlist, value));
+            await dialog.ShowDialog<string?>(this);
+        };
+        menu.Items.Add(rename);
 
-    private async void OnExportPlaylist(object? sender, RoutedEventArgs e)
-    {
-        if (ViewModel is not { } vm
-            || (sender as MenuItem)?.DataContext is not PlaylistInfo playlist)
+        if (playlist.Kind != PlaylistKind.Folder)
         {
-            return;
+            var export = new MenuItem { Header = "Export as .m3u8…" };
+            export.Click += async (_, _) => await ExportPlaylistAsync(vm, playlist);
+            menu.Items.Add(export);
         }
 
+        var moveTo = new MenuItem { Header = "Move to" };
+        var topLevel = new MenuItem { Header = "(Top level)" };
+        topLevel.Click += async (_, _) => await vm.MovePlaylistAsync(playlist, null);
+        moveTo.Items.Add(topLevel);
+        foreach (Library.Playlists.PlaylistInfo folder in vm.Folders)
+        {
+            if (folder.Id == playlist.Id)
+            {
+                continue;
+            }
+
+            var item = new MenuItem { Header = folder.Name };
+            long target = folder.Id;
+            item.Click += async (_, _) => await vm.MovePlaylistAsync(playlist, target);
+            moveTo.Items.Add(item);
+        }
+
+        menu.Items.Add(moveTo);
+        menu.Items.Add(new Separator());
+
+        var delete = new MenuItem { Header = "Delete" };
+        delete.Click += async (_, _) => await vm.DeletePlaylistAsync(playlist);
+        menu.Items.Add(delete);
+
+        menu.Open(PlaylistTreeView);
+    }
+
+    private async Task ExportPlaylistAsync(MainViewModel vm, PlaylistInfo playlist)
+    {
         IStorageFile? file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
         {
             Title = "Export playlist",

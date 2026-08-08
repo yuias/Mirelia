@@ -104,6 +104,45 @@ public sealed class LibraryService : IDisposable
     public Task<PlaylistInfo> CreateSmartPlaylistAsync(string name, string queryText)
         => RunAsync(() => _playlists.CreateSmart(name, queryText));
 
+    /// <summary>Creates a playlist folder.</summary>
+    public Task<PlaylistInfo> CreateFolderAsync(string name)
+        => RunAsync(() => _playlists.CreateFolder(name));
+
+    /// <summary>Moves a playlist/folder under a folder (null = top level).</summary>
+    public Task SetPlaylistParentAsync(long id, long? parentId)
+        => RunAsync<object?>(() =>
+        {
+            _playlists.SetParent(id, parentId);
+            return null;
+        });
+
+    /// <summary>
+    /// Embedded artwork bytes of a track's file, or null when the file is
+    /// missing or carries no picture.
+    /// </summary>
+    public Task<byte[]?> GetArtworkAsync(long trackId)
+        => RunAsync<byte[]?>(() =>
+        {
+            string? path = TrackPager.GetTrackPath(_db, trackId);
+            if (path is null || !File.Exists(path))
+            {
+                return null;
+            }
+
+            try
+            {
+                using TagLib.File file = TagLib.File.Create(path);
+                TagLib.IPicture? picture = file.Tag.Pictures.FirstOrDefault();
+                return picture?.Data.Data;
+            }
+            catch (Exception ex) when (ex is TagLib.CorruptFileException
+                or TagLib.UnsupportedFormatException
+                or IOException)
+            {
+                return null;
+            }
+        });
+
     /// <summary>Appends tracks to a static playlist.</summary>
     public Task AddToPlaylistAsync(long playlistId, IReadOnlyList<long> trackIds)
         => RunAsync<object?>(() =>

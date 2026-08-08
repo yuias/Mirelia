@@ -12,7 +12,16 @@ public sealed partial class TransportViewModel : ObservableObject
     private bool _updatingFromPlayback;
 
     [ObservableProperty]
-    private string _nowPlaying = string.Empty;
+    private string _nowPlayingTitle = string.Empty;
+
+    [ObservableProperty]
+    private string _nowPlayingArtist = string.Empty;
+
+    [ObservableProperty]
+    private string _nowPlayingAlbum = string.Empty;
+
+    [ObservableProperty]
+    private Avalonia.Media.Imaging.Bitmap? _artwork;
 
     [ObservableProperty]
     private string _positionText = "0:00";
@@ -27,11 +36,7 @@ public sealed partial class TransportViewModel : ObservableObject
     private double _totalSeconds = 1;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(PlayPauseGlyph))]
     private bool _isPlaying;
-
-    /// <summary>Play/pause button glyph reflecting <see cref="IsPlaying"/>.</summary>
-    public string PlayPauseGlyph => IsPlaying ? "⏸" : "▶";
 
     [ObservableProperty]
     private double _volume = 1.0;
@@ -43,10 +48,17 @@ public sealed partial class TransportViewModel : ObservableObject
         _player.PositionChanged += OnPosition;
     }
 
-    /// <summary>Shows the audible track's title and artist.</summary>
-    public void SetNowPlaying(string? title, string? artist)
+    /// <summary>Shows the audible track's metadata and artwork.</summary>
+    public void SetNowPlaying(
+        string? title, string? artist, string? album, Avalonia.Media.Imaging.Bitmap? artwork)
     {
-        NowPlaying = string.IsNullOrEmpty(artist) ? title ?? string.Empty : $"{title} — {artist}";
+        NowPlayingTitle = title ?? string.Empty;
+        NowPlayingArtist = artist ?? string.Empty;
+        NowPlayingAlbum = album ?? string.Empty;
+
+        Avalonia.Media.Imaging.Bitmap? previous = Artwork;
+        Artwork = artwork;
+        previous?.Dispose();
     }
 
     [RelayCommand]
