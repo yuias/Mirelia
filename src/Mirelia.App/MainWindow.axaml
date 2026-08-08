@@ -10,12 +10,24 @@
 
   <DockPanel>
 
-    <!-- Toolbar: search, sort, add folder -->
+    <!-- Menu bar -->
+    <Menu DockPanel.Dock="Top">
+      <MenuItem Header="_File">
+        <MenuItem Header="Add Folder…" Click="OnAddFolderClick" />
+        <Separator />
+        <MenuItem Header="Exit" Click="OnExitClick" />
+      </MenuItem>
+      <MenuItem Header="_Tools">
+        <MenuItem Header="Scan ReplayGain" Click="OnRgScanClick" />
+        <Separator />
+        <MenuItem Header="Preferences…" Click="OnPreferencesClick" />
+      </MenuItem>
+    </Menu>
+
+    <!-- Toolbar: search + sort -->
     <Border DockPanel.Dock="Top" Padding="8,6" BorderThickness="0,0,0,1"
             BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
       <DockPanel>
-        <Button DockPanel.Dock="Right" Content="Add Folder…" Margin="8,0,0,0"
-                Click="OnAddFolderClick" />
         <ComboBox DockPanel.Dock="Right" Width="150" Margin="8,0,0,0"
                   ItemsSource="{Binding SortOrders}"
                   SelectedItem="{Binding SortOrder}" />

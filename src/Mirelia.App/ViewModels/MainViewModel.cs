@@ -291,6 +291,64 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Scans ReplayGain for every track that has no values yet, on a worker
+    /// thread with its own engine. Reports progress in the status line.
+    /// </summary>
+    public async Task ScanReplayGainAsync()
+    {
+        List<(long Id, string Path)> pending = await _library.GetTracksMissingReplayGainAsync();
+        if (pending.Count == 0)
+        {
+            StatusText = "ReplayGain: nothing to scan";
+            return;
+        }
+
+        StatusText = $"ReplayGain: scanning {pending.Count} track(s)…";
+        var progress = new Progress<int>(n => StatusText = $"ReplayGain: {n}/{pending.Count}…");
+        List<(long Id, float Gain, float Peak)> results = await Task.Run(() =>
+        {
+            var scanned = new List<(long, float, float)>(pending.Count);
+            try
+            {
+                using var engine = AudioBridge.AudioEngine.Create();
+                int processed = 0;
+                foreach ((long id, string path) in pending)
+                {
+                    try
+                    {
+                        (float gain, float peak) = engine.ScanLoudness(path);
+                        scanned.Add((id, gain, peak));
+                    }
+                    catch (AudioBridge.AudioEngineException)
+                    {
+                        // Missing or unreadable file; skip it.
+                    }
+
+                    if (++processed % 20 == 0)
+                    {
+                        ((IProgress<int>)progress).Report(processed);
+                    }
+                }
+            }
+            catch (DllNotFoundException)
+            {
+                // No backend; scanned stays empty.
+            }
+
+            return scanned;
+        });
+
+        foreach ((long id, float gain, float peak) in results)
+        {
+            await _library.SetTrackReplayGainAsync(id, gain, peak);
+        }
+
+        int failed = pending.Count - results.Count;
+        StatusText = $"ReplayGain: {results.Count} scanned" +
+            (failed > 0 ? $", {failed} failed" : string.Empty);
+    }
+
     /// <summary>Scans dropped files/folders into the library.</summary>
     public async Task AddDroppedPathsAsync(IReadOnlyList<string> paths)
     {

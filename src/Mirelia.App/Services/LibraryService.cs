@@ -59,6 +59,22 @@ public sealed class LibraryService : IDisposable
     public Task<string?> GetPathAsync(long id)
         => RunAsync(() => TrackPager.GetTrackPath(_db, id));
 
+    /// <summary>Stored ReplayGain track gain (dB), or null if not scanned.</summary>
+    public Task<double?> GetTrackGainAsync(long id)
+        => RunAsync(() => TrackPager.GetTrackGain(_db, id));
+
+    /// <summary>Tracks with no ReplayGain values yet.</summary>
+    public Task<List<(long Id, string Path)>> GetTracksMissingReplayGainAsync()
+        => RunAsync(() => TrackPager.GetTracksMissingReplayGain(_db));
+
+    /// <summary>Stores scanned ReplayGain values.</summary>
+    public Task SetTrackReplayGainAsync(long id, double gainDb, double peak)
+        => RunAsync<object?>(() =>
+        {
+            TrackPager.SetTrackReplayGain(_db, id, gainDb, peak);
+            return null;
+        });
+
     /// <summary>Total track count.</summary>
     public Task<long> CountAsync()
         => RunAsync(() => TrackPager.Count(_db));

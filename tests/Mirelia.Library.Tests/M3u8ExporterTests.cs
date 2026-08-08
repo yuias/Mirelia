@@ -25,9 +25,9 @@ public sealed class M3u8ExporterTests : IDisposable
         // volume — relative paths across drive roots cannot exist.
         _musicDir = Path.Combine(_workDir, "music");
         Directory.CreateDirectory(_musicDir);
-        foreach (string file in Directory.GetFiles(FixturesDir))
+        foreach (string name in ScannerTests.TagFixtures)
         {
-            File.Copy(file, Path.Combine(_musicDir, Path.GetFileName(file)));
+            File.Copy(Path.Combine(FixturesDir, name), Path.Combine(_musicDir, name));
         }
 
         _dbPath = Path.Combine(_workDir, "library.db");

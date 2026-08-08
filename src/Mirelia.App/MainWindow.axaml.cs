@@ -209,6 +209,24 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnExitClick(object? sender, RoutedEventArgs e) => Close();
+
+    private async void OnRgScanClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is { } vm)
+        {
+            await vm.ScanReplayGainAsync();
+        }
+    }
+
+    private async void OnPreferencesClick(object? sender, RoutedEventArgs e)
+    {
+        if (App.Settings is { } settings)
+        {
+            await new PreferencesDialog(settings).ShowDialog<bool>(this);
+        }
+    }
+
     private async void OnNewFolderClick(object? sender, RoutedEventArgs e)
     {
         if (ViewModel is { } vm)

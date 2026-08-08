@@ -14,6 +14,9 @@ public class App : Application
     private LibraryService? _library;
     private AudioPlayerService? _player;
 
+    /// <summary>The settings service, available app-wide after startup.</summary>
+    public static SettingsService? Settings { get; private set; }
+
     /// <inheritdoc />
     public override void Initialize()
     {
@@ -26,7 +29,11 @@ public class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             _library = new LibraryService(LibraryPaths.DefaultDatabasePath);
-            _player = new AudioPlayerService(_library);
+            Settings = new SettingsService(
+                Path.Combine(
+                    Path.GetDirectoryName(Path.GetFullPath(LibraryPaths.DefaultDatabasePath))!,
+                    "settings.json"));
+            _player = new AudioPlayerService(_library, Settings);
             var viewModel = new MainViewModel(_library, _player);
 
             desktop.MainWindow = new MainWindow { DataContext = viewModel };

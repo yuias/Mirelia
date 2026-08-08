@@ -1,0 +1,30 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Mirelia.App.Dialogs.PreferencesDialog"
+        Title="Preferences"
+        Width="460" SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner">
+  <StackPanel Margin="16" Spacing="12">
+
+    <TextBlock FontWeight="SemiBold" Text="Audio Output" />
+    <StackPanel Spacing="6">
+      <TextBlock Text="Device" Opacity="0.7" FontSize="12" />
+      <ComboBox x:Name="DeviceBox" HorizontalAlignment="Stretch" />
+      <CheckBox x:Name="ExclusiveCheck"
+                Content="Exclusive mode (bit-perfect, blocks other apps)" />
+    </StackPanel>
+
+    <TextBlock FontWeight="SemiBold" Text="ReplayGain" />
+    <StackPanel Spacing="6">
+      <ComboBox x:Name="RgBox" HorizontalAlignment="Stretch" />
+      <TextBlock Opacity="0.6" FontSize="12" TextWrapping="Wrap"
+                 Text="Applies scanned track gain during playback. Scan your library from Tools → Scan ReplayGain." />
+    </StackPanel>
+
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+      <Button Content="Cancel" Click="OnCancel" />
+      <Button Content="Save" Classes="accent" Click="OnSave" IsDefault="True" />
+    </StackPanel>
+  </StackPanel>
+</Window>

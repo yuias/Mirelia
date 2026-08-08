@@ -12,6 +12,7 @@ namespace Mirelia.App.Services;
 public sealed class AudioPlayerService : IDisposable
 {
     private readonly LibraryService _library;
+    private readonly SettingsService _settings;
     private readonly DispatcherTimer _timer;
 
     private AudioEngine? _engine;
@@ -30,11 +31,30 @@ public sealed class AudioPlayerService : IDisposable
     public event Action<string>? PlaybackError;
 
     /// <summary>Creates the service; the engine itself is created lazily.</summary>
-    public AudioPlayerService(LibraryService library)
+    public AudioPlayerService(LibraryService library, SettingsService settings)
     {
         _library = library;
+        _settings = settings;
         _timer = new DispatcherTimer(
             TimeSpan.FromMilliseconds(200), DispatcherPriority.Background, (_, _) => Poll());
+
+        // Device/mode changes take effect on the next play; live playback
+        // stops so the old stream does not linger on the old device.
+        _settings.Changed += _ =>
+        {
+            try
+            {
+                _engine?.Stop();
+                _engine?.CloseDevice();
+            }
+            catch (AudioEngineException)
+            {
+                // Old device may already be gone; the reopen handles it.
+            }
+
+            _deviceOpen = false;
+            _index = -1;
+        };
     }
 
     /// <summary>True when a queue is loaded (playing or paused).</summary>
@@ -143,7 +163,7 @@ public sealed class AudioPlayerService : IDisposable
             EnsureEngine();
             _index = index;
             _nextPreloaded = false;
-            _engine!.Load(AudioSlot.Current, path, (ulong)id);
+            _engine!.Load(AudioSlot.Current, path, (ulong)id, await GainForAsync(id));
             _engine.Play();
             _timer.Start();
             NowPlayingChanged?.Invoke(id);
@@ -153,6 +173,17 @@ public sealed class AudioPlayerService : IDisposable
         {
             PlaybackError?.Invoke(ex.Message);
         }
+    }
+
+    private async Task<float> GainForAsync(long id)
+    {
+        if (_settings.Current.ReplayGain != ReplayGainMode.Track)
+        {
+            return 0f;
+        }
+
+        double? gain = await _library.GetTrackGainAsync(id);
+        return (float)(gain ?? 0);
     }
 
     private async Task PreloadNextAsync()
@@ -171,7 +202,7 @@ public sealed class AudioPlayerService : IDisposable
 
         try
         {
-            _engine.Load(AudioSlot.Next, path, (ulong)nextId);
+            _engine.Load(AudioSlot.Next, path, (ulong)nextId, await GainForAsync(nextId));
             _nextPreloaded = true;
         }
         catch (AudioEngineException)
@@ -238,10 +269,25 @@ public sealed class AudioPlayerService : IDisposable
     private void EnsureEngine()
     {
         _engine ??= AudioEngine.Create();
-        if (!_deviceOpen)
+        if (_deviceOpen)
         {
-            _engine.OpenDevice();
-            _deviceOpen = true;
+            return;
         }
+
+        AppSettings settings = _settings.Current;
+        try
+        {
+            _engine.OpenDevice(settings.DeviceId, settings.Exclusive);
+        }
+        catch (AudioEngineException ex) when (settings.Exclusive
+            && ex.Result is KnResult.DeviceBusy or KnResult.Format or KnResult.Unsupported)
+        {
+            // Bit-perfect denied (device busy or format not offered):
+            // shared mode beats silence.
+            _engine.OpenDevice(settings.DeviceId, exclusive: false);
+            PlaybackError?.Invoke($"exclusive mode unavailable, using shared ({ex.Result})");
+        }
+
+        _deviceOpen = true;
     }
 }

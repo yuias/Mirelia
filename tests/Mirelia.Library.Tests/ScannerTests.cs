@@ -13,6 +13,17 @@ namespace Mirelia.Library.Tests;
 /// </summary>
 public sealed class ScannerTests : IDisposable
 {
+    /// <summary>
+    /// The five tagged format fixtures. The fixtures directory also holds
+    /// gapless/seek material, so tests scan an isolated copy of just these.
+    /// </summary>
+    internal static readonly string[] TagFixtures =
+    [
+        "fixture.mp3", "fixture.flac", "fixture.wav",
+        "fixture-aac.m4a", "fixture-alac.m4a",
+    ];
+
+    private readonly string _workDir;
     private readonly string _dbPath;
     private readonly LibraryDatabase _db;
     private readonly ScanResult _result;
@@ -22,15 +33,23 @@ public sealed class ScannerTests : IDisposable
 
     public ScannerTests()
     {
+        _workDir = Path.Combine(Path.GetTempPath(), $"mirelia-scan-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_workDir);
+        foreach (string name in TagFixtures)
+        {
+            File.Copy(Path.Combine(FixturesDir, name), Path.Combine(_workDir, name));
+        }
+
         _dbPath = Path.Combine(Path.GetTempPath(), $"mirelia-test-{Guid.NewGuid():N}.db");
         _db = LibraryDatabase.Open(_dbPath);
-        _result = new LibraryScanner(_db).Scan(FixturesDir);
+        _result = new LibraryScanner(_db).Scan(_workDir);
     }
 
     public void Dispose()
     {
         _db.Dispose();
         File.Delete(_dbPath);
+        Directory.Delete(_workDir, recursive: true);
     }
 
     private List<TrackSummary> Query(string dsl)
@@ -123,7 +142,7 @@ public sealed class ScannerTests : IDisposable
     [Fact]
     public void RescanLeavesUnchangedFilesAlone()
     {
-        ScanResult second = new LibraryScanner(_db).Scan(FixturesDir);
+        ScanResult second = new LibraryScanner(_db).Scan(_workDir);
         Assert.Equal(0, second.Added);
         Assert.Equal(0, second.Updated);
         Assert.Equal(5, second.Unchanged);
@@ -134,7 +153,7 @@ public sealed class ScannerTests : IDisposable
     {
         long generation = _db.GetLibraryGeneration();
         Assert.True(generation >= 1);
-        ScanResult second = new LibraryScanner(_db).Scan(FixturesDir);
+        ScanResult second = new LibraryScanner(_db).Scan(_workDir);
         Assert.Equal(0, second.Added);
         Assert.Equal(generation, _db.GetLibraryGeneration());
     }
