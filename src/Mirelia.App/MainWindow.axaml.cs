@@ -1,31 +1,56 @@
 using Avalonia.Controls;
-using Mirelia.AudioBridge;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
+using Mirelia.App.ViewModels;
 
 namespace Mirelia.App;
 
-/// <summary>
-/// M0 shell window. The three-pane layout (§7 of the kickoff) lands in M3;
-/// for now this only proves the native backend loads inside the UI process.
-/// </summary>
+/// <summary>Main shell window; UI-only glue lives here, state in the view-model.</summary>
 public partial class MainWindow : Window
 {
-    /// <summary>Initializes the window and probes the native backend.</summary>
+    /// <summary>Initializes the window.</summary>
     public MainWindow()
     {
         InitializeComponent();
-        StatusText.Text = ProbeNativeBackend();
+
+        // Visibility-driven hydration: rows realized by the grid pull their
+        // page from the database (see VirtualTrackList).
+        Grid.LoadingRow += (_, e) =>
+        {
+            if (e.Row.DataContext is Models.TrackRow row)
+            {
+                ViewModel?.Tracks?.NotifyVisible(row.Index);
+            }
+        };
     }
 
-    private static string ProbeNativeBackend()
+    private MainViewModel? ViewModel => DataContext as MainViewModel;
+
+    private async void OnGridDoubleTapped(object? sender, TappedEventArgs e)
     {
-        try
+        if (ViewModel is { } vm && Grid.SelectedIndex >= 0)
         {
-            using var engine = AudioEngine.Create();
-            return $"M0 scaffold — audio core loaded, state: {engine.GetPosition().State}";
+            await vm.PlayRowAsync(Grid.SelectedIndex);
         }
-        catch (Exception ex) when (ex is AudioEngineException or DllNotFoundException)
+    }
+
+    private async void OnAddFolderClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { } vm)
         {
-            return $"M0 scaffold — audio core unavailable: {ex.Message}";
+            return;
+        }
+
+        IReadOnlyList<IStorageFolder> folders = await StorageProvider.OpenFolderPickerAsync(
+            new FolderPickerOpenOptions
+            {
+                Title = "Add music folder",
+                AllowMultiple = false,
+            });
+        if (folders.Count == 1 && folders[0].TryGetLocalPath() is { } path)
+        {
+            await vm.AddFolderAsync(path);
         }
     }
 }

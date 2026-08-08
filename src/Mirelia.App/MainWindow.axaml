@@ -1,13 +1,102 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Mirelia.App.ViewModels"
         x:Class="Mirelia.App.MainWindow"
+        x:DataType="vm:MainViewModel"
         Title="Mirelia"
-        Width="1100" Height="700">
-  <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8">
-    <TextBlock Text="Mirelia" FontSize="28" HorizontalAlignment="Center" />
-    <TextBlock x:Name="StatusText"
-               Text="M0 scaffold"
-               HorizontalAlignment="Center"
-               Opacity="0.7" />
-  </StackPanel>
+        Width="1280" Height="760">
+
+  <DockPanel>
+
+    <!-- Toolbar: search, sort, add folder -->
+    <Border DockPanel.Dock="Top" Padding="8,6" BorderThickness="0,0,0,1"
+            BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
+      <DockPanel>
+        <Button DockPanel.Dock="Right" Content="Add Folder…" Margin="8,0,0,0"
+                Click="OnAddFolderClick" />
+        <ComboBox DockPanel.Dock="Right" Width="150" Margin="8,0,0,0"
+                  ItemsSource="{Binding SortOrders}"
+                  SelectedItem="{Binding SortOrder}" />
+        <TextBox PlaceholderText="Search (full-text)…"
+                 Text="{Binding SearchText}" />
+      </DockPanel>
+    </Border>
+
+    <!-- Transport bar -->
+    <Border DockPanel.Dock="Bottom" Padding="10,8" BorderThickness="0,1,0,0"
+            BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
+      <Grid ColumnDefinitions="Auto,Auto,Auto,12,Auto,8,*,8,Auto,12,120"
+            DataContext="{Binding Transport}">
+        <Button Grid.Column="0" Width="36" Content="⏮"
+                Command="{Binding PreviousCommand}" />
+        <Button Grid.Column="1" Width="44" Margin="4,0"
+                Content="{Binding PlayPauseGlyph}"
+                Command="{Binding PlayPauseCommand}" />
+        <Button Grid.Column="2" Width="36" Content="⏭"
+                Command="{Binding NextCommand}" />
+        <TextBlock Grid.Column="4" VerticalAlignment="Center"
+                   Text="{Binding PositionText}" />
+        <Slider Grid.Column="6" VerticalAlignment="Center"
+                Minimum="0" Maximum="{Binding TotalSeconds}"
+                Value="{Binding PositionSeconds}" />
+        <TextBlock Grid.Column="8" VerticalAlignment="Center"
+                   Text="{Binding TotalText}" />
+        <Slider Grid.Column="10" VerticalAlignment="Center"
+                Minimum="0" Maximum="1"
+                Value="{Binding Volume}" />
+      </Grid>
+    </Border>
+
+    <!-- Now playing + status line -->
+    <Border DockPanel.Dock="Bottom" Padding="10,2">
+      <DockPanel>
+        <TextBlock DockPanel.Dock="Right" Opacity="0.7"
+                   Text="{Binding StatusText}" />
+        <TextBlock FontWeight="SemiBold"
+                   Text="{Binding Transport.NowPlaying}" />
+      </DockPanel>
+    </Border>
+
+    <!-- Sources -->
+    <Border DockPanel.Dock="Left" Width="200" BorderThickness="0,0,1,0"
+            BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
+      <DockPanel>
+        <TextBlock DockPanel.Dock="Top" Margin="12,10,0,6" Opacity="0.6"
+                   FontSize="12" Text="SOURCES" />
+        <ListBox ItemsSource="{Binding Sources}"
+                 SelectedItem="{Binding SelectedSource}" />
+      </DockPanel>
+    </Border>
+
+    <!-- Track grid -->
+    <Panel>
+      <DataGrid x:Name="Grid"
+                ItemsSource="{Binding Tracks}"
+                IsReadOnly="True"
+                CanUserSortColumns="False"
+                CanUserResizeColumns="True"
+                CanUserReorderColumns="True"
+                SelectionMode="Extended"
+                DoubleTapped="OnGridDoubleTapped">
+        <DataGrid.Columns>
+          <DataGridTextColumn Header="#" Binding="{Binding TrackNo}" Width="44" />
+          <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="2*" />
+          <DataGridTextColumn Header="Artist" Binding="{Binding Artist}" Width="1.2*" />
+          <DataGridTextColumn Header="Album" Binding="{Binding Album}" Width="1.2*" />
+          <DataGridTextColumn Header="Time" Binding="{Binding Duration}" Width="64" />
+          <DataGridTextColumn Header="Year" Binding="{Binding Year}" Width="56" />
+          <DataGridTextColumn Header="Codec" Binding="{Binding Codec}" Width="64" />
+        </DataGrid.Columns>
+      </DataGrid>
+      <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                  Spacing="8"
+                  IsVisible="{Binding IsLibraryEmpty}">
+        <TextBlock FontSize="18" Opacity="0.7" HorizontalAlignment="Center"
+                   Text="Your library is empty" />
+        <TextBlock Opacity="0.5" HorizontalAlignment="Center"
+                   Text="Use “Add Folder…” to scan your music." />
+      </StackPanel>
+    </Panel>
+
+  </DockPanel>
 </Window>

@@ -9,8 +9,10 @@
     <PackageVersion Include="Avalonia" Version="$(AvaloniaVersion)" />
     <PackageVersion Include="Avalonia.Desktop" Version="$(AvaloniaVersion)" />
     <PackageVersion Include="Avalonia.Themes.Fluent" Version="$(AvaloniaVersion)" />
-    <!-- Referenced from M3 onward; pinned here so the version decision is central. -->
-    <PackageVersion Include="Avalonia.Controls.TreeDataGrid" Version="12.2.1" />
+    <!-- TreeDataGrid 12.x requires a commercial AvaloniaUI license; the MIT
+         DataGrid replaces it (ADR 0007). -->
+    <PackageVersion Include="Avalonia.Controls.DataGrid" Version="12.1.1" />
+    <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.2" />
   </ItemGroup>
 
   <ItemGroup>
