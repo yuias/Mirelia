@@ -138,6 +138,38 @@ public sealed class PlaylistStoreTests : IDisposable
     }
 
     [Fact]
+    public void FoldersNestAndRejectSubtreeCycles()
+    {
+        PlaylistInfo outer = _store.CreateFolder("Outer");
+        PlaylistInfo inner = _store.CreateFolder("Inner");
+        PlaylistInfo list = _store.CreateStatic("Nested");
+
+        _store.SetParent(inner.Id, outer.Id);
+        _store.SetParent(list.Id, inner.Id);
+        List<PlaylistInfo> all = _store.List();
+        Assert.Equal(outer.Id, all.First(p => p.Id == inner.Id).ParentId);
+        Assert.Equal(inner.Id, all.First(p => p.Id == list.Id).ParentId);
+
+        // A folder cannot move into its own subtree, and playlists cannot parent.
+        Assert.Throws<InvalidOperationException>(() => _store.SetParent(outer.Id, inner.Id));
+        Assert.Throws<InvalidOperationException>(() => _store.SetParent(outer.Id, outer.Id));
+        Assert.Throws<InvalidOperationException>(() => _store.SetParent(inner.Id, list.Id));
+    }
+
+    [Fact]
+    public void DeletingAFolderReparentsChildren()
+    {
+        PlaylistInfo outer = _store.CreateFolder("Keep");
+        PlaylistInfo doomed = _store.CreateFolder("Doomed");
+        PlaylistInfo list = _store.CreateStatic("Orphan?");
+        _store.SetParent(doomed.Id, outer.Id);
+        _store.SetParent(list.Id, doomed.Id);
+
+        _store.Delete(doomed.Id);
+        Assert.Equal(outer.Id, _store.List().First(p => p.Id == list.Id).ParentId);
+    }
+
+    [Fact]
     public void DeleteCascadesEntries()
     {
         PlaylistInfo p = _store.CreateStatic("Gone");

@@ -72,6 +72,46 @@ public sealed class PlaylistStore(LibraryDatabase db)
     public PlaylistInfo CreateStatic(string name)
         => Insert(name, PlaylistKind.Static, queryText: null);
 
+    /// <summary>Creates a folder for grouping playlists.</summary>
+    public PlaylistInfo CreateFolder(string name)
+        => Insert(name, PlaylistKind.Folder, queryText: null);
+
+    /// <summary>
+    /// Moves a playlist or folder under <paramref name="parentId"/>
+    /// (null = root). The parent must be a folder, and moving a folder into
+    /// its own subtree is rejected.
+    /// </summary>
+    public void SetParent(long id, long? parentId)
+    {
+        if (parentId is { } parent)
+        {
+            List<PlaylistInfo> all = List();
+            PlaylistInfo target = all.FirstOrDefault(p => p.Id == parent)
+                ?? throw new InvalidOperationException($"Playlist {parent} does not exist.");
+            if (target.Kind != PlaylistKind.Folder)
+            {
+                throw new InvalidOperationException($"'{target.Name}' is not a folder.");
+            }
+
+            // Walk up from the target; hitting `id` means we'd create a loop.
+            Dictionary<long, long?> parents = all.ToDictionary(p => p.Id, p => p.ParentId);
+            for (long? cursor = parent; cursor is { } c; cursor = parents.GetValueOrDefault(c))
+            {
+                if (c == id)
+                {
+                    throw new InvalidOperationException(
+                        "Cannot move a folder into its own subtree.");
+                }
+            }
+        }
+
+        db.Execute(
+            "UPDATE playlist SET parent_id = $parent, modified_unix = $now WHERE id = $id",
+            ("$parent", parentId),
+            ("$now", Now()),
+            ("$id", id));
+    }
+
     /// <summary>
     /// Creates a smart playlist. The query is parsed, compiled (validating
     /// fields), checked for playlist-reference cycles, and persisted in
@@ -114,13 +154,23 @@ public sealed class PlaylistStore(LibraryDatabase db)
             ("$id", id));
     }
 
-    /// <summary>Deletes a playlist; entries cascade.</summary>
+    /// <summary>
+    /// Deletes a playlist; entries cascade. Deleting a folder re-parents its
+    /// children to the folder's own parent instead of orphaning them.
+    /// </summary>
     public void Delete(long id)
     {
+        using LibraryDatabase.TransactionScope tx = db.BeginTransaction();
+        db.Execute("""
+            UPDATE playlist
+            SET parent_id = (SELECT parent_id FROM playlist WHERE id = $id)
+            WHERE parent_id = $id
+            """, ("$id", id));
         db.Execute("DELETE FROM playlist WHERE id = $id", ("$id", id));
         _smartCache.Remove(id);
         // Smart playlists referencing this one by name change membership.
         db.BumpLibraryGeneration();
+        tx.Commit();
     }
 
     /// <summary>Track ids of a static playlist, in position order.</summary>
