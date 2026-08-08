@@ -37,6 +37,10 @@ typedef const char *(*fn_engine_last_error)(kn_engine *);
 typedef kn_result (*fn_get_position)(kn_engine *, kn_position *);
 typedef size_t (*fn_poll_event)(kn_engine *, kn_event *, size_t);
 typedef kn_result (*fn_devices_enumerate)(kn_engine *, const kn_device_info **, size_t *);
+typedef kn_result (*fn_open_device)(kn_engine *, const char *, kn_share_mode,
+                                    const kn_stream_format *, kn_stream_format *);
+typedef kn_result (*fn_close_device)(kn_engine *);
+typedef kn_result (*fn_probe)(kn_engine *, const char *, kn_probe_result *);
 
 static fn_engine_create p_create;
 static fn_engine_destroy p_destroy;
@@ -44,6 +48,9 @@ static fn_engine_last_error p_last_error;
 static fn_get_position p_get_position;
 static fn_poll_event p_poll_event;
 static fn_devices_enumerate p_devices_enumerate;
+static fn_open_device p_open_device;
+static fn_close_device p_close_device;
+static fn_probe p_probe;
 
 /* ---- tiny test harness ------------------------------------------------- */
 
@@ -123,11 +130,63 @@ static void test_lifecycle_and_idle_contract(void) {
     printf("ok   destroy(NULL) is a no-op\n");
 }
 
+static void test_probe(const char *fixtures_dir) {
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/fixture.flac", fixtures_dir);
+
+    kn_engine_config cfg = default_config();
+    kn_engine *e = NULL;
+    if (p_create(&cfg, &e) != KN_OK) {
+        CHECK(0, "probe: engine creation failed");
+        return;
+    }
+
+    kn_probe_result probe;
+    memset(&probe, 0, sizeof(probe));
+    CHECK(p_probe(e, path, &probe) == KN_OK, "probe succeeds on FLAC fixture");
+    CHECK(probe.sample_rate == 44100, "probe reports 44100 Hz");
+    CHECK(probe.channels == 2, "probe reports 2 channels");
+    CHECK(probe.total_frames == 17640, "probe reports exact frame count");
+    CHECK(strcmp(probe.codec, "flac") == 0, "probe reports codec 'flac'");
+
+    kn_probe_result missing;
+    CHECK(p_probe(e, "no-such-file.flac", &missing) == KN_ERR_IO,
+          "probe reports KN_ERR_IO for a missing file");
+
+    p_destroy(e);
+}
+
+static void test_device_open(void) {
+    kn_engine_config cfg = default_config();
+    kn_engine *e = NULL;
+    if (p_create(&cfg, &e) != KN_OK) {
+        CHECK(0, "device: engine creation failed");
+        return;
+    }
+
+    kn_stream_format actual;
+    memset(&actual, 0, sizeof(actual));
+    kn_result rc = p_open_device(e, NULL, KN_SHARE_SHARED, NULL, &actual);
+    if (rc == KN_OK) {
+        CHECK(actual.sample_rate > 0, "opened device reports a sample rate");
+        CHECK(actual.channels > 0, "opened device reports channels");
+        CHECK(p_close_device(e) == KN_OK, "close_device succeeds");
+    } else if (rc == KN_ERR_DEVICE_LOST || rc == KN_ERR_UNSUPPORTED) {
+        /* CI runners have no audio endpoint; that must fail cleanly, not crash. */
+        printf("skip open_device: no usable device here (%d)\n", (int)rc);
+    } else {
+        CHECK(0, "open_device returned an unexpected error");
+    }
+
+    p_destroy(e);
+}
+
 /* ---- main -------------------------------------------------------------- */
 
 int main(int argc, char **argv) {
-    if (argc != 2) {
-        fprintf(stderr, "usage: abi-conformance <path-to-backend-library>\n");
+    if (argc < 2 || argc > 3) {
+        fprintf(stderr,
+                "usage: abi-conformance <path-to-backend-library> [fixtures-dir]\n");
         return 2;
     }
 
@@ -147,6 +206,9 @@ int main(int argc, char **argv) {
         {"kn_get_position", (void **)&p_get_position},
         {"kn_engine_poll_event", (void **)&p_poll_event},
         {"kn_devices_enumerate", (void **)&p_devices_enumerate},
+        {"kn_engine_open_device", (void **)&p_open_device},
+        {"kn_engine_close_device", (void **)&p_close_device},
+        {"kn_probe", (void **)&p_probe},
     };
     for (size_t i = 0; i < sizeof(symbols) / sizeof(symbols[0]); i++) {
         *symbols[i].slot = lib_sym(lib, symbols[i].name);
@@ -164,6 +226,12 @@ int main(int argc, char **argv) {
     test_version_negotiation();
     test_argument_validation();
     test_lifecycle_and_idle_contract();
+    test_device_open();
+    if (argc == 3) {
+        test_probe(argv[2]);
+    } else {
+        printf("skip probe tests: no fixtures directory given\n");
+    }
 
     printf(failures ? "\n%d FAILURE(S)\n" : "\nall tests passed\n", failures);
     return failures ? 1 : 0;

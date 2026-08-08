@@ -54,8 +54,8 @@ jobs:
 
       - name: Run ABI conformance suite (Windows)
         if: runner.os == 'Windows'
-        run: build/conformance/Release/abi-conformance.exe native/audio-core-rs/target/release/audio_core_rs.dll
+        run: build/conformance/Release/abi-conformance.exe native/audio-core-rs/target/release/audio_core_rs.dll tests/fixtures
 
       - name: Run ABI conformance suite (macOS)
         if: runner.os == 'macOS'
-        run: build/conformance/abi-conformance native/audio-core-rs/target/release/libaudio_core_rs.dylib
+        run: build/conformance/abi-conformance native/audio-core-rs/target/release/libaudio_core_rs.dylib tests/fixtures
