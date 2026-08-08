@@ -12,6 +12,7 @@ return args switch
     ["native-smoke"] => NativeSmoke(),
     ["scan", var dir, .. var rest] => Scan(dir, ParseDbOption(rest)),
     ["query", var dsl, .. var rest] => RunQuery(dsl, ParseDbOption(rest)),
+    ["play", var file] => Play(file),
     [] or ["--help"] or ["-h"] => PrintHelp(0),
     _ => PrintHelp(2),
 };
@@ -123,6 +124,96 @@ static int RunQuery(string dsl, string? dbPath)
     return 0;
 }
 
+static int Play(string file)
+{
+    if (!File.Exists(file))
+    {
+        Console.Error.WriteLine($"play: file not found: {file}");
+        return 1;
+    }
+
+    string path = Path.GetFullPath(file);
+    try
+    {
+        using var engine = AudioEngine.Create();
+        AudioProbeResult probe = engine.Probe(path);
+        Console.WriteLine(
+            $"{Path.GetFileName(path)}: {probe.Codec}, {probe.SampleRate} Hz, " +
+            $"{probe.Channels} ch" +
+            (probe.BitDepth is { } bits ? $", {bits} bit" : string.Empty) +
+            (probe.BitrateKbps is { } kbps ? $", {kbps} kbps" : string.Empty));
+
+        engine.OpenDevice();
+        engine.Load(AudioSlot.Current, path, userToken: 1);
+        engine.Play();
+        Console.WriteLine("[space] pause/resume, [←/→] seek 5s, [q] quit");
+
+        bool interactive = !Console.IsInputRedirected;
+        bool paused = false;
+        while (true)
+        {
+            foreach (AudioEvent ev in engine.PollEvents())
+            {
+                switch (ev.Type)
+                {
+                    case AudioEventType.TrackEnded:
+                        Console.WriteLine();
+                        Console.WriteLine("done");
+                        return 0;
+                    case AudioEventType.Error:
+                        Console.WriteLine();
+                        Console.Error.WriteLine($"play: engine error: {ev.Code}");
+                        return 1;
+                }
+            }
+
+            PlaybackPosition pos = engine.GetPosition();
+            if (pos.SampleRate > 0)
+            {
+                double seconds = (double)pos.Frame / pos.SampleRate;
+                double total = pos.TotalFrames > 0 ? (double)pos.TotalFrames / pos.SampleRate : 0;
+                Console.Write(
+                    $"\r{seconds,7:F1}s / {total:F1}s  {pos.State}  buffer {pos.BufferFill:P0}   ");
+            }
+
+            if (interactive && Console.KeyAvailable)
+            {
+                switch (Console.ReadKey(intercept: true).Key)
+                {
+                    case ConsoleKey.Q:
+                        Console.WriteLine();
+                        return 0;
+                    case ConsoleKey.Spacebar:
+                        paused = !paused;
+                        if (paused)
+                        {
+                            engine.Pause();
+                        }
+                        else
+                        {
+                            engine.Play();
+                        }
+
+                        break;
+                    case ConsoleKey.LeftArrow:
+                        engine.Seek(Math.Max(0, pos.Frame - 5L * pos.SampleRate));
+                        break;
+                    case ConsoleKey.RightArrow:
+                        engine.Seek(pos.Frame + 5L * pos.SampleRate);
+                        break;
+                }
+            }
+
+            Thread.Sleep(100);
+        }
+    }
+    catch (Exception ex) when (ex is AudioEngineException or DllNotFoundException)
+    {
+        Console.Error.WriteLine($"play: {ex.Message}");
+        return 1;
+    }
+}
+
 static int PrintHelp(int exitCode)
 {
     Console.WriteLine(
@@ -132,6 +223,7 @@ static int PrintHelp(int exitCode)
         Usage:
           mirelia-cli scan <dir> [--db <path>]     Scan a folder into the library.
           mirelia-cli query <dsl> [--db <path>]    Run a smart-playlist query.
+          mirelia-cli play <file>                  Play an audio file (WASAPI shared).
           mirelia-cli native-smoke                 Load the native audio backend.
           mirelia-cli --version                    Print the version and exit.
 

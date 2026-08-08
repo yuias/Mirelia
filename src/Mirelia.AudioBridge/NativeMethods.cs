@@ -50,6 +50,41 @@ internal static partial class NativeMethods
         public ulong HostTimeNs;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct KnStreamFormat
+    {
+        public uint SampleRate;
+        public ushort Channels;
+        public int Format;
+        public uint ChannelMask;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct KnLoadParams
+    {
+        public nint Path;
+        public long StartFrame;
+        public long EndFrame;
+        public uint EncoderDelay;
+        public uint EncoderPadding;
+        public float GainDb;
+        public float Peak;
+        public ulong UserToken;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct KnProbeResult
+    {
+        public uint SampleRate;
+        public ushort Channels;
+        public ushort BitDepth;
+        public long TotalFrames;
+        public uint EncoderDelay;
+        public uint EncoderPadding;
+        public uint BitrateKbps;
+        public fixed byte Codec[16];
+    }
+
     [LibraryImport(LibraryName)]
     internal static partial KnResult kn_engine_create(in KnEngineConfig cfg, out nint engine);
 
@@ -67,6 +102,44 @@ internal static partial class NativeMethods
         nint engine,
         [Out] KnEvent[] events,
         nuint capacity);
+
+    [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial KnResult kn_engine_open_device(
+        nint engine,
+        string? deviceId,
+        int mode,
+        nint desired,
+        out KnStreamFormat actual);
+
+    [LibraryImport(LibraryName)]
+    internal static partial KnResult kn_engine_close_device(nint engine);
+
+    [LibraryImport(LibraryName)]
+    internal static partial KnResult kn_load(nint engine, int slot, in KnLoadParams p);
+
+    [LibraryImport(LibraryName)]
+    internal static partial KnResult kn_clear(nint engine, int slot);
+
+    [LibraryImport(LibraryName)]
+    internal static partial KnResult kn_play(nint engine);
+
+    [LibraryImport(LibraryName)]
+    internal static partial KnResult kn_pause(nint engine);
+
+    [LibraryImport(LibraryName)]
+    internal static partial KnResult kn_stop(nint engine);
+
+    [LibraryImport(LibraryName)]
+    internal static partial KnResult kn_seek(nint engine, long frame);
+
+    [LibraryImport(LibraryName)]
+    internal static partial KnResult kn_skip_to_next(nint engine);
+
+    [LibraryImport(LibraryName)]
+    internal static partial KnResult kn_set_volume(nint engine, float gain);
+
+    [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial KnResult kn_probe(nint engine, string path, out KnProbeResult result);
 
     /// <summary>
     /// Reads the thread-local last-error string left by the most recent
