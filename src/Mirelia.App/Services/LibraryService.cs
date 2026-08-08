@@ -111,32 +111,15 @@ public sealed class LibraryService : IDisposable
     }
 
     /// <summary>
-    /// Re-scans every remembered watch folder, force-reading unchanged
-    /// files so tag improvements (like date_text) reach existing rows.
+    /// Force re-reads the whole library — watch folders plus tracked files
+    /// outside them — so tag improvements (like date_text) reach every row.
     /// </summary>
     public Task<ScanResult> RescanAllAsync(IProgress<int>? progress)
     {
         return Task.Run(() =>
         {
             using var scanDb = LibraryDatabase.Open(_dbPath);
-            var scanner = new LibraryScanner(scanDb);
-            var total = new ScanResult(0, 0, 0, 0);
-            foreach (string folder in LibraryScanner.GetWatchFolders(scanDb))
-            {
-                if (!Directory.Exists(folder))
-                {
-                    continue;
-                }
-
-                ScanResult r = scanner.Scan(folder, progress, force: true);
-                total = new ScanResult(
-                    total.Added + r.Added,
-                    total.Updated + r.Updated,
-                    total.Unchanged + r.Unchanged,
-                    total.Skipped + r.Skipped);
-            }
-
-            return total;
+            return LibraryScanner.RescanEverything(scanDb, progress);
         });
     }
 

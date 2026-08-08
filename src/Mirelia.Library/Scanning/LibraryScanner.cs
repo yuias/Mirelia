@@ -24,17 +24,66 @@ public sealed class LibraryScanner(LibraryDatabase db)
     private readonly Dictionary<string, long> _genreCache = [];
 
     /// <summary>
+    /// Re-reads the whole library: every watch folder (picking up new
+    /// files) plus every tracked file outside them — libraries scanned
+    /// before watch folders were recorded, and drag-dropped singles. All
+    /// files are force-read so tag improvements reach existing rows.
+    /// </summary>
+    public static ScanResult RescanEverything(
+        LibraryDatabase db, IProgress<int>? progress = null)
+    {
+        var scanner = new LibraryScanner(db);
+        List<string> folders = [.. GetWatchFolders(db).Where(Directory.Exists)];
+
+        int added = 0, updated = 0, unchanged = 0, skipped = 0;
+        void Accumulate(ScanResult r)
+        {
+            added += r.Added;
+            updated += r.Updated;
+            unchanged += r.Unchanged;
+            skipped += r.Skipped;
+        }
+
+        foreach (string folder in folders)
+        {
+            Accumulate(scanner.Scan(folder, progress, force: true));
+        }
+
+        List<string> outside = [.. GetAllTrackPaths(db).Where(path =>
+            !folders.Any(f => path.StartsWith(
+                f.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase)))];
+        Accumulate(scanner.ScanPaths(outside, progress, force: true));
+
+        return new ScanResult(added, updated, unchanged, skipped);
+    }
+
+    private static List<string> GetAllTrackPaths(LibraryDatabase db)
+    {
+        using SqliteCommand cmd = db.Command("SELECT path FROM track ORDER BY id");
+        using SqliteDataReader reader = cmd.ExecuteReader();
+        var result = new List<string>();
+        while (reader.Read())
+        {
+            result.Add(reader.GetString(0));
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Scans an explicit set of files and/or directories (recursive), e.g.
     /// from an Explorer drag-drop. Non-audio entries are ignored.
     /// </summary>
-    public ScanResult ScanPaths(IEnumerable<string> paths, IProgress<int>? progress = null)
+    public ScanResult ScanPaths(
+        IEnumerable<string> paths, IProgress<int>? progress = null, bool force = false)
     {
         int added = 0, updated = 0, unchanged = 0, skipped = 0, processed = 0;
         using LibraryDatabase.TransactionScope tx = db.BeginTransaction();
 
         foreach (string path in EnumeratePaths(paths))
         {
-            switch (ScanOne(path))
+            switch (ScanOne(path, force))
             {
                 case FileOutcome.Added:
                     added++;

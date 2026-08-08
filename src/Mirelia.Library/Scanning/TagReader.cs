@@ -81,15 +81,26 @@ public static class TagReader
     {
         if (file.GetTag(TagLib.TagTypes.Id3v2) is TagLib.Id3v2.Tag id3)
         {
-            foreach (string frameId in (string[])["TDRC", "TDRL", "TYER"])
+            foreach (string frameId in (string[])["TDRC", "TDRL"])
             {
-                TagLib.Id3v2.TextInformationFrame? frame =
-                    TagLib.Id3v2.TextInformationFrame.Get(id3, frameId, false);
-                string? text = frame?.Text.FirstOrDefault();
-                if (!string.IsNullOrWhiteSpace(text))
+                string? text = Id3Text(id3, frameId);
+                if (text is null)
                 {
-                    return text.Trim();
+                    continue;
                 }
+
+                // ID3v2.3 has no timestamp frame; TagLib# 2.3 synthesizes
+                // TDRC by concatenating TYER + TDAT verbatim. TDAT is DDMM
+                // per spec, so the synthesized value comes out YYYY-DD-MM —
+                // swap the halves back into a real ISO date.
+                if (id3.Version == 3
+                    && text.Length == 10
+                    && text[4] == '-' && text[7] == '-')
+                {
+                    text = $"{text[..4]}-{text[8..]}-{text[5..7]}";
+                }
+
+                return text;
             }
         }
 
@@ -124,6 +135,14 @@ public static class TagReader
         }
 
         return null;
+    }
+
+    private static string? Id3Text(TagLib.Id3v2.Tag tag, string frameId)
+    {
+        string? text = TagLib.Id3v2.TextInformationFrame
+            .Get(tag, frameId, false)?
+            .Text.FirstOrDefault();
+        return string.IsNullOrWhiteSpace(text) ? null : text.Trim();
     }
 
     private static string? Clean(string? s)

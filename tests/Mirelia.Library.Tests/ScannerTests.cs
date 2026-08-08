@@ -91,13 +91,19 @@ public sealed class ScannerTests : IDisposable
         Assert.Equal(2L, trackNo);
     }
 
-    [Fact]
-    public void FullReleaseDatesSurviveAsDateText()
+    [Theory]
+    [InlineData("flac", "2021-07-15")] // Vorbis DATE
+    [InlineData("aac", "2026-01-06")] // MP4 ©day
+    [InlineData("mp3", "2020-05-09")] // ID3v2.3 TYER+TDAT recomposed, or TDRC
+    public void FullReleaseDatesSurviveAsDateText(string codec, string expected)
     {
-        // The FLAC fixture carries DATE=2021-07-15; the numeric year column
-        // keeps 2021 while date_text preserves the full string.
-        Assert.Equal("2021-07-15", _db.Scalar(
-            "SELECT date_text FROM track WHERE codec = 'flac'"));
+        Assert.Equal(expected, _db.Scalar(
+            "SELECT date_text FROM track WHERE codec = $c", ("$c", codec)));
+    }
+
+    [Fact]
+    public void NumericYearStillDerivesFromFullDates()
+    {
         Assert.Equal(2021L, _db.Scalar(
             "SELECT year FROM track WHERE codec = 'flac'"));
     }
@@ -116,6 +122,21 @@ public sealed class ScannerTests : IDisposable
     public void ScanRemembersWatchFolders()
     {
         Assert.Contains(Path.GetFullPath(_workDir), LibraryScanner.GetWatchFolders(_db));
+    }
+
+    [Fact]
+    public void RescanEverythingCoversTracksOutsideWatchFolders()
+    {
+        // Libraries scanned before watch folders were recorded have tracked
+        // files but an empty watch_folder table; a full rescan must still
+        // reach them through their stored paths.
+        _db.Execute("DELETE FROM watch_folder");
+        _db.Execute("UPDATE track SET date_text = NULL");
+
+        ScanResult result = LibraryScanner.RescanEverything(_db);
+        Assert.Equal(5, result.Updated);
+        Assert.Equal("2021-07-15", _db.Scalar(
+            "SELECT date_text FROM track WHERE codec = 'flac'"));
     }
 
     [Fact]
