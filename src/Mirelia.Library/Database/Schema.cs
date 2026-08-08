@@ -8,7 +8,15 @@ namespace Mirelia.Library.Database;
 internal static class Schema
 {
     /// <summary>Current schema version written to <c>meta['schema_version']</c>.</summary>
-    internal const int CurrentVersion = 1;
+    internal const int CurrentVersion = 2;
+
+    /// <summary>Schema v2: per-view UI settings (columns, sort), keyed by scope.</summary>
+    internal const string V2 = """
+        CREATE TABLE view_settings (
+            scope_key TEXT PRIMARY KEY,
+            json      TEXT NOT NULL
+        );
+        """;
 
     /// <summary>Schema v1, executed on a fresh database.</summary>
     internal const string V1 = """

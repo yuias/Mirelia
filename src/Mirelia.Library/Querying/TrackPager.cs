@@ -17,6 +17,18 @@ public enum TrackSortOrder
 
     /// <summary>Most recently added first.</summary>
     RecentlyAdded,
+
+    /// <summary>Release year, then album, disc, track.</summary>
+    Year,
+
+    /// <summary>Albums ordered by their (max) year; tracks in album order.</summary>
+    AlbumByYear,
+
+    /// <summary>Albums ordered by when they arrived; tracks in album order.</summary>
+    AlbumByRecentlyAdded,
+
+    /// <summary>The playlist's own entry order (static playlists / smart DSL order).</summary>
+    PlaylistOrder,
 }
 
 /// <summary>A fully hydrated grid row.</summary>
@@ -24,19 +36,29 @@ public enum TrackSortOrder
 /// <param name="Title">Title (falls back to file name at scan time).</param>
 /// <param name="Artist">Artist name, or null.</param>
 /// <param name="Album">Album name, or null.</param>
+/// <param name="AlbumArtist">Album artist name, or null.</param>
+/// <param name="Genre">Genre name, or null.</param>
 /// <param name="TrackNo">Track number, or null.</param>
 /// <param name="Year">Release year, or null.</param>
+/// <param name="DateText">Raw release date string, or null.</param>
 /// <param name="DurationMs">Duration in milliseconds.</param>
 /// <param name="Codec">Canonical codec id.</param>
+/// <param name="BitrateKbps">Average bitrate, or null.</param>
+/// <param name="AddedUnix">When the track entered the library.</param>
 public sealed record TrackPageRow(
     long Id,
     string? Title,
     string? Artist,
     string? Album,
+    string? AlbumArtist,
+    string? Genre,
     int? TrackNo,
     int? Year,
+    string? DateText,
     long DurationMs,
-    string Codec);
+    string Codec,
+    int? BitrateKbps,
+    long AddedUnix);
 
 /// <summary>
 /// ID-array browsing and page hydration. Sorting always happens in SQL
@@ -50,8 +72,48 @@ public static class TrackPager
         TrackSortOrder.Album => "al.name_sort, t.disc_no, t.track_no, t.title_sort",
         TrackSortOrder.Title => "t.title_sort",
         TrackSortOrder.RecentlyAdded => "t.added_unix DESC, t.id DESC",
+        TrackSortOrder.Year => "t.year, al.name_sort, t.disc_no, t.track_no",
+        // Compound sorts: the album's aggregate keys the album blocks,
+        // album order keys the tracks inside (window fns are fine in ORDER BY).
+        TrackSortOrder.AlbumByYear =>
+            "MAX(t.year) OVER (PARTITION BY t.album_id), al.name_sort, t.disc_no, t.track_no",
+        TrackSortOrder.AlbumByRecentlyAdded =>
+            "MAX(t.added_unix) OVER (PARTITION BY t.album_id) DESC, al.name_sort, t.disc_no, t.track_no",
         _ => "t.id",
     };
+
+    /// <summary>
+    /// Re-sorts an id array in SQL (sorting never happens in memory, §4.3).
+    /// Used for playlist and search views; duplicates keep their
+    /// multiplicity. <see cref="TrackSortOrder.PlaylistOrder"/> is identity.
+    /// </summary>
+    public static List<long> SortIds(
+        LibraryDatabase db, IReadOnlyList<long> ids, TrackSortOrder order)
+    {
+        if (order == TrackSortOrder.PlaylistOrder || ids.Count == 0)
+        {
+            return [.. ids];
+        }
+
+        // json_each keeps this a single statement regardless of id count.
+        string json = "[" + string.Join(',', ids) + "]";
+        using SqliteCommand cmd = db.Command($"""
+            SELECT t.id FROM json_each($ids) je
+            JOIN track t ON t.id = je.value
+            LEFT JOIN artist ar ON ar.id = t.artist_id
+            LEFT JOIN album al ON al.id = t.album_id
+            ORDER BY {OrderClause(order)}
+            """,
+            ("$ids", json));
+        using SqliteDataReader reader = cmd.ExecuteReader();
+        var result = new List<long>(ids.Count);
+        while (reader.Read())
+        {
+            result.Add(reader.GetInt64(0));
+        }
+
+        return result;
+    }
 
     /// <summary>All track ids in the given order.</summary>
     public static List<long> BrowseAll(LibraryDatabase db, TrackSortOrder order)
@@ -126,11 +188,14 @@ public static class TrackPager
         {
             string placeholders = string.Join(", ", chunk.Select((_, i) => $"$id{i}"));
             using SqliteCommand cmd = db.Command($"""
-                SELECT t.id, t.title, ar.name, al.name, t.track_no, t.year,
-                       t.duration_ms, t.codec
+                SELECT t.id, t.title, ar.name, al.name, aa.name, g.name,
+                       t.track_no, t.year, t.date_text,
+                       t.duration_ms, t.codec, t.bitrate_kbps, t.added_unix
                 FROM track t
                 LEFT JOIN artist ar ON ar.id = t.artist_id
+                LEFT JOIN artist aa ON aa.id = t.album_artist_id
                 LEFT JOIN album al ON al.id = t.album_id
+                LEFT JOIN genre g ON g.id = t.genre_id
                 WHERE t.id IN ({placeholders})
                 """);
             for (int i = 0; i < chunk.Length; i++)
@@ -146,10 +211,15 @@ public static class TrackPager
                     reader.IsDBNull(1) ? null : reader.GetString(1),
                     reader.IsDBNull(2) ? null : reader.GetString(2),
                     reader.IsDBNull(3) ? null : reader.GetString(3),
-                    reader.IsDBNull(4) ? null : reader.GetInt32(4),
-                    reader.IsDBNull(5) ? null : reader.GetInt32(5),
-                    reader.GetInt64(6),
-                    reader.GetString(7));
+                    reader.IsDBNull(4) ? null : reader.GetString(4),
+                    reader.IsDBNull(5) ? null : reader.GetString(5),
+                    reader.IsDBNull(6) ? null : reader.GetInt32(6),
+                    reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                    reader.IsDBNull(8) ? null : reader.GetString(8),
+                    reader.GetInt64(9),
+                    reader.GetString(10),
+                    reader.IsDBNull(11) ? null : reader.GetInt32(11),
+                    reader.GetInt64(12));
                 result[row.Id] = row;
             }
         }

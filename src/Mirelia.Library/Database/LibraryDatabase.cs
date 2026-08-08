@@ -208,16 +208,24 @@ public sealed class LibraryDatabase : IDisposable
             version = raw is string s ? int.Parse(s, CultureInfo.InvariantCulture) : 0;
         }
 
+        if (version > Schema.CurrentVersion)
+        {
+            throw new InvalidOperationException(
+                $"Database schema v{version} is newer than this build (v{Schema.CurrentVersion}).");
+        }
+
         if (version == 0)
         {
             Execute(Schema.V1);
             Execute("INSERT INTO meta(key, value) VALUES ('schema_version', '1')");
             Execute("INSERT INTO meta(key, value) VALUES ('library_generation', '0')");
+            version = 1;
         }
-        else if (version > Schema.CurrentVersion)
+
+        if (version == 1)
         {
-            throw new InvalidOperationException(
-                $"Database schema v{version} is newer than this build (v{Schema.CurrentVersion}).");
+            Execute(Schema.V2);
+            Execute("UPDATE meta SET value = '2' WHERE key = 'schema_version'");
         }
 
         tx.Commit();

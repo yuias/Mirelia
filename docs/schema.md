@@ -166,8 +166,20 @@ Notes:
 - `*_search` shadow columns hold the same normalization applied to the raw
   value, without article stripping.
 
+## Schema v2 additions
+
+```sql
+-- Per-view UI settings (columns, sort), keyed by scope:
+-- 'source:music', 'source:recent', 'playlist:<id>'.
+CREATE TABLE view_settings (
+    scope_key TEXT PRIMARY KEY,
+    json      TEXT NOT NULL
+);
+```
+
 ## Migration log
 
 | Version | Date | Change |
 |---|---|---|
 | 1 | 2026-08-08 | Initial schema, applied by `LibraryDatabase.Open` |
+| 2 | 2026-08-08 | `view_settings` table for per-view columns/sort |
