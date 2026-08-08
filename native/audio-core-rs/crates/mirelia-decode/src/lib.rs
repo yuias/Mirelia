@@ -5,6 +5,8 @@
 //! seeks to the nearest packet boundary at or before the target and this
 //! layer discards the remainder.
 
+pub mod loudness;
+
 use std::fmt;
 use std::fs::File;
 use std::path::Path;

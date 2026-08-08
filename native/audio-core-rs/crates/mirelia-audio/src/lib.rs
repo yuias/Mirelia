@@ -7,6 +7,7 @@
 pub mod engine;
 pub mod events;
 pub mod output;
+pub mod rt_guard;
 pub mod spsc;
 
 use std::sync::OnceLock;

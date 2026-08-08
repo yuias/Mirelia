@@ -36,6 +36,7 @@ runtime.
 |---|---|---|
 | `symphonia` 0.5 (M2) | FFmpeg / OS decoders | Pure-Rust decode for the whole v1 format set with gapless trimming and sample-accurate seek. Pinned to 0.5: 0.6.0 shipped 2026-05 with a reworked API; migrate deliberately. Known gap: AAC is LC-only — HE-AAC (SBR) files fail to decode until a plugin or OS decoder covers them |
 | `windows` 0.62 (M2) | hand-written WASAPI FFI | Official Microsoft bindings for WASAPI/MMDevice; shared mode + `AUTOCONVERTPCM` now, `IAudioClient3` exclusive in M5 |
+| `ebur128` 0.1 (M5) | hand-written R128 meter | EBU R128 integrated loudness + true peak for ReplayGain 2; a faithful libebur128 port beats re-deriving K-weighting and gating by hand |
 | `coreaudio-sys` (planned) | — | macOS output backend, scheduled after the Windows milestones |
 
 ## Planned upgrade: symphonia 0.6+

@@ -774,6 +774,10 @@ fn render_callback(
     let mut track_frames = 0i64;
 
     Box::new(move |buf: &mut [f32], info: &RenderInfo| {
+        // Everything below runs under the no-allocation guard; a debug
+        // build aborts on any alloc/dealloc until the callback returns.
+        let _rt = crate::rt_guard::RtSection::enter();
+
         // Flush protocol: discard ring contents when the worker asks.
         let epoch = shared.flush_epoch.load(Ordering::Acquire);
         if epoch != shared.flush_ack.load(Ordering::Relaxed) {

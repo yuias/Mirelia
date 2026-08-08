@@ -690,19 +690,36 @@ pub unsafe extern "C" fn kn_probe(
     KN_OK
 }
 
-/// Implements `kn_scan_loudness`. M5.
+/// Implements `kn_scan_loudness`: EBU R128 integrated loudness → RG2 gain
+/// plus true peak. Blocking; call from a worker thread.
 ///
 /// # Safety
 ///
 /// Pointer arguments must be valid per the header contract.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kn_scan_loudness(
-    _e: *mut KnEngine,
-    _path: *const c_char,
-    _out_gain_db: *mut f32,
-    _out_peak: *mut f32,
+    e: *mut KnEngine,
+    path: *const c_char,
+    out_gain_db: *mut f32,
+    out_peak: *mut f32,
 ) -> i32 {
-    fail(KN_ERR_UNSUPPORTED, "kn_scan_loudness: lands in M5")
+    if e.is_null() || out_gain_db.is_null() || out_peak.is_null() {
+        return fail(KN_ERR_INVALID_ARG, "kn_scan_loudness: null argument");
+    }
+    let Ok(Some(path)) = (unsafe { utf8_arg(path) }) else {
+        return fail(KN_ERR_INVALID_ARG, "kn_scan_loudness: path is null or not UTF-8");
+    };
+
+    match mirelia_decode::loudness::scan(std::path::Path::new(&path)) {
+        Ok(result) => {
+            unsafe {
+                *out_gain_db = result.gain_db;
+                *out_peak = result.peak;
+            }
+            KN_OK
+        }
+        Err(err) => decode_err(&err),
+    }
 }
 
 // ---- plugins -----------------------------------------------------------
