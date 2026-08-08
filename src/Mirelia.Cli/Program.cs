@@ -13,6 +13,7 @@ return args switch
     ["scan", var dir, .. var rest] => Scan(dir, ParseDbOption(rest)),
     ["query", var dsl, .. var rest] => RunQuery(dsl, ParseDbOption(rest)),
     ["play", var file] => Play(file),
+    ["seed", var count, .. var rest] => Seed(count, ParseDbOption(rest)),
     [] or ["--help"] or ["-h"] => PrintHelp(0),
     _ => PrintHelp(2),
 };
@@ -24,12 +25,24 @@ static string? ParseDbOption(string[] rest) => rest switch
     _ => throw new ArgumentException($"Unknown arguments: {string.Join(' ', rest)}"),
 };
 
-static string DefaultDbPath()
+static string DefaultDbPath() => Mirelia.Library.LibraryPaths.DefaultDatabasePath;
+
+static int Seed(string countText, string? dbPath)
 {
-    return Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "Mirelia",
-        "library.db");
+    if (!int.TryParse(countText, out int count) || count <= 0)
+    {
+        Console.Error.WriteLine($"seed: invalid count: {countText}");
+        return 2;
+    }
+
+    string db = dbPath ?? DefaultDbPath();
+    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    using var database = LibraryDatabase.Open(db);
+    Mirelia.Cli.Seeder.Seed(database, count);
+    stopwatch.Stop();
+    Console.WriteLine(
+        $"seeded {count} synthetic tracks into {db} in {stopwatch.Elapsed.TotalSeconds:F1}s");
+    return 0;
 }
 
 static int PrintVersion()
