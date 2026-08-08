@@ -1035,6 +1035,104 @@ mod tests {
         assert!(matches!(e.play(), Err(EngineError::State(_))));
     }
 
+    /// Like MockBackend, but appends everything the engine renders to a
+    /// shared sink so tests can inspect the actual output stream.
+    struct CapturingBackend {
+        sink: Arc<std::sync::Mutex<Vec<f32>>>,
+    }
+
+    impl OutputBackend for CapturingBackend {
+        fn enumerate(&mut self) -> Result<Vec<DeviceInfo>, OutputError> {
+            Ok(vec![self.probe_device(None)?])
+        }
+
+        fn probe_device(&mut self, _id: Option<&str>) -> Result<DeviceInfo, OutputError> {
+            Ok(DeviceInfo {
+                id: "capture".into(),
+                name: "Capture".into(),
+                is_default: true,
+                native_rate: 44_100,
+                native_channels: 1,
+            })
+        }
+
+        fn open_stream(
+            &mut self,
+            _device_id: Option<&str>,
+            format: StreamFormat,
+            mut callback: crate::output::RenderCallback,
+        ) -> Result<Box<dyn OutputStream>, OutputError> {
+            let stop = Arc::new(AtomicBool::new(false));
+            let stop2 = stop.clone();
+            let sink = self.sink.clone();
+            let period = 512 * usize::from(format.channels);
+            let join = std::thread::spawn(move || {
+                let mut buf = vec![0.0f32; period];
+                while !stop2.load(Ordering::Acquire) {
+                    callback(&mut buf, &RenderInfo::default());
+                    sink.lock().unwrap().extend_from_slice(&buf);
+                    std::thread::sleep(Duration::from_micros(500));
+                }
+            });
+            Ok(Box::new(MockStream {
+                stop,
+                join: Some(join),
+                format,
+            }))
+        }
+    }
+
+    /// The end-to-end gapless check: two losslessly split halves played
+    /// through CURRENT + NEXT must reproduce the master bit-exactly at the
+    /// seam (kickoff §5.6's -90 dBFS requirement, tightened to equality).
+    #[test]
+    fn gapless_splice_reproduces_master_bit_exactly() {
+        let master = {
+            let mut d =
+                mirelia_decode::Decoder::open(&fixture("gapless-master.wav")).unwrap();
+            let mut all = Vec::new();
+            while let Some(block) = d.next_block().unwrap() {
+                all.extend_from_slice(block);
+            }
+            all
+        };
+
+        let sink = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut e = Engine::new(
+            EngineConfig::default(),
+            Box::new(CapturingBackend { sink: sink.clone() }),
+        );
+        let mut seen = Vec::new();
+        e.open_device(None, None).unwrap();
+        e.load(Slot::Current, load_params("gapless-a.flac", 1)).unwrap();
+        e.load(Slot::Next, load_params("gapless-b.flac", 2)).unwrap();
+        // Let the decode worker prefill so playback starts without a stall.
+        std::thread::sleep(Duration::from_millis(100));
+        e.play().unwrap();
+
+        assert!(wait_for_event(&mut e, &mut seen, EventKind::QueueEmpty, Duration::from_secs(10)));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while e.position().state != State::Idle {
+            assert!(Instant::now() < deadline, "engine never went idle");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+
+        drop(e); // stops the capture thread
+        let captured = sink.lock().unwrap().clone();
+
+        // The stream is pre-play silence + master + trailing silence (the
+        // callback runs from stream open, before play). Trim the silent
+        // edges; any *interior* stall would leave extra zeros and fail the
+        // length equality below. The master starts at 0.8, not 0, so the
+        // leading trim cannot eat real samples.
+        let start = captured.iter().position(|&s| s != 0.0).unwrap();
+        let end = captured.iter().rposition(|&s| s != 0.0).unwrap() + 1;
+        let trimmed = &captured[start..end];
+
+        assert_eq!(trimmed.len(), master.len());
+        assert_eq!(trimmed, &master[..]);
+    }
+
     #[test]
     fn pause_freezes_position() {
         let mut e = engine();

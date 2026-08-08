@@ -360,4 +360,43 @@ mod tests {
             Err(DecodeError::Io(_))
         ));
     }
+
+    fn decode_samples(name: &str) -> Vec<f32> {
+        let mut d = Decoder::open(&fixture(name)).unwrap();
+        let mut all = Vec::new();
+        while let Some(block) = d.next_block().unwrap() {
+            all.extend_from_slice(block);
+        }
+        all
+    }
+
+    #[test]
+    fn mp3_lame_gapless_trim_is_exact() {
+        // gapless-a.mp3 is exactly 1 s (44100 frames, mono) encoded with
+        // LAME; the delay/padding trim must restore the exact length.
+        let mut d = Decoder::open(&fixture("gapless-a.mp3")).unwrap();
+        assert_eq!(decode_all(&mut d), 44_100);
+    }
+
+    #[test]
+    fn flac_splice_reproduces_the_master_bit_exactly() {
+        // The master cosine was split losslessly; decoding the halves and
+        // splicing must reproduce the master decode sample for sample.
+        let master = decode_samples("gapless-master.wav");
+        let mut spliced = decode_samples("gapless-a.flac");
+        spliced.extend(decode_samples("gapless-b.flac"));
+        assert_eq!(master.len(), spliced.len());
+        assert_eq!(master, spliced);
+    }
+
+    #[test]
+    fn seek_is_accurate_on_vbr_mp3_without_xing_header() {
+        let mut full = Decoder::open(&fixture("vbr-noxing.mp3")).unwrap();
+        let total = decode_all(&mut full);
+        assert!(total > 44_100, "fixture shorter than expected: {total}");
+
+        let mut seeked = Decoder::open(&fixture("vbr-noxing.mp3")).unwrap();
+        seeked.seek(10_000).unwrap();
+        assert_eq!(decode_all(&mut seeked), total - 10_000);
+    }
 }
