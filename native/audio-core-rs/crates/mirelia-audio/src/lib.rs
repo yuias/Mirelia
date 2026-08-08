@@ -1,13 +1,18 @@
 //! Mirelia audio engine core.
 //!
-//! M0 status: engine lifecycle and state reporting only. The audio graph,
-//! ring buffer, and output backends land in M2.
-//!
 //! Invariant carried through all milestones: the real-time thread never
-//! allocates, never locks, never calls managed code.
+//! allocates, never locks, never calls managed code. See `engine.rs` for
+//! the thread model that enforces it.
+
+pub mod engine;
+pub mod events;
+pub mod output;
+pub mod spsc;
 
 use std::sync::OnceLock;
 use std::time::Instant;
+
+pub use engine::{Engine, EngineError, LoadParams, Slot};
 
 /// Engine configuration, mirroring `kn_engine_config` minus the ABI version
 /// (version negotiation is the ABI layer's concern, not the engine's).
@@ -47,6 +52,28 @@ pub enum State {
     Stalled,
 }
 
+impl State {
+    /// ABI-stable numeric value (`kn_state`).
+    pub fn as_u8(self) -> u8 {
+        match self {
+            State::Idle => 0,
+            State::Playing => 1,
+            State::Paused => 2,
+            State::Stalled => 3,
+        }
+    }
+
+    /// Inverse of [`State::as_u8`]; unknown values map to Idle.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => State::Playing,
+            2 => State::Paused,
+            3 => State::Stalled,
+            _ => State::Idle,
+        }
+    }
+}
+
 /// A position snapshot, mirroring `kn_position`.
 #[derive(Debug, Clone, Copy)]
 pub struct Position {
@@ -73,56 +100,15 @@ pub fn host_time_ns() -> u64 {
     u64::try_from(epoch.elapsed().as_nanos()).unwrap_or(u64::MAX)
 }
 
-/// The audio engine. One instance per host process is the expected shape,
-/// but nothing forbids more.
-#[derive(Debug)]
-pub struct Engine {
-    config: EngineConfig,
-    state: State,
-}
-
-impl Engine {
-    /// Creates an engine with no device open and no sources loaded.
-    pub fn new(config: EngineConfig) -> Self {
-        Self {
-            config,
-            state: State::Idle,
-        }
-    }
-
-    /// The configuration the engine was created with.
-    pub fn config(&self) -> &EngineConfig {
-        &self.config
-    }
-
-    /// Current transport state.
-    pub fn state(&self) -> State {
-        self.state
-    }
-
-    /// Snapshot of the current position.
-    pub fn position(&self) -> Position {
-        Position {
-            state: self.state,
-            user_token: 0,
-            frame: 0,
-            total_frames: -1,
-            sample_rate: 0,
-            host_time_ns: host_time_ns(),
-            buffer_fill: 0.0,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn new_engine_is_idle() {
-        let e = Engine::new(EngineConfig::default());
-        assert_eq!(e.state(), State::Idle);
-        assert_eq!(e.position().total_frames, -1);
+    fn state_u8_roundtrip() {
+        for s in [State::Idle, State::Playing, State::Paused, State::Stalled] {
+            assert_eq!(State::from_u8(s.as_u8()), s);
+        }
     }
 
     #[test]
