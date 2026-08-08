@@ -28,13 +28,25 @@ public sealed partial class TrackRow : ObservableObject
     private string _album = string.Empty;
 
     [ObservableProperty]
+    private string _albumArtist = string.Empty;
+
+    [ObservableProperty]
+    private string _genre = string.Empty;
+
+    [ObservableProperty]
     private string _duration = string.Empty;
 
     [ObservableProperty]
-    private string _year = string.Empty;
+    private string _date = string.Empty;
 
     [ObservableProperty]
     private string _codec = string.Empty;
+
+    [ObservableProperty]
+    private string _bitrate = string.Empty;
+
+    [ObservableProperty]
+    private string _added = string.Empty;
 
     /// <summary>Returns the row to its placeholder state after LRU eviction.</summary>
     public void Reset()
@@ -43,9 +55,13 @@ public sealed partial class TrackRow : ObservableObject
         Title = "…";
         Artist = string.Empty;
         Album = string.Empty;
+        AlbumArtist = string.Empty;
+        Genre = string.Empty;
         Duration = string.Empty;
-        Year = string.Empty;
+        Date = string.Empty;
         Codec = string.Empty;
+        Bitrate = string.Empty;
+        Added = string.Empty;
     }
 
     /// <summary>Fills the row from a hydrated page entry. UI thread only.</summary>
@@ -55,9 +71,16 @@ public sealed partial class TrackRow : ObservableObject
         Title = row.Title ?? string.Empty;
         Artist = row.Artist ?? string.Empty;
         Album = row.Album ?? string.Empty;
+        AlbumArtist = row.AlbumArtist ?? string.Empty;
+        Genre = row.Genre ?? string.Empty;
         var t = TimeSpan.FromMilliseconds(row.DurationMs);
         Duration = $"{(int)t.TotalMinutes}:{t.Seconds:D2}";
-        Year = row.Year?.ToString() ?? string.Empty;
+        // Full release dates beat the bare year when the tag carried one.
+        Date = row.DateText ?? row.Year?.ToString() ?? string.Empty;
         Codec = row.Codec;
+        Bitrate = row.BitrateKbps is { } kbps ? $"{kbps}" : string.Empty;
+        Added = DateTimeOffset.FromUnixTimeSeconds(row.AddedUnix)
+            .ToLocalTime()
+            .ToString("yyyy-MM-dd");
     }
 }

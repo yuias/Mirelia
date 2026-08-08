@@ -56,6 +56,118 @@ public partial class MainWindow : Window
         // Tree context menus are built in code: the "Move to" submenu is
         // per-node and data-driven, which XAML templates handle poorly.
         PlaylistTreeView.AddHandler(ContextRequestedEvent, OnTreeContextRequested);
+
+        // Columns are data-driven from per-view settings.
+        DataContextChanged += (_, _) =>
+        {
+            if (ViewModel is { } vm)
+            {
+                RebuildColumns(vm.CurrentColumns);
+                vm.PropertyChanged += (_, args) =>
+                {
+                    if (args.PropertyName == nameof(MainViewModel.CurrentColumns))
+                    {
+                        RebuildColumns(vm.CurrentColumns);
+                    }
+                };
+            }
+        };
+        Grid.ColumnReordered += async (_, _) => await PersistColumnOrderAsync();
+    }
+
+    private bool _rebuildingColumns;
+
+    private void RebuildColumns(IReadOnlyList<string> keys)
+    {
+        // Skip no-op rebuilds so a reorder-persist round trip does not reset
+        // the grid's column state mid-drag.
+        var currentKeys = Grid.Columns
+            .OrderBy(c => c.DisplayIndex)
+            .Select(c => c.Tag as string)
+            .ToList();
+        if (currentKeys.SequenceEqual(keys))
+        {
+            return;
+        }
+
+        _rebuildingColumns = true;
+        try
+        {
+            Grid.Columns.Clear();
+            foreach (string key in keys)
+            {
+                if (Models.TrackColumns.Find(key) is not { } spec)
+                {
+                    continue;
+                }
+
+                Grid.Columns.Add(new DataGridTextColumn
+                {
+                    Header = spec.Header,
+                    Binding = new Avalonia.Data.Binding(spec.Property),
+                    Width = spec.IsStar
+                        ? new DataGridLength(spec.Width, DataGridLengthUnitType.Star)
+                        : new DataGridLength(spec.Width),
+                    Tag = spec.Key,
+                });
+            }
+        }
+        finally
+        {
+            _rebuildingColumns = false;
+        }
+    }
+
+    private async Task PersistColumnOrderAsync()
+    {
+        if (_rebuildingColumns || ViewModel is not { } vm)
+        {
+            return;
+        }
+
+        var keys = Grid.Columns
+            .OrderBy(c => c.DisplayIndex)
+            .Select(c => c.Tag as string)
+            .OfType<string>()
+            .ToList();
+        if (keys.Count > 0)
+        {
+            await vm.SetColumnsAsync(keys);
+        }
+    }
+
+    private void OnGridMenuOpened(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { } vm)
+        {
+            return;
+        }
+
+        ColumnsMenu.Items.Clear();
+        foreach (Models.ColumnSpec spec in Models.TrackColumns.All)
+        {
+            bool visible = vm.CurrentColumns.Contains(spec.Key);
+            var item = new MenuItem
+            {
+                Header = spec.Header,
+                ToggleType = MenuItemToggleType.CheckBox,
+                IsChecked = visible,
+                StaysOpenOnClick = true,
+            };
+            string key = spec.Key;
+            item.Click += async (_, _) =>
+            {
+                List<string> keys = [.. vm.CurrentColumns];
+                if (!keys.Remove(key))
+                {
+                    keys.Add(key); // new columns append at the end
+                }
+
+                await vm.SetColumnsAsync(keys);
+                item.IsChecked = vm.CurrentColumns.Contains(key);
+            };
+            ColumnsMenu.Items.Add(item);
+        }
     }
 
     private MainViewModel? ViewModel => DataContext as MainViewModel;

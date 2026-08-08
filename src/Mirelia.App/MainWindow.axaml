@@ -30,9 +30,9 @@
     <Border DockPanel.Dock="Top" Padding="8,6" BorderThickness="0,0,0,1"
             BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
       <DockPanel>
-        <ComboBox DockPanel.Dock="Right" Width="150" Margin="8,0,0,0"
-                  ItemsSource="{Binding SortOrders}"
-                  SelectedItem="{Binding SortOrder}" />
+        <ComboBox DockPanel.Dock="Right" Width="170" Margin="8,0,0,0"
+                  ItemsSource="{Binding AvailableSorts}"
+                  SelectedItem="{Binding SelectedSort}" />
         <TextBox PlaceholderText="Search (full-text)…"
                  Text="{Binding SearchText}" />
       </DockPanel>
@@ -170,7 +170,7 @@
                 RowHeight="26"
                 DoubleTapped="OnGridDoubleTapped">
         <DataGrid.ContextMenu>
-          <ContextMenu>
+          <ContextMenu Opened="OnGridMenuOpened">
             <MenuItem Header="Play" Click="OnPlaySelectedClick" />
             <MenuItem Header="Add to Playlist"
                       ItemsSource="{Binding StaticPlaylists}"
@@ -181,17 +181,10 @@
                 </DataTemplate>
               </MenuItem.ItemTemplate>
             </MenuItem>
+            <Separator />
+            <MenuItem x:Name="ColumnsMenu" Header="Columns" />
           </ContextMenu>
         </DataGrid.ContextMenu>
-        <DataGrid.Columns>
-          <DataGridTextColumn Header="#" Binding="{Binding TrackNo}" Width="44" />
-          <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="2*" />
-          <DataGridTextColumn Header="Artist" Binding="{Binding Artist}" Width="1.2*" />
-          <DataGridTextColumn Header="Album" Binding="{Binding Album}" Width="1.2*" />
-          <DataGridTextColumn Header="Time" Binding="{Binding Duration}" Width="64" />
-          <DataGridTextColumn Header="Year" Binding="{Binding Year}" Width="56" />
-          <DataGridTextColumn Header="Codec" Binding="{Binding Codec}" Width="64" />
-        </DataGrid.Columns>
       </DataGrid>
       <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
                   Spacing="8"

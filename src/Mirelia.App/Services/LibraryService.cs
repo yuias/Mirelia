@@ -18,6 +18,7 @@ public sealed class LibraryService : IDisposable
     private readonly string _dbPath;
     private readonly LibraryDatabase _db;
     private readonly PlaylistStore _playlists;
+    private readonly ViewSettingsStore _viewSettings;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     /// <summary>Opens (creating if needed) the library at <paramref name="dbPath"/>.</summary>
@@ -26,7 +27,24 @@ public sealed class LibraryService : IDisposable
         _dbPath = dbPath;
         _db = LibraryDatabase.Open(dbPath);
         _playlists = new PlaylistStore(_db);
+        _viewSettings = new ViewSettingsStore(_db);
     }
+
+    /// <summary>Per-view UI settings for a scope key.</summary>
+    public Task<ViewSettings> GetViewSettingsAsync(string scopeKey)
+        => RunAsync(() => _viewSettings.Get(scopeKey));
+
+    /// <summary>Stores per-view UI settings.</summary>
+    public Task SetViewSettingsAsync(string scopeKey, ViewSettings settings)
+        => RunAsync<object?>(() =>
+        {
+            _viewSettings.Set(scopeKey, settings);
+            return null;
+        });
+
+    /// <summary>Re-sorts an id array in SQL by a preset.</summary>
+    public Task<long[]> SortIdsAsync(long[] ids, TrackSortOrder order)
+        => RunAsync(() => TrackPager.SortIds(_db, ids, order).ToArray());
 
     /// <summary>All track ids in a browse order.</summary>
     public Task<long[]> BrowseAllAsync(TrackSortOrder order)

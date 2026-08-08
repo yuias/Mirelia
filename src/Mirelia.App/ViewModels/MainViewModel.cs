@@ -48,9 +48,35 @@ public sealed class PlaylistNode
     public string Name => Info.Name;
 }
 
+/// <summary>A sort preset with a display label.</summary>
+/// <param name="Order">The preset.</param>
+/// <param name="Label">Shown in the sort selector.</param>
+public sealed record SortChoice(TrackSortOrder Order, string Label)
+{
+    /// <inheritdoc />
+    public override string ToString() => Label;
+}
+
 /// <summary>Main window state: sources, search, the virtualized track grid.</summary>
 public sealed partial class MainViewModel : ObservableObject
 {
+    private static readonly SortChoice[] BrowseSorts =
+    [
+        new(TrackSortOrder.Artist, "Artist"),
+        new(TrackSortOrder.Album, "Album"),
+        new(TrackSortOrder.Title, "Title"),
+        new(TrackSortOrder.Year, "Year"),
+        new(TrackSortOrder.AlbumByYear, "Album (by Year)"),
+        new(TrackSortOrder.AlbumByRecentlyAdded, "Album (by Added)"),
+        new(TrackSortOrder.RecentlyAdded, "Recently Added"),
+    ];
+
+    private static readonly SortChoice[] PlaylistSorts =
+    [
+        new(TrackSortOrder.PlaylistOrder, "Playlist Order"),
+        .. BrowseSorts,
+    ];
+
     private readonly LibraryService _library;
     private readonly AudioPlayerService _player;
     private readonly DispatcherTimer _searchDebounce;
@@ -73,7 +99,16 @@ public sealed partial class MainViewModel : ObservableObject
     private string _searchText = string.Empty;
 
     [ObservableProperty]
-    private TrackSortOrder _sortOrder = TrackSortOrder.Artist;
+    private IReadOnlyList<SortChoice> _availableSorts = BrowseSorts;
+
+    [ObservableProperty]
+    private SortChoice? _selectedSort = BrowseSorts[0];
+
+    [ObservableProperty]
+    private IReadOnlyList<string> _currentColumns = TrackColumns.DefaultKeys;
+
+    /// <summary>True while view settings are being applied programmatically.</summary>
+    private bool _applyingViewSettings;
 
     [ObservableProperty]
     private string _statusText = string.Empty;
@@ -105,9 +140,6 @@ public sealed partial class MainViewModel : ObservableObject
     public IEnumerable<PlaylistInfo> Folders
         => Playlists.Where(p => p.Kind == PlaylistKind.Folder);
 
-    /// <summary>Sort choices for the toolbar selector.</summary>
-    public IReadOnlyList<TrackSortOrder> SortOrders { get; } =
-        [TrackSortOrder.Artist, TrackSortOrder.Album, TrackSortOrder.Title, TrackSortOrder.RecentlyAdded];
 
     /// <summary>Creates the view-model; call <see cref="InitializeAsync"/> after.</summary>
     public MainViewModel(LibraryService library, AudioPlayerService player)
@@ -435,7 +467,41 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
-    partial void OnSortOrderChanged(TrackSortOrder value) => _ = ReloadAsync();
+    partial void OnSelectedSortChanged(SortChoice? value)
+    {
+        if (!_applyingViewSettings && value is not null)
+        {
+            _ = PersistViewSettingsAsync();
+            _ = ReloadAsync();
+        }
+    }
+
+    private string CurrentScopeKey => SelectedPlaylist is { } playlist
+        ? $"playlist:{playlist.Id}"
+        : SelectedSource?.Kind == SourceKind.RecentlyAdded
+            ? "source:recent"
+            : "source:music";
+
+    private Task PersistViewSettingsAsync()
+    {
+        return _library.SetViewSettingsAsync(CurrentScopeKey, new Library.Database.ViewSettings
+        {
+            Columns = [.. CurrentColumns],
+            Sort = SelectedSort?.Order,
+        });
+    }
+
+    /// <summary>Applies a new column layout and persists it for this view.</summary>
+    public async Task SetColumnsAsync(IReadOnlyList<string> keys)
+    {
+        if (keys.Count == 0)
+        {
+            return; // never allow an empty grid
+        }
+
+        CurrentColumns = keys;
+        await PersistViewSettingsAsync();
+    }
 
     partial void OnSearchTextChanged(string value)
     {
@@ -446,21 +512,63 @@ public sealed partial class MainViewModel : ObservableObject
     private async Task ReloadAsync()
     {
         int generation = ++_loadGeneration;
+        bool isPlaylist = SelectedPlaylist is not null;
+        bool isRecent = SelectedSource?.Kind == SourceKind.RecentlyAdded;
+
+        // Per-view settings decide sort and columns before the query runs.
+        Library.Database.ViewSettings viewSettings =
+            await _library.GetViewSettingsAsync(CurrentScopeKey);
+        IReadOnlyList<SortChoice> available = isPlaylist ? PlaylistSorts : BrowseSorts;
+        TrackSortOrder defaultSort = isPlaylist
+            ? TrackSortOrder.PlaylistOrder
+            : isRecent ? TrackSortOrder.RecentlyAdded : TrackSortOrder.Artist;
+        TrackSortOrder sort = viewSettings.Sort ?? defaultSort;
+
+        _applyingViewSettings = true;
+        try
+        {
+            AvailableSorts = available;
+            SelectedSort = available.FirstOrDefault(c => c.Order == sort) ?? available[0];
+            CurrentColumns = viewSettings.Columns is { Count: > 0 }
+                ? viewSettings.Columns
+                : TrackColumns.DefaultKeys;
+        }
+        finally
+        {
+            _applyingViewSettings = false;
+        }
+
+        sort = SelectedSort?.Order ?? defaultSort;
 
         long[] ids;
         if (!string.IsNullOrWhiteSpace(SearchText))
         {
             ids = await _library.SearchAsync(SearchText.Trim());
+            if (sort != TrackSortOrder.PlaylistOrder)
+            {
+                ids = await _library.SortIdsAsync(ids, sort);
+            }
         }
         else if (SelectedPlaylist is { } playlist)
         {
             ids = await _library.EvaluatePlaylistAsync(playlist);
+            if (sort != TrackSortOrder.PlaylistOrder)
+            {
+                ids = await _library.SortIdsAsync(ids, sort);
+            }
+        }
+        else if (isRecent)
+        {
+            ids = await _library.BrowseRecentlyAddedAsync();
+            if (sort != TrackSortOrder.RecentlyAdded)
+            {
+                ids = await _library.SortIdsAsync(ids, sort);
+            }
         }
         else
         {
-            ids = SelectedSource?.Kind == SourceKind.RecentlyAdded
-                ? await _library.BrowseRecentlyAddedAsync()
-                : await _library.BrowseAllAsync(SortOrder);
+            ids = await _library.BrowseAllAsync(
+                sort == TrackSortOrder.PlaylistOrder ? TrackSortOrder.Artist : sort);
         }
 
         if (generation != _loadGeneration)
