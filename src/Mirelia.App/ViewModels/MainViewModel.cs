@@ -1,8 +1,12 @@
+using System.Collections.ObjectModel;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Mirelia.App.Models;
 using Mirelia.App.Services;
+using Mirelia.Library.Playlists;
 using Mirelia.Library.Querying;
+using Mirelia.Query.Compilation;
+using Mirelia.Query.Parsing;
 
 namespace Mirelia.App.ViewModels;
 
@@ -41,6 +45,9 @@ public sealed partial class MainViewModel : ObservableObject
     private SourceItem? _selectedSource;
 
     [ObservableProperty]
+    private PlaylistInfo? _selectedPlaylist;
+
+    [ObservableProperty]
     private string _searchText = string.Empty;
 
     [ObservableProperty]
@@ -61,6 +68,13 @@ public sealed partial class MainViewModel : ObservableObject
         new("Music", SourceKind.Music),
         new("Recently Added", SourceKind.RecentlyAdded),
     ];
+
+    /// <summary>Left-pane playlists.</summary>
+    public ObservableCollection<PlaylistInfo> Playlists { get; } = [];
+
+    /// <summary>Static playlists only — valid targets for adding tracks.</summary>
+    public IEnumerable<PlaylistInfo> StaticPlaylists
+        => Playlists.Where(p => p.Kind == PlaylistKind.Static);
 
     /// <summary>Sort choices for the toolbar selector.</summary>
     public IReadOnlyList<TrackSortOrder> SortOrders { get; } =
@@ -88,7 +102,128 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     /// <summary>Loads the initial view.</summary>
-    public Task InitializeAsync() => ReloadAsync();
+    public async Task InitializeAsync()
+    {
+        await RefreshPlaylistsAsync();
+        await ReloadAsync();
+    }
+
+    /// <summary>Re-reads playlists from the store.</summary>
+    public async Task RefreshPlaylistsAsync()
+    {
+        List<PlaylistInfo> playlists = await _library.GetPlaylistsAsync();
+        long? selectedId = SelectedPlaylist?.Id;
+        Playlists.Clear();
+        foreach (PlaylistInfo p in playlists)
+        {
+            Playlists.Add(p);
+        }
+
+        SelectedPlaylist = playlists.FirstOrDefault(p => p.Id == selectedId);
+        OnPropertyChanged(nameof(StaticPlaylists));
+    }
+
+    /// <summary>
+    /// Creates a playlist. Returns null on success, or the validation error
+    /// text for the dialog to show.
+    /// </summary>
+    public async Task<string?> CreatePlaylistAsync(string name, string? smartQuery)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(smartQuery))
+            {
+                await _library.CreateStaticPlaylistAsync(name.Trim());
+            }
+            else
+            {
+                await _library.CreateSmartPlaylistAsync(name.Trim(), smartQuery);
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException
+            or QueryParseException
+            or QueryCompileException)
+        {
+            return ex.Message;
+        }
+
+        await RefreshPlaylistsAsync();
+        return null;
+    }
+
+    /// <summary>Renames a playlist; returns error text or null.</summary>
+    public async Task<string?> RenamePlaylistAsync(PlaylistInfo playlist, string newName)
+    {
+        try
+        {
+            await _library.RenamePlaylistAsync(playlist.Id, newName.Trim());
+        }
+        catch (InvalidOperationException ex)
+        {
+            return ex.Message;
+        }
+
+        await RefreshPlaylistsAsync();
+        return null;
+    }
+
+    /// <summary>Deletes a playlist.</summary>
+    public async Task DeletePlaylistAsync(PlaylistInfo playlist)
+    {
+        await _library.DeletePlaylistAsync(playlist.Id);
+        if (SelectedPlaylist?.Id == playlist.Id)
+        {
+            SelectedPlaylist = null;
+            SelectedSource = Sources[0];
+        }
+
+        await RefreshPlaylistsAsync();
+        await ReloadAsync();
+    }
+
+    /// <summary>Appends tracks to a static playlist and reports in the status line.</summary>
+    public async Task AddTracksToPlaylistAsync(PlaylistInfo playlist, IReadOnlyList<long> trackIds)
+    {
+        if (playlist.Kind != PlaylistKind.Static || trackIds.Count == 0)
+        {
+            return;
+        }
+
+        await _library.AddToPlaylistAsync(playlist.Id, trackIds);
+        StatusText = $"Added {trackIds.Count} track(s) to '{playlist.Name}'";
+        if (SelectedPlaylist?.Id == playlist.Id)
+        {
+            await ReloadAsync();
+        }
+    }
+
+    /// <summary>Exports a playlist to the chosen file, absolute paths.</summary>
+    public async Task ExportPlaylistAsync(PlaylistInfo playlist, string outPath)
+    {
+        try
+        {
+            Library.Export.ExportResult result =
+                await _library.ExportPlaylistAsync(playlist, outPath);
+            StatusText =
+                $"Exported {result.Written} track(s) to {Path.GetFileName(outPath)}" +
+                (result.Missing > 0 ? $" ({result.Missing} missing)" : string.Empty);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            StatusText = $"Export failed: {ex.Message}";
+        }
+    }
+
+    /// <summary>Scans dropped files/folders into the library.</summary>
+    public async Task AddDroppedPathsAsync(IReadOnlyList<string> paths)
+    {
+        StatusText = "Scanning dropped items…";
+        Library.Scanning.ScanResult result = await _library.ScanPathsAsync(paths, progress: null);
+        StatusText =
+            $"Scan finished: {result.Added} added, {result.Updated} updated, " +
+            $"{result.Unchanged} unchanged, {result.Skipped} skipped";
+        await ReloadAsync();
+    }
 
     /// <summary>Plays the grid row at <paramref name="rowIndex"/> with the current view as queue.</summary>
     public async Task PlayRowAsync(int rowIndex)
@@ -119,7 +254,23 @@ public sealed partial class MainViewModel : ObservableObject
         await ReloadAsync();
     }
 
-    partial void OnSelectedSourceChanged(SourceItem? value) => _ = ReloadAsync();
+    partial void OnSelectedSourceChanged(SourceItem? value)
+    {
+        if (value is not null)
+        {
+            SelectedPlaylist = null;
+            _ = ReloadAsync();
+        }
+    }
+
+    partial void OnSelectedPlaylistChanged(PlaylistInfo? value)
+    {
+        if (value is not null)
+        {
+            SelectedSource = null;
+            _ = ReloadAsync();
+        }
+    }
 
     partial void OnSortOrderChanged(TrackSortOrder value) => _ = ReloadAsync();
 
@@ -137,6 +288,10 @@ public sealed partial class MainViewModel : ObservableObject
         if (!string.IsNullOrWhiteSpace(SearchText))
         {
             ids = await _library.SearchAsync(SearchText.Trim());
+        }
+        else if (SelectedPlaylist is { } playlist)
+        {
+            ids = await _library.EvaluatePlaylistAsync(playlist);
         }
         else
         {

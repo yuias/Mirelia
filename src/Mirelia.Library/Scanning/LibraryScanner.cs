@@ -23,6 +23,71 @@ public sealed class LibraryScanner(LibraryDatabase db)
     private readonly Dictionary<(string Name, long? ArtistId), long> _albumCache = [];
     private readonly Dictionary<string, long> _genreCache = [];
 
+    /// <summary>
+    /// Scans an explicit set of files and/or directories (recursive), e.g.
+    /// from an Explorer drag-drop. Non-audio entries are ignored.
+    /// </summary>
+    public ScanResult ScanPaths(IEnumerable<string> paths, IProgress<int>? progress = null)
+    {
+        int added = 0, updated = 0, unchanged = 0, skipped = 0, processed = 0;
+        using LibraryDatabase.TransactionScope tx = db.BeginTransaction();
+
+        foreach (string path in EnumeratePaths(paths))
+        {
+            switch (ScanOne(path))
+            {
+                case FileOutcome.Added:
+                    added++;
+                    break;
+                case FileOutcome.Updated:
+                    updated++;
+                    break;
+                case FileOutcome.Unchanged:
+                    unchanged++;
+                    break;
+                case FileOutcome.Skipped:
+                    skipped++;
+                    break;
+            }
+
+            progress?.Report(++processed);
+        }
+
+        if (added + updated > 0)
+        {
+            db.BumpLibraryGeneration();
+        }
+
+        tx.Commit();
+        return new ScanResult(added, updated, unchanged, skipped);
+    }
+
+    private static IEnumerable<string> EnumeratePaths(IEnumerable<string> paths)
+    {
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            IgnoreInaccessible = true,
+        };
+        foreach (string path in paths)
+        {
+            if (Directory.Exists(path))
+            {
+                foreach (string file in Directory.EnumerateFiles(path, "*", options))
+                {
+                    if (Extensions.Contains(Path.GetExtension(file)))
+                    {
+                        yield return file;
+                    }
+                }
+            }
+            else if (File.Exists(path) && Extensions.Contains(Path.GetExtension(path)))
+            {
+                yield return path;
+            }
+        }
+    }
+
     /// <summary>Scans <paramref name="root"/> recursively.</summary>
     public ScanResult Scan(string root, IProgress<int>? progress = null)
     {

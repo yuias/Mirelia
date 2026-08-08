@@ -1,0 +1,26 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Mirelia.App.Dialogs.NewPlaylistDialog"
+        Title="New Playlist"
+        Width="440" SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner">
+  <StackPanel Margin="16" Spacing="10">
+    <TextBlock Text="Name" />
+    <TextBox x:Name="NameBox" />
+    <CheckBox x:Name="SmartCheck" Content="Smart playlist (rule-based)" />
+    <StackPanel x:Name="SmartPanel" Spacing="6" IsVisible="False">
+      <TextBlock Text="Query (DSL)" />
+      <TextBox x:Name="QueryBox"
+               AcceptsReturn="True" MinHeight="60"
+               FontFamily="Consolas,Cascadia Mono,monospace" />
+      <TextBlock Opacity="0.6" FontSize="12"
+                 Text="e.g.  genre = &quot;Jazz&quot; AND rating &gt;= 80 ORDER BY added DESC LIMIT 100" />
+    </StackPanel>
+    <TextBlock x:Name="ErrorText" Foreground="#D0554A" TextWrapping="Wrap" IsVisible="False" />
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+      <Button Content="Cancel" Click="OnCancel" />
+      <Button Content="Create" Classes="accent" Click="OnCreate" IsDefault="True" />
+    </StackPanel>
+  </StackPanel>
+</Window>

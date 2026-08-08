@@ -1,4 +1,6 @@
 using Mirelia.Library.Database;
+using Mirelia.Library.Export;
+using Mirelia.Library.Playlists;
 using Mirelia.Library.Querying;
 using Mirelia.Library.Scanning;
 using Mirelia.Query.Ast;
@@ -15,6 +17,7 @@ public sealed class LibraryService : IDisposable
 {
     private readonly string _dbPath;
     private readonly LibraryDatabase _db;
+    private readonly PlaylistStore _playlists;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     /// <summary>Opens (creating if needed) the library at <paramref name="dbPath"/>.</summary>
@@ -22,6 +25,7 @@ public sealed class LibraryService : IDisposable
     {
         _dbPath = dbPath;
         _db = LibraryDatabase.Open(dbPath);
+        _playlists = new PlaylistStore(_db);
     }
 
     /// <summary>All track ids in a browse order.</summary>
@@ -71,6 +75,63 @@ public sealed class LibraryService : IDisposable
             return new LibraryScanner(scanDb).Scan(directory, progress);
         });
     }
+
+    /// <summary>Scans dropped files/folders, same isolation as <see cref="ScanAsync"/>.</summary>
+    public Task<ScanResult> ScanPathsAsync(IReadOnlyList<string> paths, IProgress<int>? progress)
+    {
+        return Task.Run(() =>
+        {
+            using var scanDb = LibraryDatabase.Open(_dbPath);
+            return new LibraryScanner(scanDb).ScanPaths(paths, progress);
+        });
+    }
+
+    // ---- playlists -----------------------------------------------------
+
+    /// <summary>All playlists.</summary>
+    public Task<List<PlaylistInfo>> GetPlaylistsAsync()
+        => RunAsync(_playlists.List);
+
+    /// <summary>Membership (evaluated for smart) of one playlist.</summary>
+    public Task<long[]> EvaluatePlaylistAsync(PlaylistInfo playlist)
+        => RunAsync(() => _playlists.Evaluate(playlist));
+
+    /// <summary>Creates a static playlist.</summary>
+    public Task<PlaylistInfo> CreateStaticPlaylistAsync(string name)
+        => RunAsync(() => _playlists.CreateStatic(name));
+
+    /// <summary>Creates a smart playlist; validation errors propagate.</summary>
+    public Task<PlaylistInfo> CreateSmartPlaylistAsync(string name, string queryText)
+        => RunAsync(() => _playlists.CreateSmart(name, queryText));
+
+    /// <summary>Appends tracks to a static playlist.</summary>
+    public Task AddToPlaylistAsync(long playlistId, IReadOnlyList<long> trackIds)
+        => RunAsync<object?>(() =>
+        {
+            _playlists.AddTracks(playlistId, trackIds);
+            return null;
+        });
+
+    /// <summary>Renames a playlist.</summary>
+    public Task RenamePlaylistAsync(long playlistId, string newName)
+        => RunAsync<object?>(() =>
+        {
+            _playlists.Rename(playlistId, newName);
+            return null;
+        });
+
+    /// <summary>Deletes a playlist.</summary>
+    public Task DeletePlaylistAsync(long playlistId)
+        => RunAsync<object?>(() =>
+        {
+            _playlists.Delete(playlistId);
+            return null;
+        });
+
+    /// <summary>Exports a playlist to .m3u8.</summary>
+    public Task<ExportResult> ExportPlaylistAsync(
+        PlaylistInfo playlist, string outPath, M3u8Options? options = null)
+        => RunAsync(() => M3u8Exporter.Export(_db, _playlists.Evaluate(playlist), outPath, options));
 
     /// <inheritdoc />
     public void Dispose()
