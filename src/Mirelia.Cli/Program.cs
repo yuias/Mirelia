@@ -1,6 +1,8 @@
 using System.Reflection;
 using Mirelia.AudioBridge;
 using Mirelia.Library.Database;
+using Mirelia.Library.Export;
+using Mirelia.Library.Playlists;
 using Mirelia.Library.Querying;
 using Mirelia.Library.Scanning;
 using Mirelia.Query.Compilation;
@@ -14,6 +16,8 @@ return args switch
     ["query", var dsl, .. var rest] => RunQuery(dsl, ParseDbOption(rest)),
     ["play", var file] => Play(file),
     ["seed", var count, .. var rest] => Seed(count, ParseDbOption(rest)),
+    ["playlist", .. var plArgs] => PlaylistCommand(plArgs),
+    ["export", var name, .. var rest] => Export(name, rest),
     [] or ["--help"] or ["-h"] => PrintHelp(0),
     _ => PrintHelp(2),
 };
@@ -227,6 +231,168 @@ static int Play(string file)
     }
 }
 
+static int PlaylistCommand(string[] args)
+{
+    (args, string? dbPath) = ExtractDbOption(args);
+    string db = dbPath ?? DefaultDbPath();
+    if (!File.Exists(db))
+    {
+        Console.Error.WriteLine($"playlist: database not found: {db} (run scan first)");
+        return 1;
+    }
+
+    using var database = LibraryDatabase.Open(db);
+    var store = new PlaylistStore(database);
+    try
+    {
+        switch (args)
+        {
+            case ["create", var name]:
+                store.CreateStatic(name);
+                Console.WriteLine($"created static playlist '{name}'");
+                return 0;
+
+            case ["create", var name, "--smart", var dsl]:
+                PlaylistInfo smart = store.CreateSmart(name, dsl);
+                Console.WriteLine($"created smart playlist '{name}': {smart.QueryText}");
+                return 0;
+
+            case ["list"]:
+                foreach (PlaylistInfo p in store.List())
+                {
+                    string detail = p.Kind == PlaylistKind.Smart
+                        ? $"smart: {p.QueryText}"
+                        : $"{store.Evaluate(p).Length} track(s)";
+                    Console.WriteLine($"{p.Name}  [{detail}]");
+                }
+
+                return 0;
+
+            case ["show", var name]:
+            {
+                PlaylistInfo p = RequirePlaylist(store, name);
+                long[] ids = store.Evaluate(p);
+                foreach (TrackSummary row in TrackQueryRunner.Hydrate(database, ids))
+                {
+                    Console.WriteLine($"{row.Artist ?? "?"} - {row.Title ?? "?"} [{row.Album ?? "?"}]");
+                }
+
+                Console.WriteLine($"{ids.Length} track(s)");
+                return 0;
+            }
+
+            case ["add", var name, var dsl]:
+            {
+                PlaylistInfo p = RequirePlaylist(store, name);
+                CompiledQuery compiled = SqlCompiler.Compile(QueryParser.Parse(dsl));
+                List<long> ids = TrackQueryRunner.Run(database, compiled);
+                store.AddTracks(p.Id, ids);
+                Console.WriteLine($"added {ids.Count} track(s) to '{name}'");
+                return 0;
+            }
+
+            case ["delete", var name]:
+                store.Delete(RequirePlaylist(store, name).Id);
+                Console.WriteLine($"deleted '{name}'");
+                return 0;
+
+            default:
+                Console.Error.WriteLine(
+                    "usage: mirelia-cli playlist <create|list|show|add|delete> ... [--db <path>]");
+                return 2;
+        }
+    }
+    catch (Exception ex) when (ex is InvalidOperationException
+        or QueryParseException
+        or QueryCompileException)
+    {
+        Console.Error.WriteLine($"playlist: {ex.Message}");
+        return 1;
+    }
+}
+
+static int Export(string name, string[] rest)
+{
+    (rest, string? dbPath) = ExtractDbOption(rest);
+    string db = dbPath ?? DefaultDbPath();
+    string? outPath = null;
+    var options = new M3u8Options();
+
+    for (int i = 0; i < rest.Length; i++)
+    {
+        switch (rest[i])
+        {
+            case "--out" when i + 1 < rest.Length:
+                outPath = rest[++i];
+                break;
+            case "--relative":
+                options = options with { RelativePaths = true };
+                break;
+            case "--copy":
+                options = options with { CopyFiles = true };
+                break;
+            case "--rewrite" when i + 1 < rest.Length && rest[i + 1].Contains('='):
+                string[] parts = rest[++i].Split('=', 2);
+                options = options with { PathRewrite = (parts[0], parts[1]) };
+                break;
+            default:
+                Console.Error.WriteLine($"export: unknown argument: {rest[i]}");
+                return 2;
+        }
+    }
+
+    if (outPath is null)
+    {
+        Console.Error.WriteLine(
+            "usage: mirelia-cli export <playlist> --out <file.m3u8> [--relative] [--copy] [--rewrite from=to] [--db <path>]");
+        return 2;
+    }
+
+    if (!File.Exists(db))
+    {
+        Console.Error.WriteLine($"export: database not found: {db}");
+        return 1;
+    }
+
+    using var database = LibraryDatabase.Open(db);
+    var store = new PlaylistStore(database);
+    try
+    {
+        PlaylistInfo playlist = RequirePlaylist(store, name);
+        ExportResult result = M3u8Exporter.Export(
+            database, store.Evaluate(playlist), outPath, options);
+        Console.WriteLine(
+            $"exported {result.Written} track(s) to {outPath}" +
+            (result.Copied > 0 ? $", copied {result.Copied} file(s)" : string.Empty) +
+            (result.Missing > 0 ? $", {result.Missing} missing" : string.Empty));
+        return result.Missing > 0 ? 1 : 0;
+    }
+    catch (Exception ex) when (ex is InvalidOperationException or IOException)
+    {
+        Console.Error.WriteLine($"export: {ex.Message}");
+        return 1;
+    }
+}
+
+static PlaylistInfo RequirePlaylist(PlaylistStore store, string name)
+{
+    return store.FindByName(name)
+        ?? throw new InvalidOperationException($"no playlist named '{name}'");
+}
+
+static (string[] Remaining, string? DbPath) ExtractDbOption(string[] args)
+{
+    for (int i = 0; i < args.Length - 1; i++)
+    {
+        if (args[i] == "--db")
+        {
+            return ([.. args[..i], .. args[(i + 2)..]], args[i + 1]);
+        }
+    }
+
+    return (args, null);
+}
+
 static int PrintHelp(int exitCode)
 {
     Console.WriteLine(
@@ -237,6 +403,10 @@ static int PrintHelp(int exitCode)
           mirelia-cli scan <dir> [--db <path>]     Scan a folder into the library.
           mirelia-cli query <dsl> [--db <path>]    Run a smart-playlist query.
           mirelia-cli play <file>                  Play an audio file (WASAPI shared).
+          mirelia-cli playlist create <name> [--smart <dsl>]
+          mirelia-cli playlist list | show <name> | delete <name>
+          mirelia-cli playlist add <name> <dsl>    Add query results to a static playlist.
+          mirelia-cli export <name> --out <file.m3u8> [--relative] [--copy] [--rewrite from=to]
           mirelia-cli native-smoke                 Load the native audio backend.
           mirelia-cli --version                    Print the version and exit.
 
