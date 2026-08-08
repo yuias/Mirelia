@@ -1,10 +1,22 @@
 [package]
 name = "mirelia-decode"
-description = "Mirelia decoder layer: symphonia glue, gapless trimming (lands in M2)"
+description = "Mirelia decoder layer: symphonia glue, sample-accurate seek, gapless trimming"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+
+[dependencies]
+# Pinned to 0.5: 0.6.0 shipped 2026-05 with a reworked API; migrate deliberately, not in passing.
+symphonia = { version = "0.5", default-features = false, features = [
+    "mp3",
+    "aac",
+    "alac",
+    "flac",
+    "isomp4",
+    "pcm",
+    "wav",
+] }
 
 [lints]
 workspace = true
