@@ -40,9 +40,9 @@ Notes that make this workable:
 - The virtualization design lives in `VirtualTrackList`, not in the grid
   control; swapping grids touched only the XAML and the source property.
 - DataGrid's `Sorting` hook can be intercepted, which is exactly what §7.2
-  needs (column sorting must go through the database) — planned for M6.
-  Until then header sorting is disabled and the toolbar sort selector
-  re-queries SQL.
+  needs (column sorting must go through the database) — landed with M6:
+  the handler marks the event `Handled` (suppressing the collection view's
+  in-memory sort) and re-queries SQL with the column's ORDER BY mapping.
 - Grouping-by-album (§7.2: group headers as ordinary rows with a sentinel)
   was already planned outside the grid's own grouping API, so losing
   TreeDataGrid's hierarchy support costs nothing.

@@ -69,6 +69,11 @@ public partial class MainWindow : Window
                     {
                         RebuildColumns(vm.CurrentColumns);
                     }
+                    else if (args.PropertyName is nameof(MainViewModel.SortColumnKey)
+                        or nameof(MainViewModel.SortDescending))
+                    {
+                        UpdateSortGlyphs();
+                    }
                 };
             }
         };
@@ -115,6 +120,41 @@ public partial class MainWindow : Window
         finally
         {
             _rebuildingColumns = false;
+        }
+
+        UpdateSortGlyphs();
+    }
+
+    /// <summary>
+    /// Header click: sorting is routed through SQL (§7.2), never the
+    /// grid's collection view — Handled suppresses the in-memory sort.
+    /// </summary>
+    private void OnGridSorting(object? sender, DataGridColumnEventArgs e)
+    {
+        e.Handled = true;
+        if (e.Column.Tag is string key && ViewModel is { } vm)
+        {
+            _ = vm.CycleColumnSortAsync(key);
+        }
+    }
+
+    private void UpdateSortGlyphs()
+    {
+        if (ViewModel is not { } vm)
+        {
+            return;
+        }
+
+        foreach (DataGridColumn column in Grid.Columns)
+        {
+            if (column.Tag is not string key || Models.TrackColumns.Find(key) is not { } spec)
+            {
+                continue;
+            }
+
+            column.Header = key == vm.SortColumnKey
+                ? spec.Header + (vm.SortDescending ? " ▼" : " ▲")
+                : spec.Header;
         }
     }
 

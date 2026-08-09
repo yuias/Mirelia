@@ -79,6 +79,75 @@ public sealed class ViewSettingsTests : IDisposable
     }
 
     [Fact]
+    public void SettingsRoundTripColumnSort()
+    {
+        var store = new ViewSettingsStore(_db);
+        store.Set("source:music", new ViewSettings
+        {
+            SortColumn = "date",
+            SortDescending = true,
+        });
+
+        ViewSettings music = store.Get("source:music");
+        Assert.Equal("date", music.SortColumn);
+        Assert.True(music.SortDescending);
+        // Rows written before the column-sort fields existed read as "none".
+        Assert.Null(store.Get("playlist:7").SortColumn);
+    }
+
+    [Fact]
+    public void ColumnSortOrdersByKeyAndDirection()
+    {
+        long albumA = InsertAlbum("A", "a");
+        long albumB = InsertAlbum("B", "b");
+        long t1 = InsertTrack("Charlie", albumB, year: 2020, trackNo: 3, added: 10);
+        long t2 = InsertTrack("Alpha", albumA, year: 2024, trackNo: 1, added: 30);
+        long t3 = InsertTrack("Bravo", albumA, year: 2022, trackNo: 2, added: 20);
+
+        long[] ids = [t1, t2, t3];
+        Assert.Equal(
+            [t2, t3, t1],
+            TrackPager.SortIds(_db, ids, new ColumnSort("title", Descending: false)));
+        Assert.Equal(
+            [t1, t3, t2],
+            TrackPager.SortIds(_db, ids, new ColumnSort("title", Descending: true)));
+        Assert.Equal(
+            [t2, t3, t1],
+            TrackPager.SortIds(_db, ids, new ColumnSort("date", Descending: true)));
+        Assert.Equal(
+            [t1, t3, t2],
+            TrackPager.BrowseAll(_db, new ColumnSort("added", Descending: false)));
+        // Unknown keys (stale settings) leave the input order untouched.
+        Assert.Equal(ids, TrackPager.SortIds(_db, ids, new ColumnSort("bogus", false)));
+        Assert.False(TrackPager.IsSortableColumn("bogus"));
+    }
+
+    [Fact]
+    public void ColumnSortKeepsNullValuesLastInBothDirections()
+    {
+        long album = InsertAlbum("A", "a");
+        long dated = InsertTrack("Dated", album, year: 2020, trackNo: 1, added: 1);
+        long undated = (long)_db.Scalar("""
+            INSERT INTO track (
+                path, path_lower, size_bytes, mtime_unix, title, album_id,
+                title_sort, title_search, duration_ms,
+                sample_rate, channels, codec, is_lossless, added_unix, modified_unix)
+            VALUES ('u', 'u', 1, 0, 'Undated', $al, 'undated', 'undated',
+                    1000, 44100, 2, 'flac', 1, 2, 0)
+            RETURNING id
+            """,
+            ("$al", album))!;
+
+        long[] ids = [undated, dated];
+        Assert.Equal(
+            [dated, undated],
+            TrackPager.SortIds(_db, ids, new ColumnSort("date", Descending: false)));
+        Assert.Equal(
+            [dated, undated],
+            TrackPager.SortIds(_db, ids, new ColumnSort("date", Descending: true)));
+    }
+
+    [Fact]
     public void SortIdsPreservesDuplicates()
     {
         long album = InsertAlbum("A", "a");

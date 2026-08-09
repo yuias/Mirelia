@@ -104,6 +104,14 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private SortChoice? _selectedSort = BrowseSorts[0];
 
+    /// <summary>Column key of the active header-click sort, or null.</summary>
+    [ObservableProperty]
+    private string? _sortColumnKey;
+
+    /// <summary>Direction of the header-click sort.</summary>
+    [ObservableProperty]
+    private bool _sortDescending;
+
     [ObservableProperty]
     private IReadOnlyList<string> _currentColumns = TrackColumns.DefaultKeys;
 
@@ -471,9 +479,42 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (!_applyingViewSettings && value is not null)
         {
+            // Choosing a preset dismisses any header-click override.
+            SortColumnKey = null;
+            SortDescending = false;
             _ = PersistViewSettingsAsync();
             _ = ReloadAsync();
         }
+    }
+
+    /// <summary>
+    /// Header click on a column: cycles that column Asc → Desc → back to
+    /// the view's sort preset (backlog: 3-state header sorting).
+    /// </summary>
+    public async Task CycleColumnSortAsync(string columnKey)
+    {
+        if (!TrackPager.IsSortableColumn(columnKey))
+        {
+            return;
+        }
+
+        if (SortColumnKey != columnKey)
+        {
+            SortColumnKey = columnKey;
+            SortDescending = false;
+        }
+        else if (!SortDescending)
+        {
+            SortDescending = true;
+        }
+        else
+        {
+            SortColumnKey = null;
+            SortDescending = false;
+        }
+
+        await PersistViewSettingsAsync();
+        await ReloadAsync();
     }
 
     private string CurrentScopeKey => SelectedPlaylist is { } playlist
@@ -488,6 +529,8 @@ public sealed partial class MainViewModel : ObservableObject
         {
             Columns = [.. CurrentColumns],
             Sort = SelectedSort?.Order,
+            SortColumn = SortColumnKey,
+            SortDescending = SortDescending,
         });
     }
 
@@ -529,6 +572,9 @@ public sealed partial class MainViewModel : ObservableObject
         {
             AvailableSorts = available;
             SelectedSort = available.FirstOrDefault(c => c.Order == sort) ?? available[0];
+            SortColumnKey = viewSettings.SortColumn is { } column
+                && TrackPager.IsSortableColumn(column) ? column : null;
+            SortDescending = SortColumnKey is not null && viewSettings.SortDescending;
             CurrentColumns = viewSettings.Columns is { Count: > 0 }
                 ? viewSettings.Columns
                 : TrackColumns.DefaultKeys;
@@ -540,30 +586,42 @@ public sealed partial class MainViewModel : ObservableObject
 
         sort = SelectedSort?.Order ?? defaultSort;
 
+        // A header-click sort overrides the preset for any id source.
+        ColumnSort? columnSort = SortColumnKey is { } sortKey
+            ? new ColumnSort(sortKey, SortDescending)
+            : null;
+
         long[] ids;
         if (!string.IsNullOrWhiteSpace(SearchText))
         {
             ids = await _library.SearchAsync(SearchText.Trim());
-            if (sort != TrackSortOrder.PlaylistOrder)
-            {
-                ids = await _library.SortIdsAsync(ids, sort);
-            }
+            ids = columnSort is not null
+                ? await _library.SortIdsAsync(ids, columnSort)
+                : sort != TrackSortOrder.PlaylistOrder
+                    ? await _library.SortIdsAsync(ids, sort)
+                    : ids;
         }
         else if (SelectedPlaylist is { } playlist)
         {
             ids = await _library.EvaluatePlaylistAsync(playlist);
-            if (sort != TrackSortOrder.PlaylistOrder)
-            {
-                ids = await _library.SortIdsAsync(ids, sort);
-            }
+            ids = columnSort is not null
+                ? await _library.SortIdsAsync(ids, columnSort)
+                : sort != TrackSortOrder.PlaylistOrder
+                    ? await _library.SortIdsAsync(ids, sort)
+                    : ids;
         }
         else if (isRecent)
         {
             ids = await _library.BrowseRecentlyAddedAsync();
-            if (sort != TrackSortOrder.RecentlyAdded)
-            {
-                ids = await _library.SortIdsAsync(ids, sort);
-            }
+            ids = columnSort is not null
+                ? await _library.SortIdsAsync(ids, columnSort)
+                : sort != TrackSortOrder.RecentlyAdded
+                    ? await _library.SortIdsAsync(ids, sort)
+                    : ids;
+        }
+        else if (columnSort is not null)
+        {
+            ids = await _library.BrowseAllAsync(columnSort);
         }
         else
         {

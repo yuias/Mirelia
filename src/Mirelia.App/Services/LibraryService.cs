@@ -46,9 +46,17 @@ public sealed class LibraryService : IDisposable
     public Task<long[]> SortIdsAsync(long[] ids, TrackSortOrder order)
         => RunAsync(() => TrackPager.SortIds(_db, ids, order).ToArray());
 
+    /// <summary>Re-sorts an id array in SQL by a header-click column sort.</summary>
+    public Task<long[]> SortIdsAsync(long[] ids, ColumnSort sort)
+        => RunAsync(() => TrackPager.SortIds(_db, ids, sort).ToArray());
+
     /// <summary>All track ids in a browse order.</summary>
     public Task<long[]> BrowseAllAsync(TrackSortOrder order)
         => RunAsync(() => TrackPager.BrowseAll(_db, order).ToArray());
+
+    /// <summary>All track ids sorted by a header-click column sort.</summary>
+    public Task<long[]> BrowseAllAsync(ColumnSort sort)
+        => RunAsync(() => TrackPager.BrowseAll(_db, sort).ToArray());
 
     /// <summary>Most recently added track ids.</summary>
     public Task<long[]> BrowseRecentlyAddedAsync()

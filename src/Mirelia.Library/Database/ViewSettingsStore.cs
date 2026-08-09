@@ -15,6 +15,15 @@ public sealed record ViewSettings
 
     /// <summary>Sort preset, or null for the view's default.</summary>
     public TrackSortOrder? Sort { get; init; }
+
+    /// <summary>
+    /// Column key of a header-click sort overriding <see cref="Sort"/>,
+    /// or null when no column sort is active.
+    /// </summary>
+    public string? SortColumn { get; init; }
+
+    /// <summary>Direction of the column sort; meaningless when <see cref="SortColumn"/> is null.</summary>
+    public bool SortDescending { get; init; }
 }
 
 /// <summary>

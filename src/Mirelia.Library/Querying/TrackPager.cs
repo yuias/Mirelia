@@ -31,6 +31,11 @@ public enum TrackSortOrder
     PlaylistOrder,
 }
 
+/// <summary>A header-click column sort: grid column key plus direction.</summary>
+/// <param name="ColumnKey">Stable column key (matches the app's column registry).</param>
+/// <param name="Descending">True for descending.</param>
+public sealed record ColumnSort(string ColumnKey, bool Descending);
+
 /// <summary>A fully hydrated grid row.</summary>
 /// <param name="Id">Track id.</param>
 /// <param name="Title">Title (falls back to file name at scan time).</param>
@@ -89,6 +94,33 @@ public static class TrackPager
         _ => "t.id",
     };
 
+    // Header-click sorts. The primary key takes the direction; the
+    // remaining keys are stable ascending tiebreakers. A leading `IS NULL`
+    // key keeps valueless rows at the end in both directions.
+    private static string? ColumnOrderClause(ColumnSort sort)
+    {
+        string dir = sort.Descending ? "DESC" : "ASC";
+        return sort.ColumnKey switch
+        {
+            "trackno" => $"t.track_no IS NULL, t.track_no {dir}, al.name_sort, t.disc_no",
+            "title" => $"t.title_sort {dir}",
+            "artist" => $"ar.name_sort IS NULL, ar.name_sort {dir}, al.name_sort, t.disc_no, t.track_no",
+            "album" => $"al.name_sort IS NULL, al.name_sort {dir}, t.disc_no, t.track_no",
+            "albumartist" => $"aa.name_sort IS NULL, aa.name_sort {dir}, al.name_sort, t.disc_no, t.track_no",
+            "genre" => $"g.name_sort IS NULL, g.name_sort {dir}, ar.name_sort, al.name_sort, t.disc_no, t.track_no",
+            "time" => $"t.duration_ms {dir}",
+            "date" => $"t.date_key IS NULL, t.date_key {dir}, al.name_sort, t.disc_no, t.track_no",
+            "codec" => $"t.codec {dir}, ar.name_sort, al.name_sort, t.disc_no, t.track_no",
+            "bitrate" => $"t.bitrate_kbps IS NULL, t.bitrate_kbps {dir}, ar.name_sort, al.name_sort, t.disc_no, t.track_no",
+            "added" => $"t.added_unix {dir}, t.id {dir}",
+            _ => null,
+        };
+    }
+
+    /// <summary>Whether a grid column key has a SQL sort mapping.</summary>
+    public static bool IsSortableColumn(string columnKey)
+        => ColumnOrderClause(new ColumnSort(columnKey, Descending: false)) is not null;
+
     /// <summary>
     /// Re-sorts an id array in SQL (sorting never happens in memory, §4.3).
     /// Used for playlist and search views; duplicates keep their
@@ -102,14 +134,36 @@ public static class TrackPager
             return [.. ids];
         }
 
+        return SortIdsBy(db, ids, OrderClause(order));
+    }
+
+    /// <summary>
+    /// Re-sorts an id array in SQL by a header-click column sort. Unknown
+    /// column keys (stale settings) return the input order unchanged.
+    /// </summary>
+    public static List<long> SortIds(LibraryDatabase db, IReadOnlyList<long> ids, ColumnSort sort)
+    {
+        if (ids.Count == 0 || ColumnOrderClause(sort) is not { } clause)
+        {
+            return [.. ids];
+        }
+
+        return SortIdsBy(db, ids, clause);
+    }
+
+    private static List<long> SortIdsBy(
+        LibraryDatabase db, IReadOnlyList<long> ids, string orderClause)
+    {
         // json_each keeps this a single statement regardless of id count.
         string json = "[" + string.Join(',', ids) + "]";
         using SqliteCommand cmd = db.Command($"""
             SELECT t.id FROM json_each($ids) je
             JOIN track t ON t.id = je.value
             LEFT JOIN artist ar ON ar.id = t.artist_id
+            LEFT JOIN artist aa ON aa.id = t.album_artist_id
             LEFT JOIN album al ON al.id = t.album_id
-            ORDER BY {OrderClause(order)}
+            LEFT JOIN genre g ON g.id = t.genre_id
+            ORDER BY {orderClause}
             """,
             ("$ids", json));
         using SqliteDataReader reader = cmd.ExecuteReader();
@@ -124,12 +178,24 @@ public static class TrackPager
 
     /// <summary>All track ids in the given order.</summary>
     public static List<long> BrowseAll(LibraryDatabase db, TrackSortOrder order)
+        => BrowseAllBy(db, OrderClause(order));
+
+    /// <summary>
+    /// All track ids sorted by a header-click column sort. Unknown column
+    /// keys (stale settings) fall back to id order.
+    /// </summary>
+    public static List<long> BrowseAll(LibraryDatabase db, ColumnSort sort)
+        => BrowseAllBy(db, ColumnOrderClause(sort) ?? "t.id");
+
+    private static List<long> BrowseAllBy(LibraryDatabase db, string orderClause)
     {
         return ReadIds(db, $"""
             SELECT t.id FROM track t
             LEFT JOIN artist ar ON ar.id = t.artist_id
+            LEFT JOIN artist aa ON aa.id = t.album_artist_id
             LEFT JOIN album al ON al.id = t.album_id
-            ORDER BY {OrderClause(order)}
+            LEFT JOIN genre g ON g.id = t.genre_id
+            ORDER BY {orderClause}
             """);
     }
 
