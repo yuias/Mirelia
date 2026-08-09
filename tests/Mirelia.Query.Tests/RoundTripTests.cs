@@ -31,6 +31,12 @@ public class RoundTripTests
         """(genre = "Jazz" OR genre = "Blues") AND NOT (rating < 50 AND playcount = 0)""",
         """NOT is_lossless""",
         """codec IN ("mp3", "aac") ORDER BY artist, album, trackno""",
+        // Release-date field with partial-date literals.
+        """date = 2025""",
+        """date >= 2025-08 AND date != 2025-08-12""",
+        """date BETWEEN 2024 AND 2025-06 ORDER BY date DESC""",
+        """date IN (2024, 2025-08)""",
+        """date = null""",
     };
 
     [Theory]

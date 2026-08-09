@@ -15,6 +15,12 @@ public enum FieldKind
     /// <summary>Unix seconds; accepts date literals and @now arithmetic.</summary>
     DateTime,
 
+    /// <summary>
+    /// yyyymmdd integer date key. Partial dates (bare YYYY number, YYYY-MM
+    /// literal) cover their whole period in comparisons.
+    /// </summary>
+    DateKey,
+
     /// <summary>Milliseconds; accepts duration literals (bare numbers = seconds).</summary>
     Duration,
 }
@@ -52,6 +58,7 @@ public static class FieldTable
         new FieldDef("album", FieldKind.Text, "al.name", "al.name_search", "al.name_sort"),
         new FieldDef("genre", FieldKind.Text, "g.name", "g.name_search", "g.name_sort"),
         new FieldDef("year", FieldKind.Number, "t.year"),
+        new FieldDef("date", FieldKind.DateKey, "t.date_key"),
         new FieldDef("rating", FieldKind.Number, "t.rating"),
         new FieldDef("playcount", FieldKind.Number, "t.play_count"),
         new FieldDef("skipcount", FieldKind.Number, "t.skip_count"),

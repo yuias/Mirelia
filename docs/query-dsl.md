@@ -21,6 +21,15 @@ Implementation lives in `src/Mirelia.Query`.
 - `@now` is resolved when the query is compiled, not per row.
 - Keywords are case-insensitive on input; the canonical printed form
   uppercases keywords and lowercases field names.
+- Date literals are `YYYY-MM-DD` (optionally with `THH:MM[:SS]`) or
+  `YYYY-MM`; on datetime fields a month literal means its first instant.
+- `date` targets the normalized `date_key` and takes `YYYY` (a bare
+  number), `YYYY-MM`, or `YYYY-MM-DD`. A partial date covers its whole
+  period: `=` is containment (`date = 2025` matches all of 2025), `>=`/`<`
+  anchor at the period start, `<=`/`>` at its end, and BETWEEN/IN bounds
+  are inclusive periods. Caveat: year-only tags are stored as Jan 1
+  (`date_key` padding), so month/day-precision predicates cannot match
+  them — prefer year or range predicates when tags may be coarse.
 - The GUI condition builder (`SimpleQueryModel`) displays the flat subset:
   one AND/OR level of comparisons and bool tests, at most one ORDER BY
   term, and a plain LIMIT. Nesting, IN/BETWEEN, playlist refs, `any()`,
@@ -86,6 +95,7 @@ Adding a field is a one-line change plus a row below.
 | `album` | `album.name` via `album_id` | string | |
 | `genre` | `genre.name` via `genre_id` | string | |
 | `year` | `track.year` | number | |
+| `date` | `track.date_key` | date-key | release date, yyyymmdd; partial dates = periods |
 | `rating` | `track.rating` | number | 0..100, `null` = unrated |
 | `playcount` | `track.play_count` | number | |
 | `skipcount` | `track.skip_count` | number | |

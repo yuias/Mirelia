@@ -169,6 +169,28 @@ public static class SqlCompiler
                 };
             }
 
+            if (field.Kind == FieldKind.DateKey
+                && c.Op is CompareOp.Eq or CompareOp.Ne or CompareOp.Lt or CompareOp.Le
+                    or CompareOp.Gt or CompareOp.Ge
+                && TryDateKeyRange(c.Value, out long lo, out long hi))
+            {
+                // A partial date means its whole period: '=' is containment,
+                // >=/< anchor at the period start, <=/> at its end.
+                return c.Op switch
+                {
+                    CompareOp.Eq => lo == hi
+                        ? $"{field.Column} = {AddParameter(lo)}"
+                        : $"{field.Column} BETWEEN {AddParameter(lo)} AND {AddParameter(hi)}",
+                    CompareOp.Ne => lo == hi
+                        ? $"({field.Column} IS NULL OR {field.Column} != {AddParameter(lo)})"
+                        : $"({field.Column} IS NULL OR {field.Column} NOT BETWEEN {AddParameter(lo)} AND {AddParameter(hi)})",
+                    CompareOp.Lt => $"{field.Column} < {AddParameter(lo)}",
+                    CompareOp.Ge => $"{field.Column} >= {AddParameter(lo)}",
+                    CompareOp.Le => $"{field.Column} <= {AddParameter(hi)}",
+                    _ => $"{field.Column} > {AddParameter(hi)}",
+                };
+            }
+
             switch (c.Op)
             {
                 case CompareOp.Contains:
@@ -235,6 +257,19 @@ public static class SqlCompiler
         private string CompileIn(InList inList)
         {
             FieldDef field = Resolve(inList.Field);
+            if (field.Kind == FieldKind.DateKey)
+            {
+                // Each element covers its period, so IN is an OR of ranges.
+                IEnumerable<string> terms = inList.Values.Select(v =>
+                    TryDateKeyRange(v, out long lo, out long hi)
+                        ? lo == hi
+                            ? $"{field.Column} = {AddParameter(lo)}"
+                            : $"{field.Column} BETWEEN {AddParameter(lo)} AND {AddParameter(hi)}"
+                        : throw new QueryCompileException(
+                            $"Field '{field.Name}' takes YYYY, YYYY-MM, or YYYY-MM-DD values"));
+                return "(" + string.Join(" OR ", terms) + ")";
+            }
+
             IEnumerable<string> parameters =
                 inList.Values.Select(v => AddParameter(ToSqlValue(field, v)));
             return $"{field.Column} IN ({string.Join(", ", parameters)})";
@@ -243,9 +278,57 @@ public static class SqlCompiler
         private string CompileBetween(Between b)
         {
             FieldDef field = Resolve(b.Field);
+            if (field.Kind == FieldKind.DateKey
+                && TryDateKeyRange(b.Low, out long dateLow, out _)
+                && TryDateKeyRange(b.High, out _, out long dateHigh))
+            {
+                // Bounds are inclusive periods: BETWEEN 2024 AND 2025-06
+                // runs from 2024-01-01 through 2025-06-30.
+                return $"{field.Column} BETWEEN {AddParameter(dateLow)} AND {AddParameter(dateHigh)}";
+            }
+
             string low = AddParameter(ToSqlValue(field, b.Low));
             string high = AddParameter(ToSqlValue(field, b.High));
             return $"{field.Column} BETWEEN {low} AND {high}";
+        }
+
+        /// <summary>
+        /// The yyyymmdd period a literal covers on a date-key field: a bare
+        /// year number is the whole year, YYYY-MM the whole month, a full
+        /// date a single day. Uniform "-31" month ends are safe because
+        /// keys come from real dates — nothing falls between the 28th/30th
+        /// and the 31st.
+        /// </summary>
+        private static bool TryDateKeyRange(QueryValue value, out long start, out long end)
+        {
+            switch (value)
+            {
+                case NumberValue n when decimal.IsInteger(n.Value) && n.Value is > 0 and < 10000:
+                    long year = (long)n.Value;
+                    start = (year * 100 + 1) * 100 + 1;
+                    end = (year * 100 + 12) * 100 + 31;
+                    return true;
+
+                case DateTimeValue dt:
+                    DateTimeOffset d = dt.Value;
+                    // The source spelling carries the precision: one dash
+                    // is YYYY-MM, more is a full date (time uses ':').
+                    if (dt.Source.Count(ch => ch == '-') == 1)
+                    {
+                        start = (d.Year * 100L + d.Month) * 100 + 1;
+                        end = (d.Year * 100L + d.Month) * 100 + 31;
+                    }
+                    else
+                    {
+                        start = end = (d.Year * 100L + d.Month) * 100 + d.Day;
+                    }
+
+                    return true;
+
+                default:
+                    start = end = 0;
+                    return false;
+            }
         }
 
         private string CompilePlaylist(PlaylistMembership p)
@@ -292,6 +375,10 @@ public static class SqlCompiler
                         FieldKind.Duration => (object)(long)(n.Value * 1000m),
                         FieldKind.Text => throw new QueryCompileException(
                             $"Field '{field.Name}' is text; got a number"),
+                        // Reached when TryDateKeyRange rejected the number
+                        // (8-digit yyyymmdd, fractions, out-of-range years).
+                        FieldKind.DateKey => throw new QueryCompileException(
+                            $"Field '{field.Name}' takes YYYY, YYYY-MM, or YYYY-MM-DD values"),
                         // Box explicitly so integers stay long instead of
                         // being unified to double by the conditional.
                         _ => decimal.IsInteger(n.Value)

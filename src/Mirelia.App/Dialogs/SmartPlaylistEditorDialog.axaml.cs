@@ -215,6 +215,7 @@ public partial class SmartPlaylistEditorDialog : Window
                 {
                     FieldKind.Number => "e.g. 80",
                     FieldKind.DateTime => "e.g. 2024-01-01 or @now - 30d",
+                    FieldKind.DateKey => "e.g. 2025, 2025-08, 2025-08-12",
                     FieldKind.Duration => "e.g. 180s, 10m",
                     _ => null,
                 };

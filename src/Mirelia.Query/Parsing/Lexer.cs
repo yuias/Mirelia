@@ -227,26 +227,36 @@ internal static class Lexer
     private static bool TryReadDate(string input, ref int i, int start, out Token token)
     {
         token = default;
-        // YYYY-MM-DD with optional THH:MM[:SS].
-        if (start + 10 > input.Length
+        // YYYY-MM or YYYY-MM-DD, the latter with optional THH:MM[:SS].
+        // (A bare YYYY lexes as a number; date-keyed fields interpret it.)
+        if (start + 7 > input.Length
             || !AllDigits(input, start, 4)
             || input[start + 4] != '-'
-            || !AllDigits(input, start + 5, 2)
-            || input[start + 7] != '-'
-            || !AllDigits(input, start + 8, 2))
+            || !AllDigits(input, start + 5, 2))
         {
             return false;
         }
 
-        int end = start + 10;
-        if (end + 6 <= input.Length && input[end] == 'T'
-            && AllDigits(input, end + 1, 2) && input[end + 3] == ':' && AllDigits(input, end + 4, 2))
+        int end = start + 7;
+        if (end + 3 <= input.Length && input[end] == '-' && AllDigits(input, end + 1, 2))
         {
-            end += 6;
-            if (end + 3 <= input.Length && input[end] == ':' && AllDigits(input, end + 1, 2))
+            end += 3;
+            if (end + 6 <= input.Length && input[end] == 'T'
+                && AllDigits(input, end + 1, 2) && input[end + 3] == ':' && AllDigits(input, end + 4, 2))
             {
-                end += 3;
+                end += 6;
+                if (end + 3 <= input.Length && input[end] == ':' && AllDigits(input, end + 1, 2))
+                {
+                    end += 3;
+                }
             }
+        }
+
+        // "2025-081" and friends are malformed dates, not date-then-number.
+        if (end < input.Length && char.IsAsciiDigit(input[end]))
+        {
+            throw new QueryParseException(
+                $"Invalid date literal '{input[start..(end + 1)]}'", start);
         }
 
         string text = input[start..end];
