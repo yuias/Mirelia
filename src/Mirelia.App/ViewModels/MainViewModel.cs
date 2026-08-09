@@ -282,6 +282,10 @@ public sealed partial class MainViewModel : ObservableObject
         return null;
     }
 
+    /// <summary>Number of tracks matching a DSL query (editor live preview).</summary>
+    public async Task<int> CountQueryMatchesAsync(string queryText)
+        => (await _library.QueryDslAsync(queryText)).Ids.Length;
+
     /// <summary>Replaces a smart playlist's query; returns error text or null.</summary>
     public async Task<string?> UpdateSmartQueryAsync(PlaylistInfo playlist, string queryText)
     {

@@ -32,7 +32,9 @@ public partial class NewPlaylistDialog : Window
 
     private async void OnOpenBuilder(object? sender, RoutedEventArgs e)
     {
-        var editor = new SmartPlaylistEditorDialog(QueryBox.Text);
+        var editor = new SmartPlaylistEditorDialog(
+            QueryBox.Text,
+            _viewModel is { } vm ? vm.CountQueryMatchesAsync : null);
         if (await editor.ShowDialog<string?>(this) is { } dsl)
         {
             QueryBox.Text = dsl;

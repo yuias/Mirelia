@@ -443,7 +443,8 @@ public partial class MainWindow : Window
             var editQuery = new MenuItem { Header = "Edit Query…" };
             editQuery.Click += async (_, _) =>
             {
-                var editor = new SmartPlaylistEditorDialog(playlist.QueryText);
+                var editor = new SmartPlaylistEditorDialog(
+                    playlist.QueryText, vm.CountQueryMatchesAsync);
                 if (await editor.ShowDialog<string?>(this) is { } dsl
                     && await vm.UpdateSmartQueryAsync(playlist, dsl) is { } error)
                 {

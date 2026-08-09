@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.Threading;
 using Mirelia.Query.Ast;
 using Mirelia.Query.Builder;
 using Mirelia.Query.Compilation;
@@ -61,6 +62,10 @@ public partial class SmartPlaylistEditorDialog : Window
     private const string OrderNone = "(none)";
     private const string OrderRandom = "random";
 
+    private readonly Func<string, Task<int>>? _matchCounter;
+    private readonly DispatcherTimer _countDebounce;
+    private int _countGeneration;
+
     private bool _syncingTabs;
     private int _lastTabIndex;
 
@@ -70,10 +75,24 @@ public partial class SmartPlaylistEditorDialog : Window
     {
     }
 
-    /// <summary>Creates the editor seeded with existing DSL (null/empty = new).</summary>
-    public SmartPlaylistEditorDialog(string? initialDsl)
+    /// <summary>
+    /// Creates the editor seeded with existing DSL (null/empty = new).
+    /// <paramref name="matchCounter"/> evaluates a query to its match count
+    /// for the live preview; null hides the count.
+    /// </summary>
+    public SmartPlaylistEditorDialog(string? initialDsl, Func<string, Task<int>>? matchCounter = null)
     {
         InitializeComponent();
+        _matchCounter = matchCounter;
+        _countDebounce = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(300),
+        };
+        _countDebounce.Tick += (_, _) =>
+        {
+            _countDebounce.Stop();
+            _ = UpdateMatchCountAsync();
+        };
         MatchBox.ItemsSource = new[] { "all", "any" };
         MatchBox.SelectedIndex = 0;
         OrderFieldBox.ItemsSource =
@@ -95,6 +114,11 @@ public partial class SmartPlaylistEditorDialog : Window
         }
 
         _lastTabIndex = Tabs.SelectedIndex;
+
+        MatchBox.SelectionChanged += (_, _) => ScheduleCount();
+        LimitBox.TextChanged += (_, _) => ScheduleCount();
+        QueryBox.TextChanged += (_, _) => ScheduleCount();
+        ScheduleCount();
     }
 
     private void OnCancel(object? sender, RoutedEventArgs e) => Close(null);
@@ -212,8 +236,11 @@ public partial class SmartPlaylistEditorDialog : Window
             if (RowsPanel.Children.Count > 1)
             {
                 RowsPanel.Children.Remove(row);
+                ScheduleCount();
             }
         };
+        opBox.SelectionChanged += (_, _) => ScheduleCount();
+        valueBox.TextChanged += (_, _) => ScheduleCount();
 
         fieldBox.SelectedItem = condition is { } c
             ? Fields.FirstOrDefault(f => f.Name == c.Field) ?? Fields[0]
@@ -274,6 +301,23 @@ public partial class SmartPlaylistEditorDialog : Window
     /// <summary>Renders the builder rows as DSL, or shows an error and returns null.</summary>
     private string? TryBuildDsl()
     {
+        string? dsl = BuildDsl(out string? error);
+        if (dsl is null)
+        {
+            ShowError(error ?? "Invalid query.");
+        }
+        else
+        {
+            HideError();
+        }
+
+        return dsl;
+    }
+
+    /// <summary>Renders the builder rows as DSL without touching the error UI.</summary>
+    private string? BuildDsl(out string? error)
+    {
+        error = null;
         var conditions = new List<SimpleCondition>();
         foreach (Control child in RowsPanel.Children)
         {
@@ -288,7 +332,7 @@ public partial class SmartPlaylistEditorDialog : Window
             if (fieldBox.SelectedItem is not FieldChoice field
                 || opBox.SelectedItem is not OpChoice op)
             {
-                ShowError("Every condition needs a field and an operator.");
+                error = "Every condition needs a field and an operator.";
                 return null;
             }
 
@@ -300,7 +344,7 @@ public partial class SmartPlaylistEditorDialog : Window
         {
             if (!int.TryParse(LimitBox.Text, out int parsed) || parsed <= 0)
             {
-                ShowError("Limit must be a positive number.");
+                error = "Limit must be a positive number.";
                 return null;
             }
 
@@ -323,13 +367,58 @@ public partial class SmartPlaylistEditorDialog : Window
             // Surface bad value literals ("abc" in a number field) now,
             // pointing at the offending row, not at OK time.
             _ = QueryParser.Parse(dsl);
-            HideError();
             return dsl;
         }
         catch (Exception ex) when (ex is InvalidOperationException or QueryParseException)
         {
-            ShowError(ex.Message);
+            error = ex.Message;
             return null;
+        }
+    }
+
+    // ---- live match count (kickoff M6) ----------------------------------
+
+    private void ScheduleCount()
+    {
+        if (_matchCounter is not null)
+        {
+            _countDebounce.Stop();
+            _countDebounce.Start();
+        }
+    }
+
+    private async Task UpdateMatchCountAsync()
+    {
+        if (_matchCounter is null)
+        {
+            return;
+        }
+
+        string? dsl = Tabs.SelectedIndex == 0
+            ? BuildDsl(out _)
+            : string.IsNullOrWhiteSpace(QueryBox.Text) ? null : QueryBox.Text;
+        int generation = ++_countGeneration;
+        if (dsl is null)
+        {
+            MatchCountText.Text = string.Empty;
+            return;
+        }
+
+        try
+        {
+            int count = await _matchCounter(dsl);
+            if (generation == _countGeneration)
+            {
+                MatchCountText.Text = $"{count:N0} matching track(s)";
+            }
+        }
+        catch (Exception ex) when (ex is QueryParseException or QueryCompileException)
+        {
+            // Mid-edit queries fail routinely; just blank the count.
+            if (generation == _countGeneration)
+            {
+                MatchCountText.Text = string.Empty;
+            }
         }
     }
 
