@@ -438,6 +438,23 @@ public partial class MainWindow : Window
         };
         menu.Items.Add(rename);
 
+        if (playlist.Kind == PlaylistKind.Smart)
+        {
+            var editQuery = new MenuItem { Header = "Edit Query…" };
+            editQuery.Click += async (_, _) =>
+            {
+                var editor = new SmartPlaylistEditorDialog(playlist.QueryText);
+                if (await editor.ShowDialog<string?>(this) is { } dsl
+                    && await vm.UpdateSmartQueryAsync(playlist, dsl) is { } error)
+                {
+                    // The editor validated parse/compile; what lands here is
+                    // store-side (e.g. a playlist-reference cycle).
+                    vm.StatusText = error;
+                }
+            };
+            menu.Items.Add(editQuery);
+        }
+
         if (playlist.Kind != PlaylistKind.Folder)
         {
             var export = new MenuItem { Header = "Export as .m3u8…" };

@@ -21,6 +21,11 @@ Implementation lives in `src/Mirelia.Query`.
 - `@now` is resolved when the query is compiled, not per row.
 - Keywords are case-insensitive on input; the canonical printed form
   uppercases keywords and lowercases field names.
+- The GUI condition builder (`SimpleQueryModel`) displays the flat subset:
+  one AND/OR level of comparisons and bool tests, at most one ORDER BY
+  term, and a plain LIMIT. Nesting, IN/BETWEEN, playlist refs, `any()`,
+  and `LIMIT … BY` stay text-editor-only; such queries open on the Text
+  tab and remain fully editable there.
 
 ## Grammar
 

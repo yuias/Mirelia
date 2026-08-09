@@ -1,0 +1,46 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Mirelia.App.Dialogs.SmartPlaylistEditorDialog"
+        Title="Smart Playlist Query"
+        Width="620" SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner">
+  <StackPanel Margin="16" Spacing="10">
+    <TabControl x:Name="Tabs" SelectionChanged="OnTabChanged">
+      <TabItem Header="Builder">
+        <StackPanel Spacing="8" Margin="0,10,0,0">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock VerticalAlignment="Center" Text="Match" />
+            <ComboBox x:Name="MatchBox" Width="76" />
+            <TextBlock VerticalAlignment="Center" Text="of the following conditions:" />
+          </StackPanel>
+          <StackPanel x:Name="RowsPanel" Spacing="6" />
+          <Button Padding="7,3" HorizontalAlignment="Left"
+                  Content="Add condition" Click="OnAddRowClick" />
+          <Grid ColumnDefinitions="Auto,8,150,8,90,16,Auto,8,80" Margin="0,4,0,0">
+            <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="Order by" />
+            <ComboBox Grid.Column="2" x:Name="OrderFieldBox"
+                      SelectionChanged="OnOrderFieldChanged" />
+            <ComboBox Grid.Column="4" x:Name="OrderDirBox" />
+            <TextBlock Grid.Column="6" VerticalAlignment="Center" Text="Limit" />
+            <TextBox Grid.Column="8" x:Name="LimitBox" PlaceholderText="none" />
+          </Grid>
+        </StackPanel>
+      </TabItem>
+      <TabItem Header="Text (DSL)">
+        <StackPanel Spacing="6" Margin="0,10,0,0">
+          <TextBox x:Name="QueryBox"
+                   AcceptsReturn="True" MinHeight="90"
+                   FontFamily="Consolas,Cascadia Mono,monospace" />
+          <TextBlock Opacity="0.6" FontSize="12"
+                     Text="e.g.  genre = &quot;Jazz&quot; AND rating &gt;= 80 ORDER BY added DESC LIMIT 100" />
+        </StackPanel>
+      </TabItem>
+    </TabControl>
+    <TextBlock x:Name="ErrorText" Foreground="#D0554A" TextWrapping="Wrap" IsVisible="False" />
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+      <Button Content="Cancel" Click="OnCancel" />
+      <Button Content="OK" Classes="accent" Click="OnOk" IsDefault="True" />
+    </StackPanel>
+  </StackPanel>
+</Window>

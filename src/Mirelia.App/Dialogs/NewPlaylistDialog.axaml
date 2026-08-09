@@ -10,7 +10,11 @@
     <TextBox x:Name="NameBox" />
     <CheckBox x:Name="SmartCheck" Content="Smart playlist (rule-based)" />
     <StackPanel x:Name="SmartPanel" Spacing="6" IsVisible="False">
-      <TextBlock Text="Query (DSL)" />
+      <DockPanel>
+        <Button DockPanel.Dock="Right" Padding="7,3"
+                Content="Builder…" Click="OnOpenBuilder" />
+        <TextBlock VerticalAlignment="Center" Text="Query (DSL)" />
+      </DockPanel>
       <TextBox x:Name="QueryBox"
                AcceptsReturn="True" MinHeight="60"
                FontFamily="Consolas,Cascadia Mono,monospace" />

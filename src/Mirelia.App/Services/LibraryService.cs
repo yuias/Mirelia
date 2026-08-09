@@ -175,6 +175,14 @@ public sealed class LibraryService : IDisposable
     public Task<PlaylistInfo> CreateSmartPlaylistAsync(string name, string queryText)
         => RunAsync(() => _playlists.CreateSmart(name, queryText));
 
+    /// <summary>Replaces a smart playlist's query; validation errors propagate.</summary>
+    public Task UpdateSmartQueryAsync(long playlistId, string queryText)
+        => RunAsync<object?>(() =>
+        {
+            _playlists.UpdateSmartQuery(playlistId, queryText);
+            return null;
+        });
+
     /// <summary>Creates a playlist folder.</summary>
     public Task<PlaylistInfo> CreateFolderAsync(string name)
         => RunAsync(() => _playlists.CreateFolder(name));

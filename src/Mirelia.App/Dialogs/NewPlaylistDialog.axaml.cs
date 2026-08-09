@@ -30,6 +30,15 @@ public partial class NewPlaylistDialog : Window
 
     private void OnCancel(object? sender, RoutedEventArgs e) => Close(false);
 
+    private async void OnOpenBuilder(object? sender, RoutedEventArgs e)
+    {
+        var editor = new SmartPlaylistEditorDialog(QueryBox.Text);
+        if (await editor.ShowDialog<string?>(this) is { } dsl)
+        {
+            QueryBox.Text = dsl;
+        }
+    }
+
     private async void OnCreate(object? sender, RoutedEventArgs e)
     {
         if (_viewModel is null)

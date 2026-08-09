@@ -282,6 +282,29 @@ public sealed partial class MainViewModel : ObservableObject
         return null;
     }
 
+    /// <summary>Replaces a smart playlist's query; returns error text or null.</summary>
+    public async Task<string?> UpdateSmartQueryAsync(PlaylistInfo playlist, string queryText)
+    {
+        try
+        {
+            await _library.UpdateSmartQueryAsync(playlist.Id, queryText);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException
+            or QueryParseException
+            or QueryCompileException)
+        {
+            return ex.Message;
+        }
+
+        await RefreshPlaylistsAsync();
+        if (SelectedPlaylist?.Id == playlist.Id)
+        {
+            await ReloadAsync();
+        }
+
+        return null;
+    }
+
     /// <summary>Renames a playlist; returns error text or null.</summary>
     public async Task<string?> RenamePlaylistAsync(PlaylistInfo playlist, string newName)
     {
