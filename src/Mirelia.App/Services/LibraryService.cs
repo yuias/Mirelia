@@ -5,6 +5,7 @@ using Mirelia.Library.Querying;
 using Mirelia.Library.Scanning;
 using Mirelia.Query.Ast;
 using Mirelia.Query.Compilation;
+using Mirelia.Query.Parsing;
 
 namespace Mirelia.App.Services;
 
@@ -76,6 +77,21 @@ public sealed class LibraryService : IDisposable
             return TrackQueryRunner.Run(_db, compiled).ToArray();
         });
     }
+
+    /// <summary>
+    /// Runs a raw DSL query (§7.3 query bar). Parse/compile errors
+    /// propagate. <c>Ordered</c> reports whether the query carried its own
+    /// ORDER BY, in which case the caller must not re-sort.
+    /// </summary>
+    /// <exception cref="QueryParseException">Malformed DSL.</exception>
+    /// <exception cref="QueryCompileException">Unknown fields.</exception>
+    public Task<(long[] Ids, bool Ordered)> QueryDslAsync(string dsl)
+        => RunAsync(() =>
+        {
+            ParsedQuery parsed = QueryParser.Parse(dsl);
+            CompiledQuery compiled = SqlCompiler.Compile(parsed);
+            return (TrackQueryRunner.Run(_db, compiled).ToArray(), parsed.OrderBy.Count > 0);
+        });
 
     /// <summary>Hydrates one page of grid rows.</summary>
     public Task<Dictionary<long, TrackPageRow>> HydrateAsync(long[] ids)

@@ -369,6 +369,19 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void OnSaveSearchAsPlaylistClick(object? sender, RoutedEventArgs e)
+    {
+        // Promote the query-bar DSL to a saved smart playlist (§7.3).
+        if (ViewModel is { CanPromoteSearch: true } vm)
+        {
+            string query = vm.SearchText.Trim();
+            var dialog = new InputDialog(
+                "Save as Smart Playlist", "Playlist name", string.Empty,
+                name => vm.CreatePlaylistAsync(name, query));
+            await dialog.ShowDialog<string?>(this);
+        }
+    }
+
     private void OnExitClick(object? sender, RoutedEventArgs e) => Close();
 
     private async void OnRescanClick(object? sender, RoutedEventArgs e)

@@ -98,6 +98,20 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string _searchText = string.Empty;
 
+    /// <summary>True when the search box takes raw DSL instead of free text.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SearchPlaceholder))]
+    [NotifyPropertyChangedFor(nameof(CanPromoteSearch))]
+    private bool _isDslSearch;
+
+    /// <summary>Search-box placeholder for the active mode.</summary>
+    public string SearchPlaceholder
+        => IsDslSearch ? "Query (DSL)…" : "Search (full-text)…";
+
+    /// <summary>True when the current DSL query can be saved as a smart playlist.</summary>
+    public bool CanPromoteSearch
+        => IsDslSearch && !string.IsNullOrWhiteSpace(SearchText);
+
     [ObservableProperty]
     private IReadOnlyList<SortChoice> _availableSorts = BrowseSorts;
 
@@ -548,8 +562,17 @@ public sealed partial class MainViewModel : ObservableObject
 
     partial void OnSearchTextChanged(string value)
     {
+        OnPropertyChanged(nameof(CanPromoteSearch));
         _searchDebounce.Stop();
         _searchDebounce.Start();
+    }
+
+    partial void OnIsDslSearchChanged(bool value)
+    {
+        if (!string.IsNullOrWhiteSpace(SearchText))
+        {
+            _ = ReloadAsync();
+        }
     }
 
     private async Task ReloadAsync()
@@ -594,12 +617,36 @@ public sealed partial class MainViewModel : ObservableObject
         long[] ids;
         if (!string.IsNullOrWhiteSpace(SearchText))
         {
-            ids = await _library.SearchAsync(SearchText.Trim());
-            ids = columnSort is not null
-                ? await _library.SortIdsAsync(ids, columnSort)
-                : sort != TrackSortOrder.PlaylistOrder
-                    ? await _library.SortIdsAsync(ids, sort)
-                    : ids;
+            bool applyViewSort = true;
+            if (IsDslSearch)
+            {
+                try
+                {
+                    (ids, bool ordered) = await _library.QueryDslAsync(SearchText.Trim());
+                    // A query carrying its own ORDER BY keeps it (§7.3).
+                    applyViewSort = !ordered;
+                }
+                catch (Exception ex) when (ex is QueryParseException or QueryCompileException)
+                {
+                    // Mid-typing parse errors are routine; keep the current
+                    // view and report in the status line.
+                    StatusText = $"Query error: {ex.Message}";
+                    return;
+                }
+            }
+            else
+            {
+                ids = await _library.SearchAsync(SearchText.Trim());
+            }
+
+            if (applyViewSort)
+            {
+                ids = columnSort is not null
+                    ? await _library.SortIdsAsync(ids, columnSort)
+                    : sort != TrackSortOrder.PlaylistOrder
+                        ? await _library.SortIdsAsync(ids, sort)
+                        : ids;
+            }
         }
         else if (SelectedPlaylist is { } playlist)
         {

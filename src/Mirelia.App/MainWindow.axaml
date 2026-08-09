@@ -33,7 +33,18 @@
         <ComboBox DockPanel.Dock="Right" Width="170" Margin="8,0,0,0"
                   ItemsSource="{Binding AvailableSorts}"
                   SelectedItem="{Binding SelectedSort}" />
-        <TextBox PlaceholderText="Search (full-text)…"
+        <Button DockPanel.Dock="Right" Margin="8,0,0,0" Padding="7,4"
+                IsVisible="{Binding CanPromoteSearch}"
+                Click="OnSaveSearchAsPlaylistClick"
+                ToolTip.Tip="Save query as smart playlist…">
+          <PathIcon Width="11" Height="11"
+                    Data="M3,4 H21 V6.5 H3 Z M3,10.5 H21 V13 H3 Z M3,17 H11 V19.5 H3 Z M16,14 H18.5 V17 H21.5 V19.5 H18.5 V22.5 H16 V19.5 H13 V17 H16 Z" />
+        </Button>
+        <ToggleButton DockPanel.Dock="Right" Margin="8,0,0,0" Padding="7,3"
+                      FontSize="11" Content="DSL"
+                      IsChecked="{Binding IsDslSearch}"
+                      ToolTip.Tip="Toggle raw query mode (smart-playlist DSL)" />
+        <TextBox PlaceholderText="{Binding SearchPlaceholder}"
                  Text="{Binding SearchText}" />
       </DockPanel>
     </Border>
