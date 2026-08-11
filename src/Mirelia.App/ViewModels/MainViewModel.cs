@@ -129,6 +129,13 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private IReadOnlyList<string> _currentColumns = TrackColumns.DefaultKeys;
 
+    /// <summary>User-resized column widths for the current view, keyed by column key.</summary>
+    [ObservableProperty]
+    private IReadOnlyDictionary<string, double> _currentColumnWidths = EmptyColumnWidths;
+
+    private static readonly IReadOnlyDictionary<string, double> EmptyColumnWidths =
+        new Dictionary<string, double>();
+
     /// <summary>True while view settings are being applied programmatically.</summary>
     private bool _applyingViewSettings;
 
@@ -572,6 +579,9 @@ public sealed partial class MainViewModel : ObservableObject
             Sort = SelectedSort?.Order,
             SortColumn = SortColumnKey,
             SortDescending = SortDescending,
+            ColumnWidths = CurrentColumnWidths.Count > 0
+                ? new Dictionary<string, double>(CurrentColumnWidths)
+                : null,
         });
     }
 
@@ -584,6 +594,13 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         CurrentColumns = keys;
+        await PersistViewSettingsAsync();
+    }
+
+    /// <summary>Applies captured column widths and persists them for this view.</summary>
+    public async Task SetColumnWidthsAsync(IReadOnlyDictionary<string, double> widths)
+    {
+        CurrentColumnWidths = widths;
         await PersistViewSettingsAsync();
     }
 
@@ -628,6 +645,9 @@ public sealed partial class MainViewModel : ObservableObject
             CurrentColumns = viewSettings.Columns is { Count: > 0 }
                 ? viewSettings.Columns
                 : TrackColumns.DefaultKeys;
+            CurrentColumnWidths = viewSettings.ColumnWidths is { Count: > 0 }
+                ? viewSettings.ColumnWidths
+                : EmptyColumnWidths;
         }
         finally
         {

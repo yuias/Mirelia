@@ -24,6 +24,12 @@ public sealed record ViewSettings
 
     /// <summary>Direction of the column sort; meaningless when <see cref="SortColumn"/> is null.</summary>
     public bool SortDescending { get; init; }
+
+    /// <summary>
+    /// User-resized pixel widths, keyed by column key. Missing keys fall back
+    /// to the registry default; null means no column was ever resized.
+    /// </summary>
+    public Dictionary<string, double>? ColumnWidths { get; init; }
 }
 
 /// <summary>

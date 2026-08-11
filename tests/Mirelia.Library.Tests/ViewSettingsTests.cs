@@ -79,6 +79,22 @@ public sealed class ViewSettingsTests : IDisposable
     }
 
     [Fact]
+    public void SettingsRoundTripColumnWidths()
+    {
+        var store = new ViewSettingsStore(_db);
+        store.Set("source:music", new ViewSettings
+        {
+            ColumnWidths = new Dictionary<string, double> { ["title"] = 220.5, ["artist"] = 150 },
+        });
+
+        ViewSettings music = store.Get("source:music");
+        Assert.Equal(220.5, music.ColumnWidths?["title"]);
+        Assert.Equal(150, music.ColumnWidths?["artist"]);
+        // Rows written before column widths existed read as "none" (backward compatibility).
+        Assert.Null(store.Get("playlist:7").ColumnWidths);
+    }
+
+    [Fact]
     public void SettingsRoundTripColumnSort()
     {
         var store = new ViewSettingsStore(_db);

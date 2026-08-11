@@ -4,6 +4,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Mirelia.App.Dialogs;
 using Mirelia.App.Models;
@@ -31,11 +32,29 @@ public partial class MainWindow : Window
     private PixelPoint? _normalPosition;
     private Size? _normalClientSize;
 
+    // DataGrid exposes no resize-committed event, so column widths are
+    // captured off LayoutUpdated (which fires on every resize drag frame)
+    // and debounced: only the settled width, once layout goes quiet, is
+    // written through to view settings.
+    private readonly DispatcherTimer _columnWidthDebounce;
+
     /// <summary>Initializes the window.</summary>
     public MainWindow()
     {
         InitializeComponent();
         RestoreWindowPlacement();
+
+        _columnWidthDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _columnWidthDebounce.Tick += async (_, _) =>
+        {
+            _columnWidthDebounce.Stop();
+            await PersistColumnWidthsAsync();
+        };
+        Grid.LayoutUpdated += (_, _) =>
+        {
+            _columnWidthDebounce.Stop();
+            _columnWidthDebounce.Start();
+        };
 
         // Track normal-state geometry as the window moves/resizes, and
         // persist it (plus maximized state) on close.
@@ -88,12 +107,12 @@ public partial class MainWindow : Window
         {
             if (ViewModel is { } vm)
             {
-                RebuildColumns(vm.CurrentColumns);
+                RebuildColumns();
                 vm.PropertyChanged += (_, args) =>
                 {
                     if (args.PropertyName == nameof(MainViewModel.CurrentColumns))
                     {
-                        RebuildColumns(vm.CurrentColumns);
+                        RebuildColumns();
                     }
                     else if (args.PropertyName is nameof(MainViewModel.SortColumnKey)
                         or nameof(MainViewModel.SortDescending))
@@ -168,6 +187,11 @@ public partial class MainWindow : Window
 
     private void OnWindowClosing(object? sender, WindowClosingEventArgs e)
     {
+        // Flush any width resized within the last debounce window; best
+        // effort since the process may exit before this write lands.
+        _columnWidthDebounce.Stop();
+        _ = PersistColumnWidthsAsync();
+
         if (App.Settings is not { } settings)
         {
             return;
@@ -190,8 +214,15 @@ public partial class MainWindow : Window
 
     private bool _rebuildingColumns;
 
-    private void RebuildColumns(IReadOnlyList<string> keys)
+    private void RebuildColumns()
     {
+        if (ViewModel is not { } vm)
+        {
+            return;
+        }
+
+        IReadOnlyList<string> keys = vm.CurrentColumns;
+
         // Skip no-op rebuilds so a reorder-persist round trip does not reset
         // the grid's column state mid-drag.
         var currentKeys = Grid.Columns
@@ -202,6 +233,8 @@ public partial class MainWindow : Window
         {
             return;
         }
+
+        IReadOnlyDictionary<string, double> widths = vm.CurrentColumnWidths;
 
         _rebuildingColumns = true;
         try
@@ -214,13 +247,20 @@ public partial class MainWindow : Window
                     continue;
                 }
 
+                // Once a column has been user-resized it is pinned to that
+                // pixel width, even if the registry defines it as star-sized;
+                // untouched columns keep following the registry.
+                bool resized = widths.TryGetValue(key, out double savedWidth);
+                double width = resized ? savedWidth : spec.Width;
+                bool isStar = spec.IsStar && !resized;
+
                 Grid.Columns.Add(new DataGridTextColumn
                 {
                     Header = spec.Header,
                     Binding = new Avalonia.Data.Binding(spec.Property),
-                    Width = spec.IsStar
-                        ? new DataGridLength(spec.Width, DataGridLengthUnitType.Star)
-                        : new DataGridLength(spec.Width),
+                    Width = isStar
+                        ? new DataGridLength(width, DataGridLengthUnitType.Star)
+                        : new DataGridLength(width),
                     Tag = spec.Key,
                 });
             }
@@ -282,6 +322,46 @@ public partial class MainWindow : Window
         {
             await vm.SetColumnsAsync(keys);
         }
+    }
+
+    /// <summary>
+    /// Reads each column's settled <c>ActualWidth</c> and persists it if it
+    /// differs from what is stored — the debounced tail end of a resize
+    /// drag, or the final flush on window close.
+    /// </summary>
+    private async Task PersistColumnWidthsAsync()
+    {
+        if (_rebuildingColumns || ViewModel is not { } vm)
+        {
+            return;
+        }
+
+        // A user resize turns a column's Width into a pixel DataGridLength,
+        // so still-star columns are ones the user never touched: skip them,
+        // otherwise the first settle would pin them at the current window
+        // width and they would stop stretching.
+        Dictionary<string, double> widths = Grid.Columns
+            .Where(c => c.Tag is string && c.ActualWidth > 0
+                && c.Width.UnitType != DataGridLengthUnitType.Star)
+            .ToDictionary(c => (string)c.Tag!, c => c.ActualWidth);
+
+        if (widths.Count > 0 && !WidthsEqual(widths, vm.CurrentColumnWidths))
+        {
+            await vm.SetColumnWidthsAsync(widths);
+        }
+    }
+
+    private static bool WidthsEqual(IReadOnlyDictionary<string, double> a, IReadOnlyDictionary<string, double> b)
+    {
+        if (a.Count != b.Count)
+        {
+            return false;
+        }
+
+        // Sub-pixel drift from layout rounding should not trigger a write.
+        const double tolerance = 0.5;
+        return a.All(pair => b.TryGetValue(pair.Key, out double other)
+            && Math.Abs(pair.Value - other) < tolerance);
     }
 
     private void OnGridMenuOpened(object? sender, RoutedEventArgs e)
