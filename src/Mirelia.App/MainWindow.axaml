@@ -44,6 +44,13 @@
           <PathIcon Width="11" Height="11"
                     Data="M3,4 H21 V6.5 H3 Z M3,10.5 H21 V13 H3 Z M3,17 H11 V19.5 H3 Z M16,14 H18.5 V17 H21.5 V19.5 H18.5 V22.5 H16 V19.5 H13 V17 H16 Z" />
         </Button>
+        <Button DockPanel.Dock="Right" Margin="4,0,0,0" Padding="7,4"
+                IsVisible="{Binding CanPromoteSearch}"
+                Click="OnPinSearchAsTemporaryClick"
+                ToolTip.Tip="Pin as temporary playlist (until Mirelia exits)">
+          <PathIcon Width="11" Height="11"
+                    Data="M4,3 H20 V5 H4 Z M4,19 H20 V21 H4 Z M5,5 H19 L12,12 Z M5,19 H19 L12,12 Z" />
+        </Button>
         <ToggleButton DockPanel.Dock="Right" Margin="8,0,0,0" Padding="7,3"
                       FontSize="11" Content="DSL"
                       IsChecked="{Binding IsDslSearch}"
@@ -141,7 +148,8 @@
                 <PathIcon Width="11" Height="11" Opacity="0.55"
                           IsVisible="{Binding IsPlaylist}"
                           Data="M3,4 H21 V6.5 H3 Z M3,10.5 H21 V13 H3 Z M3,17 H13 V19.5 H3 Z" />
-                <TextBlock Text="{Binding Name}" />
+                <TextBlock Text="{Binding Name}" FontStyle="{Binding NameStyle}"
+                           ToolTip.Tip="{Binding Tooltip}" />
               </StackPanel>
             </TreeDataTemplate>
           </TreeView.ItemTemplate>

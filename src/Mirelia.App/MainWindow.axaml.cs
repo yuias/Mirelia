@@ -829,6 +829,24 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void OnPinSearchAsTemporaryClick(object? sender, RoutedEventArgs e)
+    {
+        // Pin the query-bar DSL as an in-memory playlist that lives until
+        // exit — the ephemeral counterpart of OnSaveSearchAsPlaylistClick.
+        if (ViewModel is { CanPromoteSearch: true } vm)
+        {
+            string query = vm.SearchText.Trim();
+            var dialog = new InputDialog(
+                "Pin as Temporary Playlist", "Playlist name", string.Empty,
+                name =>
+                {
+                    vm.PinSearchAsTemporaryPlaylist(name, query);
+                    return Task.FromResult<string?>(null);
+                });
+            await dialog.ShowDialog<string?>(this);
+        }
+    }
+
     private void OnExitClick(object? sender, RoutedEventArgs e) => Close();
 
     private async void OnRescanClick(object? sender, RoutedEventArgs e)
@@ -874,6 +892,17 @@ public partial class MainWindow : Window
 
         e.Handled = true;
         var menu = new ContextMenu();
+
+        if (playlist.Id < 0)
+        {
+            // Ephemeral search playlists have no store row: no rename, edit,
+            // move, or export — the only action is dropping it from memory.
+            var remove = new MenuItem { Header = "Remove" };
+            remove.Click += async (_, _) => await vm.RemoveEphemeralPlaylistAsync(playlist);
+            menu.Items.Add(remove);
+            menu.Open(PlaylistTreeView);
+            return;
+        }
 
         var rename = new MenuItem { Header = "Rename…" };
         rename.Click += async (_, _) =>

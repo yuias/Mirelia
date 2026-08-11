@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Mirelia.App.Models;
@@ -46,6 +47,20 @@ public sealed class PlaylistNode
 
     /// <summary>Display name.</summary>
     public string Name => Info.Name;
+
+    /// <summary>
+    /// True for in-memory search playlists that are never written to the
+    /// store and vanish at app exit. The negative id sentinel (see
+    /// <see cref="MainViewModel.PinSearchAsTemporaryPlaylist"/>) can never
+    /// collide with a real (positive, autoincrement) playlist id.
+    /// </summary>
+    public bool IsEphemeral => Info.Id < 0;
+
+    /// <summary>Italicizes ephemeral entries so they read as temporary at a glance.</summary>
+    public FontStyle NameStyle => IsEphemeral ? FontStyle.Italic : FontStyle.Normal;
+
+    /// <summary>Explains the ephemeral lifetime; null (no tooltip) for ordinary entries.</summary>
+    public string? Tooltip => IsEphemeral ? "Temporary playlist — cleared when Mirelia exits" : null;
 }
 
 /// <summary>A sort preset with a display label.</summary>
@@ -80,6 +95,12 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly LibraryService _library;
     private readonly AudioPlayerService _player;
     private readonly DispatcherTimer _searchDebounce;
+
+    // Ephemeral ("pin as temporary playlist") state: pure in-memory, never
+    // written through _library. Ids count down from -1 so they can never
+    // collide with a real (positive) playlist id.
+    private readonly List<PlaylistInfo> _ephemeralPlaylists = [];
+    private long _nextEphemeralId = -1;
 
     private int _loadGeneration;
 
@@ -230,17 +251,66 @@ public sealed partial class MainViewModel : ObservableObject
             }
         }
 
-        SelectedPlaylist = playlists.FirstOrDefault(p => p.Id == selectedId);
+        // Ephemeral playlists never come back from GetPlaylistsAsync (they
+        // are not store rows), so they are re-attached at the tree root
+        // after every rebuild instead of being silently dropped.
+        var ephemeralNodes = new Dictionary<long, PlaylistNode>();
+        foreach (PlaylistInfo ephemeral in _ephemeralPlaylists)
+        {
+            var node = new PlaylistNode { Info = ephemeral };
+            ephemeralNodes[ephemeral.Id] = node;
+            PlaylistTree.Add(node);
+        }
+
+        SelectedPlaylist = playlists.FirstOrDefault(p => p.Id == selectedId)
+            ?? (selectedId is { } sid && ephemeralNodes.TryGetValue(sid, out PlaylistNode? sp) ? sp.Info : null);
 
         // The rebuild replaced every node instance, so the tree's bound
         // selection must be re-pointed at the new node or the visual
         // highlight silently disappears after any playlist-store mutation.
-        SelectedNode = selectedNodeId is { } nodeId && nodes.TryGetValue(nodeId, out PlaylistNode? selected)
-            ? selected
+        SelectedNode = selectedNodeId is { } nodeId
+            ? nodes.TryGetValue(nodeId, out PlaylistNode? selected)
+                ? selected
+                : ephemeralNodes.GetValueOrDefault(nodeId)
             : null;
 
         OnPropertyChanged(nameof(StaticPlaylists));
         OnPropertyChanged(nameof(Folders));
+    }
+
+    /// <summary>
+    /// Promotes the current query-bar search to an in-memory playlist that
+    /// lives only until the app exits — unlike <see cref="CreatePlaylistAsync"/>,
+    /// nothing is written to the store. Re-evaluated live like a smart
+    /// playlist (same DSL evaluation path), so it tracks library changes.
+    /// </summary>
+    public void PinSearchAsTemporaryPlaylist(string name, string query)
+    {
+        var info = new PlaylistInfo(_nextEphemeralId--, name.Trim(), PlaylistKind.Smart, ParentId: null, query);
+        _ephemeralPlaylists.Add(info);
+        var node = new PlaylistNode { Info = info };
+        PlaylistTree.Add(node);
+        SelectedNode = node;
+    }
+
+    /// <summary>Drops an ephemeral search playlist from memory; no store write.</summary>
+    public async Task RemoveEphemeralPlaylistAsync(PlaylistInfo playlist)
+    {
+        _ephemeralPlaylists.RemoveAll(p => p.Id == playlist.Id);
+        if (PlaylistTree.FirstOrDefault(n => n.Info.Id == playlist.Id) is { } node)
+        {
+            PlaylistTree.Remove(node);
+        }
+
+        if (SelectedPlaylist?.Id != playlist.Id)
+        {
+            return;
+        }
+
+        SelectedNode = null;
+        SelectedPlaylist = null;
+        SelectedSource = Sources[0];
+        await ReloadAsync();
     }
 
     /// <summary>Creates a playlist folder; returns error text or null.</summary>
@@ -262,6 +332,15 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>Moves a playlist/folder into a folder (null = top level).</summary>
     public async Task MovePlaylistAsync(PlaylistInfo playlist, long? parentId)
     {
+        if (playlist.Id < 0)
+        {
+            // Ephemeral playlists have no store row and no folder membership;
+            // the tree UI never offers this action for them, but guard
+            // anyway since the id would otherwise be sent to SQLite.
+            StatusText = "Temporary playlists can't be moved into a folder.";
+            return;
+        }
+
         try
         {
             await _library.SetPlaylistParentAsync(playlist.Id, parentId);
@@ -310,6 +389,11 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>Replaces a smart playlist's query; returns error text or null.</summary>
     public async Task<string?> UpdateSmartQueryAsync(PlaylistInfo playlist, string queryText)
     {
+        if (playlist.Id < 0)
+        {
+            return "Temporary playlists can't be edited; pin a new search instead.";
+        }
+
         try
         {
             await _library.UpdateSmartQueryAsync(playlist.Id, queryText);
@@ -333,6 +417,11 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>Renames a playlist; returns error text or null.</summary>
     public async Task<string?> RenamePlaylistAsync(PlaylistInfo playlist, string newName)
     {
+        if (playlist.Id < 0)
+        {
+            return "Temporary playlists can't be renamed.";
+        }
+
         try
         {
             await _library.RenamePlaylistAsync(playlist.Id, newName.Trim());
@@ -349,6 +438,15 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>Deletes a playlist.</summary>
     public async Task DeletePlaylistAsync(PlaylistInfo playlist)
     {
+        if (playlist.Id < 0)
+        {
+            // The tree UI routes ephemeral entries to RemoveEphemeralPlaylistAsync
+            // directly (a "Remove" item, not "Delete"); redirect here too in
+            // case this is ever reached for one.
+            await RemoveEphemeralPlaylistAsync(playlist);
+            return;
+        }
+
         await _library.DeletePlaylistAsync(playlist.Id);
         if (SelectedPlaylist?.Id == playlist.Id)
         {
@@ -379,6 +477,12 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>Exports a playlist to the chosen file, absolute paths.</summary>
     public async Task ExportPlaylistAsync(PlaylistInfo playlist, string outPath)
     {
+        if (playlist.Id < 0)
+        {
+            StatusText = "Temporary playlists can't be exported.";
+            return;
+        }
+
         try
         {
             Library.Export.ExportResult result =
@@ -591,13 +695,18 @@ public sealed partial class MainViewModel : ObservableObject
         await ReloadAsync();
     }
 
-    private string CurrentScopeKey => SelectedPlaylist is { } playlist
-        ? $"playlist:{playlist.Id}"
-        : SelectedNode is { IsFolder: true } folder
-            ? $"folder:{folder.Info.Id}"
-            : SelectedSource?.Kind == SourceKind.RecentlyAdded
-                ? "source:recent"
-                : "source:music";
+    // Ephemeral playlists share one view-settings scope rather than each
+    // getting "playlist:{id}": their ids are freshly minted every session,
+    // so a per-id scope would just accumulate orphaned rows in the store.
+    private string CurrentScopeKey => SelectedPlaylist is { Id: < 0 }
+        ? "ephemeral"
+        : SelectedPlaylist is { } playlist
+            ? $"playlist:{playlist.Id}"
+            : SelectedNode is { IsFolder: true } folder
+                ? $"folder:{folder.Info.Id}"
+                : SelectedSource?.Kind == SourceKind.RecentlyAdded
+                    ? "source:recent"
+                    : "source:music";
 
     private Task PersistViewSettingsAsync()
     {
