@@ -160,6 +160,13 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>True while view settings are being applied programmatically.</summary>
     private bool _applyingViewSettings;
 
+    // Whether the current view's columns/widths were inherited from the
+    // Music view rather than saved under this scope. Inherited fields
+    // persist as null so the view keeps following Music until the user
+    // customizes it here.
+    private bool _columnsInherited;
+    private bool _widthsInherited;
+
     /// <summary>
     /// Raised after <see cref="ReloadAsync"/> has applied a view's saved
     /// settings to the bound properties — even when the values are unchanged
@@ -734,6 +741,8 @@ public sealed partial class MainViewModel : ObservableObject
         await ReloadAsync();
     }
 
+    private const string MusicScopeKey = "source:music";
+
     // Ephemeral playlists share one view-settings scope rather than each
     // getting "playlist:{id}": their ids are freshly minted every session,
     // so a per-id scope would just accumulate orphaned rows in the store.
@@ -747,17 +756,19 @@ public sealed partial class MainViewModel : ObservableObject
                 ? $"folder:{folder.Info.Id}"
                 : SelectedSource?.Kind == SourceKind.RecentlyAdded
                     ? "source:recent"
-                    : "source:music";
+                    : MusicScopeKey;
 
     private Task PersistViewSettingsAsync()
     {
+        // Inherited column state stays null in the store so this view keeps
+        // following the Music view until the user customizes it here.
         return _library.SetViewSettingsAsync(CurrentScopeKey, new Library.Database.ViewSettings
         {
-            Columns = [.. CurrentColumns],
+            Columns = _columnsInherited ? null : [.. CurrentColumns],
             Sort = SelectedSort?.Order,
             SortColumn = SortColumnKey,
             SortDescending = SortDescending,
-            ColumnWidths = CurrentColumnWidths.Count > 0
+            ColumnWidths = !_widthsInherited && CurrentColumnWidths.Count > 0
                 ? new Dictionary<string, double>(CurrentColumnWidths)
                 : null,
         });
@@ -772,6 +783,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         CurrentColumns = keys;
+        _columnsInherited = false;
         await PersistViewSettingsAsync();
     }
 
@@ -787,6 +799,7 @@ public sealed partial class MainViewModel : ObservableObject
         if (scopeKey == CurrentScopeKey)
         {
             CurrentColumnWidths = widths;
+            _widthsInherited = false;
             await PersistViewSettingsAsync();
             return;
         }
@@ -796,6 +809,22 @@ public sealed partial class MainViewModel : ObservableObject
         {
             ColumnWidths = widths.Count > 0 ? new Dictionary<string, double>(widths) : null,
         });
+    }
+
+    /// <summary>
+    /// Clears this view's saved column layout and widths so it falls back to
+    /// the default: the Music view's state, or the built-in registry for the
+    /// Music view itself.
+    /// </summary>
+    public async Task ResetColumnsToDefaultAsync()
+    {
+        Library.Database.ViewSettings stored = await _library.GetViewSettingsAsync(CurrentScopeKey);
+        await _library.SetViewSettingsAsync(CurrentScopeKey, stored with
+        {
+            Columns = null,
+            ColumnWidths = null,
+        });
+        await ReloadAsync();
     }
 
     partial void OnSearchTextChanged(string value)
@@ -823,6 +852,33 @@ public sealed partial class MainViewModel : ObservableObject
         // Per-view settings decide sort and columns before the query runs.
         Library.Database.ViewSettings viewSettings =
             await _library.GetViewSettingsAsync(CurrentScopeKey);
+
+        // Views with no saved column state follow the Music view: "default"
+        // means whatever Music currently looks like, until the user
+        // customizes columns or widths here.
+        _columnsInherited = false;
+        _widthsInherited = false;
+        if (CurrentScopeKey != MusicScopeKey)
+        {
+            bool noColumns = viewSettings.Columns is not { Count: > 0 };
+            bool noWidths = viewSettings.ColumnWidths is null;
+            if (noColumns || noWidths)
+            {
+                Library.Database.ViewSettings music =
+                    await _library.GetViewSettingsAsync(MusicScopeKey);
+                if (noColumns)
+                {
+                    viewSettings = viewSettings with { Columns = music.Columns };
+                    _columnsInherited = true;
+                }
+
+                if (noWidths)
+                {
+                    viewSettings = viewSettings with { ColumnWidths = music.ColumnWidths };
+                    _widthsInherited = true;
+                }
+            }
+        }
 
         // A newer reload may have started while settings were loading; let
         // it win instead of applying stale view state over its result.
