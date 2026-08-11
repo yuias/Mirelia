@@ -12,6 +12,19 @@ public enum ReplayGainMode
     Track,
 }
 
+/// <summary>Color theme preference for the UI.</summary>
+public enum AppTheme
+{
+    /// <summary>Follow the OS setting.</summary>
+    Auto,
+
+    /// <summary>Always use the light theme.</summary>
+    Light,
+
+    /// <summary>Always use the dark theme.</summary>
+    Dark,
+}
+
 /// <summary>Persisted user settings.</summary>
 public sealed record AppSettings
 {
@@ -23,6 +36,9 @@ public sealed record AppSettings
 
     /// <summary>How ReplayGain is applied during playback.</summary>
     public ReplayGainMode ReplayGain { get; init; } = ReplayGainMode.Off;
+
+    /// <summary>The UI color theme.</summary>
+    public AppTheme Theme { get; init; } = AppTheme.Auto;
 }
 
 /// <summary>

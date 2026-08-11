@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using Mirelia.App.Services;
 using Mirelia.App.ViewModels;
@@ -33,6 +34,13 @@ public class App : Application
                 Path.Combine(
                     Path.GetDirectoryName(Path.GetFullPath(LibraryPaths.DefaultDatabasePath))!,
                     "settings.json"));
+
+            // Applied before the main window is created so there is no
+            // flash of the wrong theme; re-applied on every settings save
+            // so Preferences changes take effect immediately.
+            RequestedThemeVariant = ThemeVariantFor(Settings.Current.Theme);
+            Settings.Changed += s => RequestedThemeVariant = ThemeVariantFor(s.Theme);
+
             _player = new AudioPlayerService(_library, Settings);
             var viewModel = new MainViewModel(_library, _player);
 
@@ -65,4 +73,11 @@ public class App : Application
 
         base.OnFrameworkInitializationCompleted();
     }
+
+    private static ThemeVariant ThemeVariantFor(AppTheme theme) => theme switch
+    {
+        AppTheme.Light => ThemeVariant.Light,
+        AppTheme.Dark => ThemeVariant.Dark,
+        _ => ThemeVariant.Default,
+    };
 }

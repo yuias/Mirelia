@@ -6,9 +6,10 @@ using Mirelia.AudioBridge;
 namespace Mirelia.App.Dialogs;
 
 /// <summary>
-/// Output device, exclusive mode, and ReplayGain settings. Device
-/// enumeration runs on a throwaway engine instance so the dialog never
-/// touches the playback engine.
+/// Playback settings (output device, exclusive mode, ReplayGain) and
+/// appearance settings (theme), grouped into tabs. Device enumeration runs
+/// on a throwaway engine instance so the dialog never touches the playback
+/// engine.
 /// </summary>
 public partial class PreferencesDialog : Window
 {
@@ -54,6 +55,9 @@ public partial class PreferencesDialog : Window
 
         RgBox.ItemsSource = new[] { ReplayGainMode.Off, ReplayGainMode.Track };
         RgBox.SelectedItem = settings.Current.ReplayGain;
+
+        ThemeBox.ItemsSource = new[] { AppTheme.Auto, AppTheme.Light, AppTheme.Dark };
+        ThemeBox.SelectedItem = settings.Current.Theme;
     }
 
     private void OnCancel(object? sender, RoutedEventArgs e) => Close(false);
@@ -71,6 +75,7 @@ public partial class PreferencesDialog : Window
             DeviceId = (DeviceBox.SelectedItem as DeviceChoice)?.Id,
             Exclusive = ExclusiveCheck.IsChecked == true,
             ReplayGain = RgBox.SelectedItem as ReplayGainMode? ?? ReplayGainMode.Off,
+            Theme = ThemeBox.SelectedItem as AppTheme? ?? AppTheme.Auto,
         });
         Close(true);
     }
