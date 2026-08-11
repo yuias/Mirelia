@@ -70,7 +70,9 @@ public partial class PreferencesDialog : Window
             return;
         }
 
-        _settings.Save(new AppSettings
+        // Copy from Current (not `new AppSettings`) so fields this dialog
+        // does not manage, such as the persisted window placement, survive.
+        _settings.Save(_settings.Current with
         {
             DeviceId = (DeviceBox.SelectedItem as DeviceChoice)?.Id,
             Exclusive = ExclusiveCheck.IsChecked == true,

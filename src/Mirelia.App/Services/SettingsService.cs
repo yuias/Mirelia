@@ -39,6 +39,21 @@ public sealed record AppSettings
 
     /// <summary>The UI color theme.</summary>
     public AppTheme Theme { get; init; } = AppTheme.Auto;
+
+    /// <summary>Main window X position (device pixels), or null before first save.</summary>
+    public int? WindowX { get; init; }
+
+    /// <summary>Main window Y position (device pixels), or null before first save.</summary>
+    public int? WindowY { get; init; }
+
+    /// <summary>Main window width (DIPs) in its normal (non-maximized) state, or null before first save.</summary>
+    public double? WindowWidth { get; init; }
+
+    /// <summary>Main window height (DIPs) in its normal (non-maximized) state, or null before first save.</summary>
+    public double? WindowHeight { get; init; }
+
+    /// <summary>Whether the main window was maximized when it last closed.</summary>
+    public bool WindowMaximized { get; init; }
 }
 
 /// <summary>

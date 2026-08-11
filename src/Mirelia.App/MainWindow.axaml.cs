@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.VisualTree;
 using Mirelia.App.Dialogs;
@@ -24,10 +25,35 @@ public partial class MainWindow : Window
     private Point _dragOrigin;
     private PointerPressedEventArgs? _dragPress;
 
+    // Last known bounds while WindowState was Normal, so a maximized (or
+    // minimized) window's transient bounds never get saved in place of the
+    // real normal-state geometry to restore next launch.
+    private PixelPoint? _normalPosition;
+    private Size? _normalClientSize;
+
     /// <summary>Initializes the window.</summary>
     public MainWindow()
     {
         InitializeComponent();
+        RestoreWindowPlacement();
+
+        // Track normal-state geometry as the window moves/resizes, and
+        // persist it (plus maximized state) on close.
+        PositionChanged += (_, e) =>
+        {
+            if (WindowState == WindowState.Normal)
+            {
+                _normalPosition = e.Point;
+            }
+        };
+        Resized += (_, e) =>
+        {
+            if (WindowState == WindowState.Normal)
+            {
+                _normalClientSize = e.ClientSize;
+            }
+        };
+        Closing += OnWindowClosing;
 
         // Visibility-driven hydration: rows realized by the grid pull their
         // page from the database (see VirtualTrackList). The same hook does
@@ -78,6 +104,88 @@ public partial class MainWindow : Window
             }
         };
         Grid.ColumnReordered += async (_, _) => await PersistColumnOrderAsync();
+    }
+
+    // ---- window placement persistence -----------------------------------
+
+    private const double MinNormalWidth = 400;
+    private const double MinNormalHeight = 300;
+
+    /// <summary>
+    /// Applies saved window geometry over the XAML defaults (first-run
+    /// values). Saved bounds are only trusted if they still land on a
+    /// connected screen, so an unplugged monitor cannot strand the window
+    /// off-screen.
+    /// </summary>
+    private void RestoreWindowPlacement()
+    {
+        if (App.Settings?.Current is not
+            {
+                WindowX: int x, WindowY: int y,
+                WindowWidth: double width, WindowHeight: double height,
+            } settings)
+        {
+            return;
+        }
+
+        width = Math.Max(width, MinNormalWidth);
+        height = Math.Max(height, MinNormalHeight);
+        var position = new PixelPoint(x, y);
+
+        if (FitsOnAnyScreen(position, width, height))
+        {
+            Position = position;
+            Width = width;
+            Height = height;
+            _normalPosition = position;
+            _normalClientSize = new Size(width, height);
+        }
+
+        // Maximize on top of the restored (or default) normal bounds so
+        // un-maximizing later lands on a sane rectangle.
+        if (settings.WindowMaximized)
+        {
+            WindowState = WindowState.Maximized;
+        }
+    }
+
+    private bool FitsOnAnyScreen(PixelPoint position, double width, double height)
+    {
+        IReadOnlyList<Screen>? screens = Screens?.All;
+        if (screens is null || screens.Count == 0)
+        {
+            return true; // No screen info available yet; trust the saved value.
+        }
+
+        return screens.Any(screen =>
+        {
+            var size = new PixelSize(
+                (int)Math.Round(width * screen.Scaling),
+                (int)Math.Round(height * screen.Scaling));
+            return screen.WorkingArea.Intersects(new PixelRect(position, size));
+        });
+    }
+
+    private void OnWindowClosing(object? sender, WindowClosingEventArgs e)
+    {
+        if (App.Settings is not { } settings)
+        {
+            return;
+        }
+
+        // Fall back to the current bounds if the window never reported a
+        // Normal-state PositionChanged/Resized (e.g. it launched maximized).
+        PixelPoint position = _normalPosition ?? Position;
+        Size size = _normalClientSize ?? ClientSize;
+
+        settings.Save(settings.Current with
+        {
+            WindowX = position.X,
+            WindowY = position.Y,
+            WindowWidth = size.Width,
+            WindowHeight = size.Height,
+            WindowMaximized = WindowState == WindowState.Maximized,
+        });
     }
 
     private bool _rebuildingColumns;
