@@ -30,11 +30,11 @@ Implementation lives in `src/Mirelia.Query`.
   are inclusive periods. Caveat: year-only tags are stored as Jan 1
   (`date_key` padding), so month/day-precision predicates cannot match
   them — prefer year or range predicates when tags may be coarse.
-- The GUI condition builder (`SimpleQueryModel`) displays the flat subset:
-  one AND/OR level of comparisons and bool tests, at most one ORDER BY
-  term, and a plain LIMIT. Nesting, IN/BETWEEN, playlist refs, `any()`,
-  and `LIMIT … BY` stay text-editor-only; such queries open on the Text
-  tab and remain fully editable there.
+- The GUI condition builder (`SimpleQueryModel`) displays a recursive tree
+  of AND/OR groups over comparisons and bool tests, at most one ORDER BY
+  term, and a plain LIMIT. IN/BETWEEN, playlist refs, `any()`, `NOT` over
+  anything but a bare bool field, and `LIMIT … BY` stay text-editor-only;
+  such queries open on the Text tab and remain fully editable there.
 
 ## Grammar
 

@@ -1,5 +1,8 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Media;
 using Avalonia.Threading;
 using Mirelia.Query.Ast;
 using Mirelia.Query.Builder;
@@ -27,6 +30,17 @@ public partial class SmartPlaylistEditorDialog : Window
     private sealed record OpChoice(ConditionOp Op, string Label)
     {
         public override string ToString() => Label;
+    }
+
+    /// <summary>
+    /// One group's UI: its own AND/OR toggle and the panel holding its
+    /// child rows and nested group borders, in display order.
+    /// </summary>
+    private sealed class GroupBorder : Border
+    {
+        public required ComboBox MatchBox { get; init; }
+
+        public required StackPanel ChildrenPanel { get; init; }
     }
 
     private static readonly OpChoice[] TextOps =
@@ -68,6 +82,7 @@ public partial class SmartPlaylistEditorDialog : Window
 
     private bool _syncingTabs;
     private int _lastTabIndex;
+    private GroupBorder _rootGroup = null!;
 
     /// <summary>XAML-loader constructor.</summary>
     public SmartPlaylistEditorDialog()
@@ -93,8 +108,6 @@ public partial class SmartPlaylistEditorDialog : Window
             _countDebounce.Stop();
             _ = UpdateMatchCountAsync();
         };
-        MatchBox.ItemsSource = new[] { "all", "any" };
-        MatchBox.SelectedIndex = 0;
         OrderFieldBox.ItemsSource =
             new[] { OrderNone, OrderRandom }.Concat(Fields.Select(f => f.Name)).ToArray();
         OrderFieldBox.SelectedIndex = 0;
@@ -105,17 +118,19 @@ public partial class SmartPlaylistEditorDialog : Window
         QueryBox.Text = initialDsl ?? string.Empty;
         if (!string.IsNullOrWhiteSpace(initialDsl) && !TryLoadBuilder(initialDsl))
         {
-            // Too complex (or invalid) for the builder: open on the text.
+            // Too complex (or invalid) for the builder: open on the text,
+            // but still seed an empty builder so switching tabs works.
+            SetRootGroup(new ConditionGroup(true, []));
             Tabs.SelectedIndex = 1;
         }
-        else if (RowsPanel.Children.Count == 0)
+
+        if (_rootGroup.ChildrenPanel.Children.Count == 0)
         {
-            AddRow(null);
+            AddConditionRow(_rootGroup.ChildrenPanel, null);
         }
 
         _lastTabIndex = Tabs.SelectedIndex;
 
-        MatchBox.SelectionChanged += (_, _) => ScheduleCount();
         LimitBox.TextChanged += (_, _) => ScheduleCount();
         QueryBox.TextChanged += (_, _) => ScheduleCount();
         ScheduleCount();
@@ -144,8 +159,6 @@ public partial class SmartPlaylistEditorDialog : Window
 
         Close(dsl);
     }
-
-    private void OnAddRowClick(object? sender, RoutedEventArgs e) => AddRow(null);
 
     private void OnOrderFieldChanged(object? sender, SelectionChangedEventArgs e)
         => OrderDirBox.IsEnabled =
@@ -192,14 +205,110 @@ public partial class SmartPlaylistEditorDialog : Window
         }
     }
 
-    // ---- builder rows ---------------------------------------------------
+    // ---- builder groups and rows -----------------------------------------
 
-    private void AddRow(SimpleCondition? condition)
+    /// <summary>Replaces the builder's whole tree with the given root group.</summary>
+    private void SetRootGroup(ConditionGroup root)
+    {
+        _rootGroup = BuildGroupUi(root, isRoot: true, parentPanel: null);
+        BuilderHost.Children.Clear();
+        BuilderHost.Children.Add(_rootGroup);
+    }
+
+    /// <summary>
+    /// Builds one group's UI recursively: an AND/OR header (with a remove
+    /// button for non-root groups), its seeded child rows/subgroups, and
+    /// add-condition/add-group buttons.
+    /// </summary>
+    private GroupBorder BuildGroupUi(ConditionGroup seed, bool isRoot, StackPanel? parentPanel)
+    {
+        var childrenPanel = new StackPanel { Spacing = 6 };
+        var matchBox = new ComboBox
+        {
+            ItemsSource = new[] { "all", "any" },
+            SelectedIndex = seed.MatchAll ? 0 : 1,
+            Width = 70,
+        };
+        matchBox.SelectionChanged += (_, _) => ScheduleCount();
+
+        var group = new GroupBorder
+        {
+            MatchBox = matchBox,
+            ChildrenPanel = childrenPanel,
+            BorderBrush = ThemeBorderBrush,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(10, 8),
+        };
+
+        var header = new DockPanel();
+        if (!isRoot)
+        {
+            var removeGroup = new Button { Content = "✕ group", Padding = new Thickness(7, 3) };
+            DockPanel.SetDock(removeGroup, Dock.Right);
+            removeGroup.Click += (_, _) =>
+            {
+                parentPanel?.Children.Remove(group);
+                ScheduleCount();
+            };
+            header.Children.Add(removeGroup);
+        }
+
+        var headerLabel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        headerLabel.Children.Add(new TextBlock { Text = "Match", VerticalAlignment = VerticalAlignment.Center });
+        headerLabel.Children.Add(matchBox);
+        headerLabel.Children.Add(new TextBlock
+        {
+            Text = "of the following:",
+            VerticalAlignment = VerticalAlignment.Center,
+            Opacity = 0.7,
+        });
+        header.Children.Add(headerLabel);
+
+        var addButtons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var addCondition = new Button { Content = "Add condition", Padding = new Thickness(7, 3) };
+        var addGroup = new Button { Content = "Add group", Padding = new Thickness(7, 3) };
+        addCondition.Click += (_, _) =>
+        {
+            AddConditionRow(childrenPanel, null);
+            ScheduleCount();
+        };
+        addGroup.Click += (_, _) =>
+        {
+            childrenPanel.Children.Add(BuildGroupUi(new ConditionGroup(true, []), isRoot: false, childrenPanel));
+            ScheduleCount();
+        };
+        addButtons.Children.Add(addCondition);
+        addButtons.Children.Add(addGroup);
+
+        var content = new StackPanel { Spacing = 8 };
+        content.Children.Add(header);
+        content.Children.Add(childrenPanel);
+        content.Children.Add(addButtons);
+        group.Child = content;
+
+        foreach (ConditionNode node in seed.Children)
+        {
+            switch (node)
+            {
+                case ConditionLeaf leaf:
+                    AddConditionRow(childrenPanel, leaf.Condition);
+                    break;
+                case ConditionGroup nested:
+                    childrenPanel.Children.Add(BuildGroupUi(nested, isRoot: false, childrenPanel));
+                    break;
+            }
+        }
+
+        return group;
+    }
+
+    private void AddConditionRow(StackPanel targetPanel, SimpleCondition? condition)
     {
         var fieldBox = new ComboBox { ItemsSource = Fields, Width = 130 };
         var opBox = new ComboBox { Width = 150 };
         var valueBox = new TextBox();
-        var remove = new Button { Content = "✕", Padding = new Avalonia.Thickness(7, 3) };
+        var remove = new Button { Content = "✕", Padding = new Thickness(7, 3) };
 
         fieldBox.SelectionChanged += (_, _) =>
         {
@@ -233,12 +342,8 @@ public partial class SmartPlaylistEditorDialog : Window
         row.Children.Add(remove);
         remove.Click += (_, _) =>
         {
-            // Keep at least one row so the builder is never empty.
-            if (RowsPanel.Children.Count > 1)
-            {
-                RowsPanel.Children.Remove(row);
-                ScheduleCount();
-            }
+            targetPanel.Children.Remove(row);
+            ScheduleCount();
         };
         opBox.SelectionChanged += (_, _) => ScheduleCount();
         valueBox.TextChanged += (_, _) => ScheduleCount();
@@ -253,7 +358,7 @@ public partial class SmartPlaylistEditorDialog : Window
             valueBox.Text = cond.ValueText;
         }
 
-        RowsPanel.Children.Add(row);
+        targetPanel.Children.Add(row);
     }
 
     private static OpChoice[] OpsFor(FieldKind kind) => kind switch
@@ -281,12 +386,7 @@ public partial class SmartPlaylistEditorDialog : Window
             return false;
         }
 
-        MatchBox.SelectedIndex = model.MatchAll ? 0 : 1;
-        RowsPanel.Children.Clear();
-        foreach (SimpleCondition condition in model.Conditions)
-        {
-            AddRow(condition);
-        }
+        SetRootGroup(model.Root);
 
         OrderFieldBox.SelectedItem = model.OrderBy switch
         {
@@ -299,7 +399,7 @@ public partial class SmartPlaylistEditorDialog : Window
         return true;
     }
 
-    /// <summary>Renders the builder rows as DSL, or shows an error and returns null.</summary>
+    /// <summary>Renders the builder tree as DSL, or shows an error and returns null.</summary>
     private string? TryBuildDsl()
     {
         string? dsl = BuildDsl(out string? error);
@@ -315,29 +415,13 @@ public partial class SmartPlaylistEditorDialog : Window
         return dsl;
     }
 
-    /// <summary>Renders the builder rows as DSL without touching the error UI.</summary>
+    /// <summary>Renders the builder tree as DSL without touching the error UI.</summary>
     private string? BuildDsl(out string? error)
     {
         error = null;
-        var conditions = new List<SimpleCondition>();
-        foreach (Control child in RowsPanel.Children)
+        if (!TryReadGroup(_rootGroup, out ConditionGroup root, out error))
         {
-            if (child is not Grid row)
-            {
-                continue;
-            }
-
-            var fieldBox = (ComboBox)row.Children[0];
-            var opBox = (ComboBox)row.Children[1];
-            var valueBox = (TextBox)row.Children[2];
-            if (fieldBox.SelectedItem is not FieldChoice field
-                || opBox.SelectedItem is not OpChoice op)
-            {
-                error = "Every condition needs a field and an operator.";
-                return null;
-            }
-
-            conditions.Add(new SimpleCondition(field.Name, op.Op, valueBox.Text ?? string.Empty));
+            return null;
         }
 
         int? limit = null;
@@ -360,8 +444,7 @@ public partial class SmartPlaylistEditorDialog : Window
             _ => null,
         };
 
-        var model = new SimpleQueryModel(
-            MatchBox.SelectedIndex == 0, conditions, orderBy, limit);
+        var model = new SimpleQueryModel(root, orderBy, limit);
         try
         {
             string dsl = model.ToDsl();
@@ -375,6 +458,47 @@ public partial class SmartPlaylistEditorDialog : Window
             error = ex.Message;
             return null;
         }
+    }
+
+    /// <summary>Reads one group's UI state back into a <see cref="ConditionGroup"/>, recursively.</summary>
+    private static bool TryReadGroup(GroupBorder groupBorder, out ConditionGroup group, out string? error)
+    {
+        error = null;
+        bool matchAll = groupBorder.MatchBox.SelectedIndex == 0;
+        var children = new List<ConditionNode>();
+        foreach (Control child in groupBorder.ChildrenPanel.Children)
+        {
+            switch (child)
+            {
+                case Grid row:
+                    var fieldBox = (ComboBox)row.Children[0];
+                    var opBox = (ComboBox)row.Children[1];
+                    var valueBox = (TextBox)row.Children[2];
+                    if (fieldBox.SelectedItem is not FieldChoice field || opBox.SelectedItem is not OpChoice op)
+                    {
+                        error = "Every condition needs a field and an operator.";
+                        group = null!;
+                        return false;
+                    }
+
+                    children.Add(new ConditionLeaf(
+                        new SimpleCondition(field.Name, op.Op, valueBox.Text ?? string.Empty)));
+                    break;
+
+                case GroupBorder nested:
+                    if (!TryReadGroup(nested, out ConditionGroup subGroup, out error))
+                    {
+                        group = null!;
+                        return false;
+                    }
+
+                    children.Add(subGroup);
+                    break;
+            }
+        }
+
+        group = new ConditionGroup(matchAll, children);
+        return true;
     }
 
     // ---- live match count (kickoff M6) ----------------------------------
@@ -422,6 +546,12 @@ public partial class SmartPlaylistEditorDialog : Window
             }
         }
     }
+
+    private static IBrush ThemeBorderBrush { get; } =
+        Application.Current?.TryFindResource("SystemControlForegroundBaseLowBrush", out object? res) == true
+        && res is IBrush brush
+            ? brush
+            : Brushes.Gray;
 
     private void ShowError(string message)
     {
