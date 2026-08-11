@@ -507,10 +507,16 @@ public sealed partial class MainViewModel : ObservableObject
 
     partial void OnSelectedNodeChanged(PlaylistNode? value)
     {
-        // Folder selection keeps the current view; playlists load.
         if (value is { IsPlaylist: true })
         {
             SelectedPlaylist = value.Info;
+        }
+        else if (value is { IsFolder: true })
+        {
+            // Folder selection shows the union of its descendant playlists.
+            SelectedPlaylist = null;
+            SelectedSource = null;
+            _ = ReloadAsync();
         }
     }
 
@@ -567,9 +573,11 @@ public sealed partial class MainViewModel : ObservableObject
 
     private string CurrentScopeKey => SelectedPlaylist is { } playlist
         ? $"playlist:{playlist.Id}"
-        : SelectedSource?.Kind == SourceKind.RecentlyAdded
-            ? "source:recent"
-            : "source:music";
+        : SelectedNode is { IsFolder: true } folder
+            ? $"folder:{folder.Info.Id}"
+            : SelectedSource?.Kind == SourceKind.RecentlyAdded
+                ? "source:recent"
+                : "source:music";
 
     private Task PersistViewSettingsAsync()
     {
@@ -623,13 +631,14 @@ public sealed partial class MainViewModel : ObservableObject
     {
         int generation = ++_loadGeneration;
         bool isPlaylist = SelectedPlaylist is not null;
+        bool isFolder = SelectedNode is { IsFolder: true };
         bool isRecent = SelectedSource?.Kind == SourceKind.RecentlyAdded;
 
         // Per-view settings decide sort and columns before the query runs.
         Library.Database.ViewSettings viewSettings =
             await _library.GetViewSettingsAsync(CurrentScopeKey);
-        IReadOnlyList<SortChoice> available = isPlaylist ? PlaylistSorts : BrowseSorts;
-        TrackSortOrder defaultSort = isPlaylist
+        IReadOnlyList<SortChoice> available = isPlaylist || isFolder ? PlaylistSorts : BrowseSorts;
+        TrackSortOrder defaultSort = isPlaylist || isFolder
             ? TrackSortOrder.PlaylistOrder
             : isRecent ? TrackSortOrder.RecentlyAdded : TrackSortOrder.Artist;
         TrackSortOrder sort = viewSettings.Sort ?? defaultSort;
@@ -704,6 +713,15 @@ public sealed partial class MainViewModel : ObservableObject
                     ? await _library.SortIdsAsync(ids, sort)
                     : ids;
         }
+        else if (SelectedNode is { IsFolder: true } folderNode)
+        {
+            ids = await EvaluateFolderAsync(folderNode);
+            ids = columnSort is not null
+                ? await _library.SortIdsAsync(ids, columnSort)
+                : sort != TrackSortOrder.PlaylistOrder
+                    ? await _library.SortIdsAsync(ids, sort)
+                    : ids;
+        }
         else if (isRecent)
         {
             ids = await _library.BrowseRecentlyAddedAsync();
@@ -731,6 +749,48 @@ public sealed partial class MainViewModel : ObservableObject
         Tracks = new VirtualTrackList(ids, RequestPage);
         IsLibraryEmpty = ids.Length == 0 && string.IsNullOrWhiteSpace(SearchText);
         StatusText = $"{ids.Length:N0} track(s)";
+    }
+
+    /// <summary>
+    /// Union of every descendant playlist's tracks under a folder, deduped
+    /// keeping each id's first occurrence in tree order.
+    /// </summary>
+    private async Task<long[]> EvaluateFolderAsync(PlaylistNode folder)
+    {
+        var seen = new HashSet<long>();
+        var union = new List<long>();
+        foreach (PlaylistInfo playlist in DescendantPlaylists(folder))
+        {
+            long[] ids = await _library.EvaluatePlaylistAsync(playlist);
+            foreach (long id in ids)
+            {
+                if (seen.Add(id))
+                {
+                    union.Add(id);
+                }
+            }
+        }
+
+        return [.. union];
+    }
+
+    /// <summary>Depth-first walk yielding every playlist (not folder) under <paramref name="folder"/>.</summary>
+    private static IEnumerable<PlaylistInfo> DescendantPlaylists(PlaylistNode folder)
+    {
+        foreach (PlaylistNode child in folder.Children)
+        {
+            if (child.IsFolder)
+            {
+                foreach (PlaylistInfo descendant in DescendantPlaylists(child))
+                {
+                    yield return descendant;
+                }
+            }
+            else
+            {
+                yield return child.Info;
+            }
+        }
     }
 
     private void RequestPage(int page, long[] pageIds)
