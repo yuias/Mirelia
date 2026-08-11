@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Data;
 using Avalonia.Input;
@@ -636,10 +637,53 @@ public partial class MainWindow : Window
 
     private async void OnGridDoubleTapped(object? sender, TappedEventArgs e)
     {
+        // A double-click on a column header is never a "play" gesture; on a
+        // resize edge it auto-fits the adjacent column instead.
+        if (e.Source is Visual source
+            && source.FindAncestorOfType<DataGridColumnHeader>(includeSelf: true) is { } header)
+        {
+            e.Handled = true;
+            AutoFitColumnFromHeaderEdge(header, e.GetPosition(header).X);
+            return;
+        }
+
         if (ViewModel is { } vm && Grid.SelectedIndex >= 0)
         {
             await vm.PlayRowAsync(Grid.SelectedIndex);
         }
+    }
+
+    /// <summary>
+    /// Explorer-style auto-fit: a double-click near a header's right edge
+    /// (or the left edge, meaning the previous column's right edge) sizes
+    /// that column to its realized content and pins the result as a pixel
+    /// width, which the normal capture path then persists.
+    /// </summary>
+    private void AutoFitColumnFromHeaderEdge(DataGridColumnHeader header, double x)
+    {
+        // Match the header's resize hot zone so the same spot that starts a
+        // resize drag also accepts the double-click.
+        const double edgeSlop = 6;
+
+        var ordered = Grid.Columns.OrderBy(c => c.DisplayIndex).ToList();
+        int index = ordered.FindIndex(c => Equals(c.Header, header.Content));
+        DataGridColumn? column = index < 0
+            ? null
+            : x >= header.Bounds.Width - edgeSlop
+                ? ordered[index]
+                : x <= edgeSlop && index > 0
+                    ? ordered[index - 1]
+                    : null;
+        if (column is null)
+        {
+            return;
+        }
+
+        // Let Auto sizing measure the realized cells, then freeze the result
+        // as a pixel width so virtualization cannot re-grow it later.
+        column.Width = DataGridLength.Auto;
+        Grid.UpdateLayout();
+        column.Width = new DataGridLength(Math.Max(column.ActualWidth, 24));
     }
 
     private async void OnPlaySelectedClick(object? sender, RoutedEventArgs e)
