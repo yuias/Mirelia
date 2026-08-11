@@ -7,8 +7,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-# Pinned to 0.5: 0.6.0 shipped 2026-05 with a reworked API; migrate deliberately, not in passing.
-symphonia = { version = "0.5", default-features = false, features = [
+symphonia = { version = "0.6", default-features = false, features = [
     "mp3",
     "aac",
     "alac",

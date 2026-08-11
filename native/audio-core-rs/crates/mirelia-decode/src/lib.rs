@@ -11,13 +11,14 @@ use std::fmt;
 use std::fs::File;
 use std::path::Path;
 
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{self, DecoderOptions};
+use symphonia::core::codecs::CodecParameters;
+use symphonia::core::codecs::audio::{self, AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;
-use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
+use symphonia::core::units::Timestamp;
 
 /// Decoder failure classification, mirroring the ABI error split.
 #[derive(Debug)]
@@ -72,10 +73,11 @@ pub struct StreamInfo {
 /// A decoding session over one audio file.
 pub struct Decoder {
     format: Box<dyn FormatReader>,
-    decoder: Box<dyn codecs::Decoder>,
+    decoder: Box<dyn AudioDecoder>,
     track_id: u32,
     info: StreamInfo,
-    sample_buf: Option<SampleBuffer<f32>>,
+    /// Interleaved f32 samples from the most recently decoded packet.
+    sample_buf: Vec<f32>,
     /// True when sample_buf holds a not-yet-delivered block from priming.
     primed: bool,
     /// Next frame index to be handed out.
@@ -98,65 +100,78 @@ impl Decoder {
             hint.with_extension(ext);
         }
 
-        let probed = symphonia::default::get_probe()
-            .format(
-                &hint,
-                mss,
-                &FormatOptions {
-                    enable_gapless: true,
-                    ..Default::default()
-                },
-                &MetadataOptions::default(),
-            )
+        // `Probe::probe` takes the format reader directly (no `ProbedFormat`
+        // wrapper) and consumes the options by value.
+        let mut format = symphonia::default::get_probe()
+            .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
             .map_err(DecodeError::from)?;
-        let format = probed.format;
 
-        let track = format
-            .tracks()
-            .iter()
-            .find(|t| t.codec_params.codec != codecs::CODEC_TYPE_NULL)
-            .ok_or_else(|| DecodeError::Unsupported("no decodable audio track".into()))?;
-        let track_id = track.id;
-        let params = track.codec_params.clone();
-        let mut format = format;
+        // Scoped so the immutable borrow of `format` ends before `next_packet`
+        // (used by the priming loop below) needs a mutable one.
+        let (track_id, params, total_frames) = {
+            let track = format
+                .first_track_known_codec(TrackType::Audio)
+                .ok_or_else(|| DecodeError::Unsupported("no decodable audio track".into()))?;
+            let params = track
+                .codec_params
+                .as_ref()
+                .and_then(CodecParameters::audio)
+                .cloned()
+                .ok_or_else(|| DecodeError::Unsupported("no decodable audio track".into()))?;
+            (track.id, params, track.num_frames)
+        };
 
+        // Gapless trimming moved from `FormatOptions::enable_gapless` (0.5) to
+        // `AudioDecoderOptions::gapless` (0.6, default true): the decoder now
+        // trims delay/padding itself using the packet's trim_start/trim_end,
+        // which the demuxer populates from LAME/iTunSMPB metadata.
+        let dec_opts = AudioDecoderOptions::default().gapless(true);
         let mut decoder = symphonia::default::get_codecs()
-            .make(&params, &DecoderOptions::default())
+            .make_audio_decoder(&params, &dec_opts)
             .map_err(DecodeError::from)?;
 
-        // Some codecs (notably AAC) declare the signal spec only in the
-        // bitstream, not the container. Decode ahead until the first frame
-        // to learn it; the primed block is handed out by next_block later.
-        let mut primed_buf: Option<SampleBuffer<f32>> = None;
-        let (sample_rate, channels) = match (params.sample_rate, params.channels) {
-            (Some(r), Some(c)) => (r, c.count() as u16),
+        // Some codecs (notably AAC without an in-container ASC) declare the
+        // signal spec only in the bitstream. Decode ahead until the first
+        // frame to learn it; the primed block is handed out by next_block
+        // later. For the isomp4/AAC fixtures the esds ASC already gives the
+        // demuxer sample_rate/channels, so this loop is not exercised there,
+        // but it remains as a fallback for streams that don't declare them.
+        let mut primed_buf: Vec<f32> = Vec::new();
+        let (sample_rate, channels) = match (
+            params.sample_rate,
+            params.channels.as_ref().map(|c| c.count()),
+        ) {
+            (Some(r), Some(c)) => (r, c as u16),
             _ => loop {
                 let packet = match format.next_packet() {
-                    Ok(p) => p,
+                    Ok(Some(p)) => p,
+                    Ok(None) => {
+                        return Err(DecodeError::Malformed(
+                            "stream parameters undetermined before EOF".into(),
+                        ));
+                    }
                     Err(e) => {
                         return Err(DecodeError::Malformed(format!(
                             "stream parameters undetermined before EOF: {e}"
                         )));
                     }
                 };
-                if packet.track_id() != track_id {
+                if packet.track_id != track_id {
                     continue;
                 }
 
                 match decoder.decode(&packet) {
                     Ok(d) if d.frames() > 0 => {
-                        let spec = *d.spec();
-                        let mut buf = SampleBuffer::new(d.capacity() as u64, spec);
-                        buf.copy_interleaved_ref(d);
-                        primed_buf = Some(buf);
-                        break (spec.rate, spec.channels.count() as u16);
+                        let rate = d.spec().rate();
+                        let ch = d.spec().channels().count() as u16;
+                        d.copy_to_vec_interleaved(&mut primed_buf);
+                        break (rate, ch);
                     }
                     Ok(_) | Err(SymphoniaError::DecodeError(_)) => continue,
                     Err(e) => return Err(e.into()),
                 }
             },
         };
-        let total_frames = params.n_frames;
         let bitrate_kbps = total_frames
             .filter(|&frames| frames > 0 && file_len > 0)
             .map(|frames| {
@@ -173,7 +188,7 @@ impl Decoder {
             bitrate_kbps,
         };
 
-        let primed = primed_buf.is_some();
+        let primed = !primed_buf.is_empty();
         Ok(Self {
             format,
             decoder,
@@ -202,23 +217,20 @@ impl Decoder {
         if self.primed {
             self.primed = false;
             let channels = usize::from(self.info.channels);
-            let samples = self.sample_buf.as_ref().unwrap().samples();
-            self.position += (samples.len() / channels) as u64;
-            return Ok(Some(samples));
+            self.position += (self.sample_buf.len() / channels) as u64;
+            return Ok(Some(&self.sample_buf));
         }
 
         loop {
             let packet = match self.format.next_packet() {
-                Ok(p) => p,
-                Err(SymphoniaError::IoError(e))
-                    if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-                {
-                    return Ok(None);
-                }
+                // 0.6 signals end-of-stream directly with `Ok(None)` instead
+                // of an IoError(UnexpectedEof).
+                Ok(None) => return Ok(None),
+                Ok(Some(p)) => p,
                 Err(SymphoniaError::ResetRequired) => return Ok(None),
                 Err(e) => return Err(e.into()),
             };
-            if packet.track_id() != self.track_id {
+            if packet.track_id != self.track_id {
                 continue;
             }
 
@@ -231,15 +243,10 @@ impl Decoder {
             if decoded.frames() == 0 {
                 continue;
             }
-
-            let spec = *decoded.spec();
-            let buf = self
-                .sample_buf
-                .get_or_insert_with(|| SampleBuffer::new(decoded.capacity() as u64, spec));
-            buf.copy_interleaved_ref(decoded);
+            decoded.copy_to_vec_interleaved(&mut self.sample_buf);
 
             let channels = usize::from(self.info.channels);
-            let frames = buf.samples().len() / channels;
+            let frames = self.sample_buf.len() / channels;
             if self.pending_skip >= frames as u64 {
                 self.pending_skip -= frames as u64;
                 continue;
@@ -247,7 +254,7 @@ impl Decoder {
 
             let skip_samples = (self.pending_skip as usize) * channels;
             self.pending_skip = 0;
-            let samples = &self.sample_buf.as_ref().unwrap().samples()[skip_samples..];
+            let samples = &self.sample_buf[skip_samples..];
             self.position += (samples.len() / channels) as u64;
             return Ok(Some(samples));
         }
@@ -255,33 +262,36 @@ impl Decoder {
 
     /// Seeks so the next `next_block` starts exactly at `frame`.
     pub fn seek(&mut self, frame: u64) -> Result<(), DecodeError> {
+        let target = Timestamp::try_from(frame)
+            .map_err(|_| DecodeError::Malformed("seek target out of range".into()))?;
         let seeked = self.format.seek(
             SeekMode::Accurate,
-            SeekTo::TimeStamp {
-                ts: frame,
-                track_id: self.track_id,
-            },
+            SeekTo::Timestamp { ts: target, track_id: self.track_id },
         )?;
         self.decoder.reset();
         self.primed = false;
         // Accurate mode lands at or before the target; trim the difference.
-        self.pending_skip = frame.saturating_sub(seeked.actual_ts);
+        // Timestamps are non-negative for audio frame positions here, so the
+        // conversion back to u64 only fails on a malformed reader response.
+        let actual = u64::try_from(seeked.actual_ts.get()).unwrap_or(0);
+        self.pending_skip = frame.saturating_sub(actual);
         self.position = frame;
         Ok(())
     }
 }
 
-fn codec_name(codec: codecs::CodecType) -> Result<&'static str, DecodeError> {
+fn codec_name(codec: audio::AudioCodecId) -> Result<&'static str, DecodeError> {
+    use audio::well_known::*;
     match codec {
-        codecs::CODEC_TYPE_MP3 => Ok("mp3"),
-        codecs::CODEC_TYPE_AAC => Ok("aac"),
-        codecs::CODEC_TYPE_ALAC => Ok("alac"),
-        codecs::CODEC_TYPE_FLAC => Ok("flac"),
-        c if c == codecs::CODEC_TYPE_PCM_S16LE
-            || c == codecs::CODEC_TYPE_PCM_S24LE
-            || c == codecs::CODEC_TYPE_PCM_S32LE
-            || c == codecs::CODEC_TYPE_PCM_F32LE
-            || c == codecs::CODEC_TYPE_PCM_U8 =>
+        CODEC_ID_MP3 => Ok("mp3"),
+        CODEC_ID_AAC => Ok("aac"),
+        CODEC_ID_ALAC => Ok("alac"),
+        CODEC_ID_FLAC => Ok("flac"),
+        c if c == CODEC_ID_PCM_S16LE
+            || c == CODEC_ID_PCM_S24LE
+            || c == CODEC_ID_PCM_S32LE
+            || c == CODEC_ID_PCM_F32LE
+            || c == CODEC_ID_PCM_U8 =>
         {
             Ok("pcm")
         }
