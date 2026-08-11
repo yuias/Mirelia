@@ -203,6 +203,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         List<PlaylistInfo> playlists = await _library.GetPlaylistsAsync();
         long? selectedId = SelectedPlaylist?.Id;
+        long? selectedNodeId = SelectedNode?.Info.Id;
         Playlists.Clear();
         foreach (PlaylistInfo p in playlists)
         {
@@ -225,6 +226,14 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         SelectedPlaylist = playlists.FirstOrDefault(p => p.Id == selectedId);
+
+        // The rebuild replaced every node instance, so the tree's bound
+        // selection must be re-pointed at the new node or the visual
+        // highlight silently disappears after any playlist-store mutation.
+        SelectedNode = selectedNodeId is { } nodeId && nodes.TryGetValue(nodeId, out PlaylistNode? selected)
+            ? selected
+            : null;
+
         OnPropertyChanged(nameof(StaticPlaylists));
         OnPropertyChanged(nameof(Folders));
     }
