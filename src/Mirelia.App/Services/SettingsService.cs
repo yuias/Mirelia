@@ -60,6 +60,9 @@ public sealed record AppSettings
 
     /// <summary>Whether the main window was maximized when it last closed.</summary>
     public bool WindowMaximized { get; init; }
+
+    /// <summary>Whether the playing-queue pane is shown.</summary>
+    public bool QueuePaneOpen { get; init; } = true;
 }
 
 /// <summary>

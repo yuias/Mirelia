@@ -57,7 +57,7 @@ public class App : Application
             Settings.Changed += s => ApplyFontResources(s);
 
             _player = new AudioPlayerService(_library, Settings);
-            var viewModel = new MainViewModel(_library, _player);
+            var viewModel = new MainViewModel(_library, _player, Settings);
 
             desktop.MainWindow = new MainWindow { DataContext = viewModel };
             desktop.Exit += (_, _) =>

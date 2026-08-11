@@ -148,6 +148,9 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>The transport bar view-model.</summary>
     public TransportViewModel Transport { get; }
 
+    /// <summary>The playing-queue pane view-model.</summary>
+    public QueueViewModel Queue { get; }
+
     /// <summary>Left-pane sources.</summary>
     public IReadOnlyList<SourceItem> Sources { get; } =
     [
@@ -171,11 +174,12 @@ public sealed partial class MainViewModel : ObservableObject
 
 
     /// <summary>Creates the view-model; call <see cref="InitializeAsync"/> after.</summary>
-    public MainViewModel(LibraryService library, AudioPlayerService player)
+    public MainViewModel(LibraryService library, AudioPlayerService player, SettingsService settings)
     {
         _library = library;
         _player = player;
         Transport = new TransportViewModel(player);
+        Queue = new QueueViewModel(library, player, settings);
         _searchDebounce = new DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(250),
@@ -196,6 +200,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         await RefreshPlaylistsAsync();
         await ReloadAsync();
+        await Queue.InitializeAsync();
     }
 
     /// <summary>Re-reads playlists from the store and rebuilds the tree.</summary>
@@ -485,6 +490,12 @@ public sealed partial class MainViewModel : ObservableObject
 
         await _player.PlayQueueAsync(Tracks.Ids, rowIndex);
     }
+
+    /// <summary>Inserts tracks right after whatever is currently playing.</summary>
+    public Task PlayNextAsync(IReadOnlyList<long> trackIds) => _player.EnqueueNextAsync(trackIds);
+
+    /// <summary>Appends tracks to the end of the playing queue.</summary>
+    public Task AddToQueueAsync(IReadOnlyList<long> trackIds) => _player.EnqueueEndAsync(trackIds);
 
     /// <summary>Scans a folder into the library, then reloads the view.</summary>
     public async Task AddFolderAsync(string directory)

@@ -22,12 +22,21 @@ public partial class MainWindow : Window
     private static readonly DataFormat<long[]> TrackIdsFormat =
         DataFormat.CreateInProcessFormat<long[]>("mirelia/track-ids");
 
+    // In-process formats require a reference type; a single-element array
+    // carries the one entry id being dragged (mirrors TrackIdsFormat).
+    private static readonly DataFormat<long[]> QueueEntryIdFormat =
+        DataFormat.CreateInProcessFormat<long[]>("mirelia/queue-entry-id");
+
     // 6% gray banding reads correctly on both light and dark themes.
     private static readonly Avalonia.Media.IBrush BandingBrush =
         new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.FromArgb(0x0F, 0x80, 0x80, 0x80));
 
     private Point _dragOrigin;
     private PointerPressedEventArgs? _dragPress;
+
+    private Point _queueDragOrigin;
+    private PointerPressedEventArgs? _queueDragPress;
+    private long? _queueDragEntryId;
 
     // Last known bounds while WindowState was Normal, so a maximized (or
     // minimized) window's transient bounds never get saved in place of the
@@ -112,6 +121,13 @@ public partial class MainWindow : Window
         PlaylistTreeView.AddHandler(DragDrop.DropEvent, OnPlaylistDrop);
         AddHandler(DragDrop.DragOverEvent, OnWindowDragOver);
         AddHandler(DragDrop.DropEvent, OnWindowDrop);
+
+        // Queue pane: drag source and drop target are the same list, for
+        // in-place reordering.
+        QueueList.AddHandler(PointerPressedEvent, OnQueuePointerPressed, RoutingStrategies.Tunnel);
+        QueueList.AddHandler(PointerMovedEvent, OnQueuePointerMoved, RoutingStrategies.Tunnel);
+        QueueList.AddHandler(DragDrop.DragOverEvent, OnQueueDragOver);
+        QueueList.AddHandler(DragDrop.DropEvent, OnQueueDrop);
 
         // Tree context menus are built in code: the "Move to" submenu is
         // per-node and data-driven, which XAML templates handle poorly.
@@ -519,6 +535,151 @@ public partial class MainWindow : Window
         {
             await vm.PlayRowAsync(Grid.SelectedIndex);
         }
+    }
+
+    private async void OnPlayNextClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is { } vm)
+        {
+            await vm.PlayNextAsync(SelectedTrackIds());
+        }
+    }
+
+    private async void OnAddToQueueClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is { } vm)
+        {
+            await vm.AddToQueueAsync(SelectedTrackIds());
+        }
+    }
+
+    // ---- queue pane ------------------------------------------------------
+
+    private async void OnClearQueueClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is { } vm)
+        {
+            await vm.Queue.ClearAsync();
+        }
+    }
+
+    private async void OnQueueDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (ViewModel is { } vm && QueueList.SelectedItem is QueueRowViewModel row)
+        {
+            await vm.Queue.PlayAsync(row.EntryId);
+        }
+    }
+
+    private async void OnQueuePlayClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is { } vm && QueueList.SelectedItem is QueueRowViewModel row)
+        {
+            await vm.Queue.PlayAsync(row.EntryId);
+        }
+    }
+
+    private async void OnQueueRemoveClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { } vm || QueueList.SelectedItems is not { } items)
+        {
+            return;
+        }
+
+        foreach (QueueRowViewModel row in items.OfType<QueueRowViewModel>().ToList())
+        {
+            await vm.Queue.RemoveAsync(row.EntryId);
+        }
+    }
+
+    private async void OnQueueKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Delete || ViewModel is not { } vm || QueueList.SelectedItems is not { } items)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        foreach (QueueRowViewModel row in items.OfType<QueueRowViewModel>().ToList())
+        {
+            await vm.Queue.RemoveAsync(row.EntryId);
+        }
+    }
+
+    // Drag source: the row under the initial press, identified by its
+    // stable entry id (not its position, which is about to move).
+    private void OnQueuePointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        QueueRowViewModel? row = (e.Source as Visual)?
+            .GetSelfAndVisualAncestors()
+            .OfType<ListBoxItem>()
+            .FirstOrDefault()?
+            .DataContext as QueueRowViewModel;
+
+        _queueDragOrigin = e.GetPosition(this);
+        _queueDragEntryId = row?.EntryId;
+        _queueDragPress = row is not null && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed
+            ? e
+            : null;
+    }
+
+    private async void OnQueuePointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (_queueDragPress is null || _queueDragEntryId is not { } entryId
+            || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        Point delta = e.GetPosition(this) - _queueDragOrigin;
+        if (Math.Abs(delta.X) < 6 && Math.Abs(delta.Y) < 6)
+        {
+            return;
+        }
+
+        PointerPressedEventArgs press = _queueDragPress;
+        _queueDragPress = null;
+        var transfer = new DataTransfer();
+        transfer.Add(DataTransferItem.Create(QueueEntryIdFormat, [entryId]));
+        await DragDrop.DoDragDropAsync(press, transfer, DragDropEffects.Move);
+    }
+
+    private void OnQueueDragOver(object? sender, DragEventArgs e)
+    {
+        e.DragEffects = e.DataTransfer.Contains(QueueEntryIdFormat)
+            ? DragDropEffects.Move
+            : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private async void OnQueueDrop(object? sender, DragEventArgs e)
+    {
+        if (ViewModel is not { } vm
+            || e.DataTransfer.TryGetValue(QueueEntryIdFormat) is not { Length: 1 } ids)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await vm.Queue.MoveAsync(ids[0], QueueDropIndex(e, vm));
+    }
+
+    // Drops on the top half of a row insert before it, the bottom half
+    // insert after; drops past the last row (or on empty space) append.
+    private int QueueDropIndex(DragEventArgs e, MainViewModel vm)
+    {
+        var item = (e.Source as Visual)?
+            .GetSelfAndVisualAncestors()
+            .OfType<ListBoxItem>()
+            .FirstOrDefault();
+        if (item?.DataContext is not QueueRowViewModel row)
+        {
+            return vm.Queue.Rows.Count - 1;
+        }
+
+        int index = vm.Queue.Rows.IndexOf(row);
+        bool before = e.GetPosition(item).Y < item.Bounds.Height / 2;
+        return before ? index : index + 1;
     }
 
     // ---- library scan --------------------------------------------------

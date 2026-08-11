@@ -5,21 +5,24 @@ namespace Mirelia.App.Services;
 
 /// <summary>
 /// Plays a queue of library tracks through the native engine. Owns the
-/// engine instance, a 200 ms poll timer for position/events, and the
-/// next-slot preloading that makes track changes seamless.
-/// All members run on the UI thread.
+/// engine instance, a 200 ms poll timer for position/events, the playback
+/// queue itself, and the next-slot preloading that makes track changes
+/// seamless. All members run on the UI thread.
 /// </summary>
 public sealed class AudioPlayerService : IDisposable
 {
     private readonly LibraryService _library;
     private readonly SettingsService _settings;
     private readonly DispatcherTimer _timer;
+    private readonly PlayQueue _queue = new();
 
     private AudioEngine? _engine;
     private bool _deviceOpen;
-    private long[] _queue = [];
-    private int _index = -1;
-    private bool _nextPreloaded;
+
+    // Entry id currently loaded into the engine's Next slot, or null when
+    // nothing is preloaded. The engine's user_token carries entry ids (not
+    // track ids), so a duplicated track never resolves to the wrong slot.
+    private long? _preloadedEntryId;
     private bool _recoveringDevice;
 
     /// <summary>Fires on every poll with the current position.</summary>
@@ -27,6 +30,12 @@ public sealed class AudioPlayerService : IDisposable
 
     /// <summary>Fires when a different track becomes audible (track id).</summary>
     public event Action<long>? NowPlayingChanged;
+
+    /// <summary>Fires after any queue mutation (insert/remove/move/clear).</summary>
+    public event Action? QueueChanged;
+
+    /// <summary>Fires when the current queue entry changes, with its entry id (null when nothing is current).</summary>
+    public event Action<long?>? CurrentEntryChanged;
 
     /// <summary>Fires on asynchronous playback errors, with detail text.</summary>
     public event Action<string>? PlaybackError;
@@ -40,7 +49,9 @@ public sealed class AudioPlayerService : IDisposable
             TimeSpan.FromMilliseconds(200), DispatcherPriority.Background, (_, _) => Poll());
 
         // Device/mode changes take effect on the next play; live playback
-        // stops so the old stream does not linger on the old device.
+        // stops so the old stream does not linger on the old device. The
+        // queue itself is left intact — only the "what's audible" pointer
+        // resets, mirroring the previous _index = -1 behavior.
         _settings.Changed += _ =>
         {
             try
@@ -54,19 +65,128 @@ public sealed class AudioPlayerService : IDisposable
             }
 
             _deviceOpen = false;
-            _index = -1;
+            _preloadedEntryId = null;
+            ClearCurrentEntry();
         };
     }
 
     /// <summary>True when a queue is loaded (playing or paused).</summary>
-    public bool HasTrack => _index >= 0;
+    public bool HasTrack => _queue.Current is not null;
 
-    /// <summary>Replaces the queue and starts playing at <paramref name="index"/>.</summary>
+    /// <summary>The queue's entries, in play order — a live view, not a snapshot.</summary>
+    public IReadOnlyList<QueueEntry> QueueEntries => _queue.Entries;
+
+    /// <summary>Entry id of the audible entry, or null when nothing is current.</summary>
+    public long? CurrentEntryId => _queue.Current?.EntryId;
+
+    /// <summary>Replaces the queue and starts playing at <paramref name="index"/> ("play now").</summary>
     public async Task PlayQueueAsync(long[] queue, int index)
     {
-        _queue = queue;
-        await StartAtAsync(index);
+        IReadOnlyList<QueueEntry> entries = _queue.Replace(queue, index);
+        QueueChanged?.Invoke();
+        if (entries.Count > 0)
+        {
+            await StartAtEntryAsync(_queue.Current!.Value);
+        }
     }
+
+    /// <summary>
+    /// Inserts tracks right after the current entry ("Play Next"). Starts
+    /// playback immediately if nothing was playing.
+    /// </summary>
+    public async Task EnqueueNextAsync(IReadOnlyList<long> trackIds)
+    {
+        if (trackIds.Count == 0)
+        {
+            return;
+        }
+
+        bool wasEmpty = !HasTrack;
+        IReadOnlyList<QueueEntry> inserted = _queue.InsertNext(trackIds);
+        QueueChanged?.Invoke();
+        if (wasEmpty)
+        {
+            await StartAtEntryAsync(inserted[0]);
+        }
+        else
+        {
+            await ReconcilePreloadAsync();
+        }
+    }
+
+    /// <summary>
+    /// Appends tracks to the end of the queue ("Add to Queue"). Starts
+    /// playback immediately if nothing was playing.
+    /// </summary>
+    public async Task EnqueueEndAsync(IReadOnlyList<long> trackIds)
+    {
+        if (trackIds.Count == 0)
+        {
+            return;
+        }
+
+        bool wasEmpty = !HasTrack;
+        IReadOnlyList<QueueEntry> appended = _queue.Append(trackIds);
+        QueueChanged?.Invoke();
+        if (wasEmpty)
+        {
+            await StartAtEntryAsync(appended[0]);
+        }
+        else
+        {
+            await ReconcilePreloadAsync();
+        }
+    }
+
+    /// <summary>Removes one queue entry. If it was playing, advances to what took its place (or stops).</summary>
+    public async Task RemoveEntryAsync(long entryId)
+    {
+        QueueRemoveResult result = _queue.Remove(entryId);
+        switch (result)
+        {
+            case QueueRemoveResult.NotFound:
+                return;
+
+            case QueueRemoveResult.RemovedOther:
+                QueueChanged?.Invoke();
+                await ReconcilePreloadAsync();
+                return;
+
+            case QueueRemoveResult.RemovedCurrentHasNext:
+                QueueChanged?.Invoke();
+                await StartAtEntryAsync(_queue.Current!.Value);
+                return;
+
+            case QueueRemoveResult.RemovedCurrentQueueEnded:
+                QueueChanged?.Invoke();
+                StopForQueueEnded();
+                return;
+        }
+    }
+
+    /// <summary>Moves an entry to a new position (drag reorder).</summary>
+    public async Task MoveEntryAsync(long entryId, int newIndex)
+    {
+        if (!_queue.Move(entryId, newIndex))
+        {
+            return;
+        }
+
+        QueueChanged?.Invoke();
+        await ReconcilePreloadAsync();
+    }
+
+    /// <summary>Drops every queued-up entry except the one currently playing.</summary>
+    public async Task ClearQueueAsync()
+    {
+        _queue.Clear();
+        QueueChanged?.Invoke();
+        await ReconcilePreloadAsync();
+    }
+
+    /// <summary>Jumps playback directly to a queue entry (double-click in the queue pane).</summary>
+    public Task PlayEntryAsync(long entryId)
+        => _queue.Find(entryId) is { } entry ? StartAtEntryAsync(entry) : Task.CompletedTask;
 
     /// <summary>Toggles pause/resume; no-op when nothing is loaded.</summary>
     public void TogglePause()
@@ -96,11 +216,11 @@ public sealed class AudioPlayerService : IDisposable
 
     /// <summary>Skips to the next queue entry.</summary>
     public Task NextAsync()
-        => _index + 1 < _queue.Length ? StartAtAsync(_index + 1) : Task.CompletedTask;
+        => _queue.NextEntry is { } next ? StartAtEntryAsync(next) : Task.CompletedTask;
 
     /// <summary>Returns to the previous queue entry.</summary>
     public Task PreviousAsync()
-        => _index > 0 ? StartAtAsync(_index - 1) : Task.CompletedTask;
+        => _queue.PreviousEntry is { } previous ? StartAtEntryAsync(previous) : Task.CompletedTask;
 
     /// <summary>Seeks within the current track, in seconds.</summary>
     public void Seek(double seconds)
@@ -144,30 +264,24 @@ public sealed class AudioPlayerService : IDisposable
         _engine?.Dispose();
     }
 
-    private async Task StartAtAsync(int index)
+    private async Task StartAtEntryAsync(QueueEntry entry)
     {
-        if (index < 0 || index >= _queue.Length)
-        {
-            return;
-        }
-
-        long id = _queue[index];
-        string? path = await _library.GetPathAsync(id);
+        string? path = await _library.GetPathAsync(entry.TrackId);
         if (path is null || !File.Exists(path))
         {
-            PlaybackError?.Invoke($"file missing for track {id}");
+            PlaybackError?.Invoke($"file missing for track {entry.TrackId}");
             return;
         }
 
         try
         {
             EnsureEngine();
-            _index = index;
-            _nextPreloaded = false;
-            _engine!.Load(AudioSlot.Current, path, (ulong)id, await GainForAsync(id));
+            PromoteCurrent(entry);
+            _preloadedEntryId = null;
+            _engine!.Load(AudioSlot.Current, path, (ulong)entry.EntryId, await GainForAsync(entry.TrackId));
             _engine.Play();
             _timer.Start();
-            NowPlayingChanged?.Invoke(id);
+            NowPlayingChanged?.Invoke(entry.TrackId);
             await PreloadNextAsync();
         }
         catch (AudioEngineException ex)
@@ -189,13 +303,12 @@ public sealed class AudioPlayerService : IDisposable
 
     private async Task PreloadNextAsync()
     {
-        if (_nextPreloaded || _engine is null || _index + 1 >= _queue.Length)
+        if (_preloadedEntryId is not null || _engine is null || _queue.NextEntry is not { } entry)
         {
             return;
         }
 
-        long nextId = _queue[_index + 1];
-        string? path = await _library.GetPathAsync(nextId);
+        string? path = await _library.GetPathAsync(entry.TrackId);
         if (path is null || !File.Exists(path))
         {
             return;
@@ -203,14 +316,43 @@ public sealed class AudioPlayerService : IDisposable
 
         try
         {
-            _engine.Load(AudioSlot.Next, path, (ulong)nextId, await GainForAsync(nextId));
-            _nextPreloaded = true;
+            _engine.Load(AudioSlot.Next, path, (ulong)entry.EntryId, await GainForAsync(entry.TrackId));
+            _preloadedEntryId = entry.EntryId;
         }
         catch (AudioEngineException)
         {
             // Format change: the engine refuses gapless across formats until
             // M5. QueueEmpty will arrive at EOF and we reload as Current.
         }
+    }
+
+    /// <summary>
+    /// Re-checks the Next slot against the queue after a mutation and only
+    /// touches the engine when the entry that belongs there actually
+    /// changed — mutations behind the current entry are otherwise free.
+    /// </summary>
+    private async Task ReconcilePreloadAsync()
+    {
+        if (_queue.NextEntry?.EntryId == _preloadedEntryId)
+        {
+            return;
+        }
+
+        _preloadedEntryId = null;
+        if (_engine is not null)
+        {
+            try
+            {
+                _engine.Clear(AudioSlot.Next);
+            }
+            catch (AudioEngineException)
+            {
+                // Nothing to clear, or the device is already gone;
+                // PreloadNextAsync below will surface a real failure.
+            }
+        }
+
+        await PreloadNextAsync();
     }
 
     private void Poll()
@@ -232,9 +374,9 @@ public sealed class AudioPlayerService : IDisposable
 
                     case AudioEventType.QueueEmpty:
                         // Auto-advance path for format changes (see above).
-                        if (!_nextPreloaded && _index + 1 < _queue.Length)
+                        if (_preloadedEntryId is null && _queue.NextEntry is not null)
                         {
-                            _ = StartAtAsync(_index + 1);
+                            _ = NextAsync();
                         }
 
                         break;
@@ -270,18 +412,26 @@ public sealed class AudioPlayerService : IDisposable
         }
     }
 
-    private void OnTrackStarted(long id)
+    private void OnTrackStarted(long entryId)
     {
-        int index = Array.IndexOf(_queue, id);
-        if (index >= 0 && index != _index)
+        QueueEntry? entry = _queue.Find(entryId);
+        if (entry is not { } e)
+        {
+            // The entry that just became audible was removed from the queue
+            // in the meantime (e.g. a preloaded Next slot outraced its own
+            // invalidation); nothing sane to report against.
+            return;
+        }
+
+        if (_queue.Current?.EntryId != entryId)
         {
             // The engine advanced into the preloaded next slot on its own.
-            _index = index;
-            _nextPreloaded = false;
+            PromoteCurrent(e);
+            _preloadedEntryId = null;
             _ = PreloadNextAsync();
         }
 
-        NowPlayingChanged?.Invoke(id);
+        NowPlayingChanged?.Invoke(e.TrackId);
     }
 
     private async Task RecoverDeviceAsync()
@@ -298,7 +448,15 @@ public sealed class AudioPlayerService : IDisposable
             // engine's transport state, so the last-known position must be
             // captured first.
             PlaybackPosition pos = _engine.GetPosition();
-            long trackId = (long)pos.UserToken;
+            QueueEntry? current = _queue.Find((long)pos.UserToken);
+            if (current is not { } entry)
+            {
+                // The audible entry is no longer in the queue; there is
+                // nothing sane left to resume onto.
+                PlaybackError?.Invoke("output device lost; playback stopped");
+                return;
+            }
+
             long resumeFrame = pos.Frame;
             bool wasPlaying = pos.State is PlaybackState.Playing or PlaybackState.Stalled;
 
@@ -318,10 +476,10 @@ public sealed class AudioPlayerService : IDisposable
                 return;
             }
 
-            string? path = await _library.GetPathAsync(trackId);
+            string? path = await _library.GetPathAsync(entry.TrackId);
             if (path is null || !File.Exists(path))
             {
-                PlaybackError?.Invoke($"file missing for track {trackId}");
+                PlaybackError?.Invoke($"file missing for track {entry.TrackId}");
                 return;
             }
 
@@ -330,9 +488,10 @@ public sealed class AudioPlayerService : IDisposable
                 // Reopening dropped the decode worker along with the old
                 // stream, so the track is reloaded from where it left off
                 // rather than resumed in place.
-                _nextPreloaded = false;
+                PromoteCurrent(entry);
+                _preloadedEntryId = null;
                 _engine.Load(
-                    AudioSlot.Current, path, (ulong)trackId, await GainForAsync(trackId),
+                    AudioSlot.Current, path, (ulong)entry.EntryId, await GainForAsync(entry.TrackId),
                     startFrame: resumeFrame);
                 if (wasPlaying)
                 {
@@ -402,5 +561,35 @@ public sealed class AudioPlayerService : IDisposable
         }
 
         _deviceOpen = true;
+    }
+
+    private void StopForQueueEnded()
+    {
+        _preloadedEntryId = null;
+        _timer.Stop();
+        try
+        {
+            _engine?.Stop();
+        }
+        catch (AudioEngineException)
+        {
+            // Nothing meaningful to stop if the device is already gone.
+        }
+
+        // The queue already cleared its own current pointer (Remove); this
+        // only broadcasts that fact to subscribers (e.g. the queue pane).
+        CurrentEntryChanged?.Invoke(null);
+    }
+
+    private void PromoteCurrent(QueueEntry entry)
+    {
+        _queue.SetCurrent(entry.EntryId);
+        CurrentEntryChanged?.Invoke(entry.EntryId);
+    }
+
+    private void ClearCurrentEntry()
+    {
+        _queue.ClearCurrent();
+        CurrentEntryChanged?.Invoke(null);
     }
 }
