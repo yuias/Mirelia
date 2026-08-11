@@ -3,6 +3,8 @@
 
 use std::fmt;
 
+use crate::events::EventSink;
+
 /// PCM stream format the engine works in (always interleaved f32).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StreamFormat {
@@ -106,11 +108,20 @@ pub trait OutputBackend: Send {
 
     /// Opens a stream on the device and starts the render thread. The
     /// callback runs until the returned stream is dropped.
+    ///
+    /// `events` is separate from `callback`: it lets the backend report
+    /// device-level conditions (default-device switch, mid-stream device
+    /// loss) that the render callback cannot carry, either because they
+    /// originate on a different OS thread (e.g. a COM notification) or
+    /// because they are detected at a point where the callback can no
+    /// longer be invoked (a terminal I/O failure on the render thread
+    /// itself, right before it exits).
     fn open_stream(
         &mut self,
         device_id: Option<&str>,
         format: StreamFormat,
         options: StreamOptions,
         callback: RenderCallback,
+        events: EventSink,
     ) -> Result<Box<dyn OutputStream>, OutputError>;
 }

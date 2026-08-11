@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use mirelia_decode::{DecodeError, Decoder};
 
-use crate::events::{EngineEvent, EventKind};
+use crate::events::{EngineEvent, EventKind, EventSink};
 use crate::output::{
     DeviceInfo, OutputBackend, OutputError, OutputStream, RenderInfo, ShareMode, StreamFormat,
     StreamOptions,
@@ -214,6 +214,11 @@ pub struct Engine {
     ev_decode_rx: Consumer<EngineEvent>,
     ev_render: Arc<SpscCore<EngineEvent>>,
     ev_render_rx: Consumer<EngineEvent>,
+    // Backend-reported device conditions (change/loss); see `EventSink`.
+    // A separate ring because its producer is not the render callback's:
+    // it is owned by the backend's own thread(s) instead.
+    ev_device: Arc<SpscCore<EngineEvent>>,
+    ev_device_rx: Consumer<EngineEvent>,
 }
 
 impl Engine {
@@ -221,6 +226,7 @@ impl Engine {
     pub fn new(config: EngineConfig, backend: Box<dyn OutputBackend>) -> Self {
         let ev_decode = SpscCore::<EngineEvent>::new(64);
         let ev_render = SpscCore::<EngineEvent>::new(64);
+        let ev_device = SpscCore::<EngineEvent>::new(16); // device events are rare
         Self {
             config,
             backend,
@@ -232,6 +238,8 @@ impl Engine {
             ev_decode,
             ev_render_rx: spsc::consumer(ev_render.clone()),
             ev_render,
+            ev_device_rx: spsc::consumer(ev_device.clone()),
+            ev_device,
         }
     }
 
@@ -423,6 +431,7 @@ impl Engine {
     pub fn poll_events(&mut self, out: &mut [EngineEvent]) -> usize {
         let mut n = self.ev_decode_rx.pop_slice(out);
         n += self.ev_render_rx.pop_slice(&mut out[n..]);
+        n += self.ev_device_rx.pop_slice(&mut out[n..]);
         n
     }
 
@@ -479,13 +488,15 @@ impl Engine {
             ring.capacity(),
         );
 
+        let events = EventSink::new(spsc::producer(self.ev_device.clone()));
+
         let options = StreamOptions {
             mode: request.mode,
             dither: self.config.dither_to_int,
         };
         let stream = self
             .backend
-            .open_stream(request.id.as_deref(), fmt, options, callback)?;
+            .open_stream(request.id.as_deref(), fmt, options, callback, events)?;
         self.shared.pub_rate.store(fmt.sample_rate, Ordering::Release);
         self.device = Some(DeviceState {
             format: fmt,
@@ -936,6 +947,7 @@ mod tests {
             format: StreamFormat,
             _options: StreamOptions,
             mut callback: crate::output::RenderCallback,
+            _events: EventSink,
         ) -> Result<Box<dyn OutputStream>, OutputError> {
             let stop = Arc::new(AtomicBool::new(false));
             let stop2 = stop.clone();
@@ -1075,6 +1087,7 @@ mod tests {
             format: StreamFormat,
             _options: StreamOptions,
             mut callback: crate::output::RenderCallback,
+            _events: EventSink,
         ) -> Result<Box<dyn OutputStream>, OutputError> {
             let stop = Arc::new(AtomicBool::new(false));
             let stop2 = stop.clone();

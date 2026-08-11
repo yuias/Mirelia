@@ -20,6 +20,7 @@ public sealed class AudioPlayerService : IDisposable
     private long[] _queue = [];
     private int _index = -1;
     private bool _nextPreloaded;
+    private bool _recoveringDevice;
 
     /// <summary>Fires on every poll with the current position.</summary>
     public event Action<PlaybackPosition>? PositionChanged;
@@ -241,6 +242,23 @@ public sealed class AudioPlayerService : IDisposable
                     case AudioEventType.Error:
                         PlaybackError?.Invoke($"engine error: {ev.Code}");
                         break;
+
+                    case AudioEventType.DeviceLost:
+                        // The device disappeared under us; always try to
+                        // recover, falling back to the system default.
+                        _ = RecoverDeviceAsync();
+                        break;
+
+                    case AudioEventType.DeviceChanged:
+                        // Only "system default" playback should follow the
+                        // switch; a specific device stays put until it, too,
+                        // is lost.
+                        if (_settings.Current.DeviceId is null)
+                        {
+                            _ = RecoverDeviceAsync();
+                        }
+
+                        break;
                 }
             }
 
@@ -264,6 +282,101 @@ public sealed class AudioPlayerService : IDisposable
         }
 
         NowPlayingChanged?.Invoke(id);
+    }
+
+    private async Task RecoverDeviceAsync()
+    {
+        if (_engine is null || !HasTrack || _recoveringDevice)
+        {
+            return;
+        }
+
+        _recoveringDevice = true;
+        try
+        {
+            // Snapshot before touching the device: reopening resets the
+            // engine's transport state, so the last-known position must be
+            // captured first.
+            PlaybackPosition pos = _engine.GetPosition();
+            long trackId = (long)pos.UserToken;
+            long resumeFrame = pos.Frame;
+            bool wasPlaying = pos.State is PlaybackState.Playing or PlaybackState.Stalled;
+
+            _deviceOpen = false;
+            if (!TryReopenDevice())
+            {
+                try
+                {
+                    _engine.Stop();
+                }
+                catch (AudioEngineException)
+                {
+                    // The device is already gone; nothing left to stop cleanly.
+                }
+
+                PlaybackError?.Invoke("output device lost; playback stopped");
+                return;
+            }
+
+            string? path = await _library.GetPathAsync(trackId);
+            if (path is null || !File.Exists(path))
+            {
+                PlaybackError?.Invoke($"file missing for track {trackId}");
+                return;
+            }
+
+            try
+            {
+                // Reopening dropped the decode worker along with the old
+                // stream, so the track is reloaded from where it left off
+                // rather than resumed in place.
+                _nextPreloaded = false;
+                _engine.Load(
+                    AudioSlot.Current, path, (ulong)trackId, await GainForAsync(trackId),
+                    startFrame: resumeFrame);
+                if (wasPlaying)
+                {
+                    _engine.Play();
+                }
+
+                await PreloadNextAsync();
+            }
+            catch (AudioEngineException ex)
+            {
+                PlaybackError?.Invoke(ex.Message);
+            }
+        }
+        finally
+        {
+            _recoveringDevice = false;
+        }
+    }
+
+    // Tries the configured device first, then the system default. Returns
+    // false only when neither is reachable.
+    private bool TryReopenDevice()
+    {
+        AppSettings settings = _settings.Current;
+        if (TryOpenDevice(settings.DeviceId, settings.Exclusive))
+        {
+            return true;
+        }
+
+        return settings.DeviceId is not null && TryOpenDevice(deviceId: null, settings.Exclusive);
+    }
+
+    private bool TryOpenDevice(string? deviceId, bool exclusive)
+    {
+        try
+        {
+            _engine!.OpenDevice(deviceId, exclusive);
+            _deviceOpen = true;
+            return true;
+        }
+        catch (AudioEngineException)
+        {
+            return false;
+        }
     }
 
     private void EnsureEngine()

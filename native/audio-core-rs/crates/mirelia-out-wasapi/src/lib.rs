@@ -18,14 +18,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, PROPERTYKEY, WAIT_OBJECT_0};
 use windows::Win32::Media::Audio::{
     AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED, AUDCLNT_E_DEVICE_IN_USE, AUDCLNT_E_DEVICE_INVALIDATED,
     AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED, AUDCLNT_E_UNSUPPORTED_FORMAT, AUDCLNT_SHAREMODE_EXCLUSIVE,
     AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-    AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, DEVICE_STATE_ACTIVE, IAudioClient,
-    IAudioRenderClient, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator, WAVEFORMATEX,
-    WAVEFORMATEXTENSIBLE, WAVEFORMATEXTENSIBLE_0, eConsole, eRender,
+    AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, DEVICE_STATE, DEVICE_STATE_ACTIVE, EDataFlow, ERole,
+    IAudioClient, IAudioRenderClient, IMMDevice, IMMDeviceEnumerator, IMMNotificationClient,
+    IMMNotificationClient_Impl, MMDeviceEnumerator, WAVEFORMATEX, WAVEFORMATEXTENSIBLE,
+    WAVEFORMATEXTENSIBLE_0, eConsole, eRender,
 };
 use windows::Win32::Media::KernelStreaming::{
     KSDATAFORMAT_SUBTYPE_PCM, SPEAKER_FRONT_CENTER, SPEAKER_FRONT_LEFT, SPEAKER_FRONT_RIGHT,
@@ -36,9 +37,10 @@ use windows::Win32::System::Com::{
     CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree, STGM_READ,
 };
 use windows::Win32::System::Threading::{CreateEventW, SetEvent, WaitForSingleObject};
-use windows::core::PCWSTR;
+use windows::core::{PCWSTR, implement};
 
 use convert::{DeviceFormat, Dither};
+use mirelia_audio::events::{EventKind, EventSink};
 use mirelia_audio::output::{
     DeviceInfo, OutputBackend, OutputError, OutputStream, RenderCallback, RenderInfo, ShareMode,
     StreamFormat, StreamOptions,
@@ -80,6 +82,132 @@ fn enumerator() -> Result<IMMDeviceEnumerator, OutputError> {
     com_init();
     unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }
         .map_err(|e| internal("create device enumerator", e))
+}
+
+// `kn_result` value for otherwise-unclassified mid-stream failures; mirrors
+// `KN_ERR_INTERNAL` in `audio_core.h`. Local literal, like the decode
+// worker's error codes in `mirelia-audio`, since this crate cannot depend
+// on the ABI crate that owns the named constants.
+const KN_ERR_INTERNAL: i32 = -99;
+
+/// Classifies a WASAPI failure hit outside the render callback (in the loop
+/// that drives it) and reports it through the event path before the render
+/// thread exits. Device removal surfaces as `DeviceLost` so the host can
+/// try to reopen; anything else is a generic `Error`, matching how the
+/// decode worker reports its own async failures.
+fn report_stream_error(events: &mut EventSink, e: &windows::core::Error) {
+    if e.code() == AUDCLNT_E_DEVICE_INVALIDATED {
+        events.push(EventKind::DeviceLost, 0, 0);
+    } else {
+        events.push(EventKind::Error, 0, KN_ERR_INTERNAL);
+    }
+}
+
+// COM identity for the endpoint-notification sink below. Holds only the
+// flag it flips; kept separate from `DeviceWatch` because `#[implement]`
+// moves this type into the COM wrapper, so nothing here survives as a
+// directly reachable Rust value after registration.
+#[implement(IMMNotificationClient)]
+struct DeviceNotifier {
+    changed: Arc<AtomicBool>,
+}
+
+impl IMMNotificationClient_Impl for DeviceNotifier_Impl {
+    fn OnDeviceStateChanged(
+        &self,
+        _device_id: &PCWSTR,
+        _state: DEVICE_STATE,
+    ) -> windows::core::Result<()> {
+        Ok(())
+    }
+
+    fn OnDeviceAdded(&self, _device_id: &PCWSTR) -> windows::core::Result<()> {
+        Ok(())
+    }
+
+    fn OnDeviceRemoved(&self, _device_id: &PCWSTR) -> windows::core::Result<()> {
+        Ok(())
+    }
+
+    // Runs on whatever MTA thread Windows Audio delivers notifications on
+    // (never the render thread). It only flips an atomic — no allocation,
+    // no lock, no call back into managed code — so it stays clear of the
+    // render thread's real-time constraints; the render loop is what
+    // actually turns this into an `EngineEvent`.
+    fn OnDefaultDeviceChanged(
+        &self,
+        flow: EDataFlow,
+        role: ERole,
+        _default_device_id: &PCWSTR,
+    ) -> windows::core::Result<()> {
+        // Only the render endpoint at the console role matters: it is what
+        // `device_for(None)` resolves to.
+        if flow == eRender && role == eConsole {
+            self.changed.store(true, Ordering::Release);
+        }
+        Ok(())
+    }
+
+    fn OnPropertyValueChanged(
+        &self,
+        _device_id: &PCWSTR,
+        _key: &PROPERTYKEY,
+    ) -> windows::core::Result<()> {
+        Ok(())
+    }
+}
+
+/// Owns one stream's default-device-change registration. Lives for the
+/// render thread's lifetime; `Drop` unregisters so the notification does
+/// not outlive the stream it was opened for.
+struct DeviceWatch {
+    enumerator: IMMDeviceEnumerator,
+    client: IMMNotificationClient,
+    changed: Arc<AtomicBool>,
+}
+
+impl DeviceWatch {
+    /// Registers a notification sink. Failure is never fatal to playback —
+    /// the stream still runs, just without device-changed detection — so
+    /// this returns `None` instead of an error.
+    fn register() -> Option<Self> {
+        let changed = Arc::new(AtomicBool::new(false));
+        let enumerator = enumerator().ok()?;
+        let client: IMMNotificationClient = DeviceNotifier { changed: changed.clone() }.into();
+        unsafe { enumerator.RegisterEndpointNotificationCallback(&client) }.ok()?;
+        Some(Self { enumerator, client, changed })
+    }
+
+    /// True (and reset) if the default render device switched since the
+    /// last check.
+    fn take_changed(&self) -> bool {
+        self.changed.swap(false, Ordering::AcqRel)
+    }
+}
+
+impl Drop for DeviceWatch {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = self
+                .enumerator
+                .UnregisterEndpointNotificationCallback(&self.client);
+        }
+    }
+}
+
+// Bundles the render loop's two device-event inputs into one parameter,
+// which also keeps `render_loop` under clippy's argument-count limit.
+struct DeviceEvents<'a> {
+    sink: &'a mut EventSink,
+    watch: Option<&'a DeviceWatch>,
+}
+
+// Bundles the render loop's exclusive-mode conversion scratch state,
+// alongside `DeviceEvents` for the same argument-count reason.
+struct ConvertState<'a> {
+    channels: usize,
+    scratch: &'a mut [f32],
+    dither: &'a mut Dither,
 }
 
 fn device_for(
@@ -369,6 +497,7 @@ impl OutputBackend for WasapiBackend {
         format: StreamFormat,
         options: StreamOptions,
         mut callback: RenderCallback,
+        mut events: EventSink,
     ) -> Result<Box<dyn OutputStream>, OutputError> {
         // COM interfaces are not Send in windows-rs, so the whole stream —
         // activation, initialization, and the render loop — lives on one
@@ -398,15 +527,26 @@ impl OutputBackend for WasapiBackend {
                         let mut dither = Dither::new(
                             options.dither && s.device_format != DeviceFormat::F32,
                         );
+                        // Registered for this stream's lifetime; dropped
+                        // (and unregistered) when the render loop returns.
+                        let watch = DeviceWatch::register();
+                        let mut devices = DeviceEvents {
+                            sink: &mut events,
+                            watch: watch.as_ref(),
+                        };
+                        let mut conv = ConvertState {
+                            channels,
+                            scratch: &mut scratch,
+                            dither: &mut dither,
+                        };
                         unsafe {
                             render_loop(
                                 &s,
                                 options.mode,
-                                channels,
-                                &mut scratch,
-                                &mut dither,
+                                &mut conv,
                                 &stop_render,
                                 &mut callback,
+                                &mut devices,
                             );
                             let _ = CloseHandle(s.event);
                         }
@@ -443,11 +583,10 @@ impl OutputBackend for WasapiBackend {
 unsafe fn render_loop(
     s: &ExclusiveSetup,
     mode: ShareMode,
-    channels: usize,
-    scratch: &mut [f32],
-    dither: &mut Dither,
+    conv: &mut ConvertState,
     stop: &AtomicBool,
     callback: &mut RenderCallback,
+    devices: &mut DeviceEvents,
 ) {
     unsafe {
         if s.client.Start().is_err() {
@@ -455,6 +594,15 @@ unsafe fn render_loop(
         }
 
         while !stop.load(Ordering::Acquire) {
+            // Checked every iteration (including timeouts below) so a
+            // default-device switch is noticed promptly even while paused,
+            // when the event still fires once per period on silence.
+            if let Some(watch) = devices.watch
+                && watch.take_changed()
+            {
+                devices.sink.push(EventKind::DeviceChanged, 0, 0);
+            }
+
             if WaitForSingleObject(s.event, 2000) != WAIT_OBJECT_0 {
                 continue;
             }
@@ -463,12 +611,13 @@ unsafe fn render_loop(
             }
 
             let (avail, queued) = match mode {
-                ShareMode::Shared => {
-                    let Ok(padding) = s.client.GetCurrentPadding() else {
-                        break; // device invalidated
-                    };
-                    (s.buffer_frames - padding, padding)
-                }
+                ShareMode::Shared => match s.client.GetCurrentPadding() {
+                    Ok(padding) => (s.buffer_frames - padding, padding),
+                    Err(e) => {
+                        report_stream_error(devices.sink, &e);
+                        break;
+                    }
+                },
                 // Event-driven exclusive: each event frees one full period.
                 ShareMode::Exclusive => (s.buffer_frames, s.buffer_frames),
             };
@@ -476,10 +625,14 @@ unsafe fn render_loop(
                 continue;
             }
 
-            let Ok(ptr) = s.render.GetBuffer(avail) else {
-                break;
+            let ptr = match s.render.GetBuffer(avail) {
+                Ok(ptr) => ptr,
+                Err(e) => {
+                    report_stream_error(devices.sink, &e);
+                    break;
+                }
             };
-            let samples = avail as usize * channels;
+            let samples = avail as usize * conv.channels;
             let info = RenderInfo {
                 device_queued_frames: queued,
             };
@@ -489,13 +642,14 @@ unsafe fn render_loop(
                     callback(buf, &info);
                 }
                 _ => {
-                    let buf = &mut scratch[..samples];
+                    let buf = &mut conv.scratch[..samples];
                     callback(buf, &info);
-                    convert::write_samples(buf, ptr, s.device_format, dither);
+                    convert::write_samples(buf, ptr, s.device_format, conv.dither);
                 }
             }
 
-            if s.render.ReleaseBuffer(avail, 0).is_err() {
+            if let Err(e) = s.render.ReleaseBuffer(avail, 0) {
+                report_stream_error(devices.sink, &e);
                 break;
             }
         }

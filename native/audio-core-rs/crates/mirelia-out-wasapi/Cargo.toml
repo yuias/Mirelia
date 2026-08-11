@@ -8,6 +8,10 @@ publish.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 mirelia-audio.workspace = true
+# Needed alongside `windows` because `#[windows::core::implement]`-generated
+# code references the `windows_core` crate name directly; it must be a
+# direct dependency to be resolvable from the extern prelude.
+windows-core = "0.62"
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Media_Audio",

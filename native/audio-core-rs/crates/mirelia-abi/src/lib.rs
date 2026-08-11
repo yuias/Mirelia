@@ -162,6 +162,7 @@ fn make_backend() -> Box<dyn OutputBackend> {
             _format: StreamFormat,
             _options: mirelia_audio::output::StreamOptions,
             _callback: mirelia_audio::output::RenderCallback,
+            _events: mirelia_audio::events::EventSink,
         ) -> Result<Box<dyn mirelia_audio::output::OutputStream>, mirelia_audio::output::OutputError>
         {
             Err(mirelia_audio::output::OutputError::Unsupported(
