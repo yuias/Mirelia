@@ -55,6 +55,16 @@ public partial class MainWindow : Window
     // written through to view settings.
     private readonly DispatcherTimer _columnWidthDebounce;
 
+    // The grid's columns lag the view-model during a view switch (settings
+    // load asynchronously), so the scope whose widths the grid currently
+    // shows is tracked separately: captures are taken only while grid and
+    // view-model agree on the scope, and a capture still pending when the
+    // scope flips is flushed to the scope it was taken under — never the
+    // one just navigated to.
+    private string? _gridScope;
+    private IReadOnlyDictionary<string, double> _gridStoredWidths = new Dictionary<string, double>();
+    private Dictionary<string, double>? _pendingWidths;
+
     // RowHeight is not an inherited property, unlike FontFamily/FontSize, so
     // it needs to be recomputed and pushed explicitly whenever the font size
     // setting changes.
@@ -74,13 +84,17 @@ public partial class MainWindow : Window
         }
 
         _columnWidthDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
-        _columnWidthDebounce.Tick += async (_, _) =>
-        {
-            _columnWidthDebounce.Stop();
-            await PersistColumnWidthsAsync();
-        };
+        _columnWidthDebounce.Tick += async (_, _) => await FlushPendingWidthsAsync();
         Grid.LayoutUpdated += (_, _) =>
         {
+            // No capture while the grid does not represent the view-model's
+            // scope (mid view-switch); OnViewSettingsApplied resumes it.
+            if (_rebuildingColumns || ViewModel is not { } vm || _gridScope != vm.CurrentScopeKey)
+            {
+                return;
+            }
+
+            _pendingWidths = CaptureColumnWidths();
             _columnWidthDebounce.Stop();
             _columnWidthDebounce.Start();
         };
@@ -150,6 +164,7 @@ public partial class MainWindow : Window
             if (ViewModel is { } vm)
             {
                 RebuildColumns();
+                vm.ViewSettingsApplied += OnViewSettingsApplied;
                 vm.PropertyChanged += (_, args) =>
                 {
                     if (args.PropertyName == nameof(MainViewModel.CurrentColumns))
@@ -238,8 +253,7 @@ public partial class MainWindow : Window
     {
         // Flush any width resized within the last debounce window; best
         // effort since the process may exit before this write lands.
-        _columnWidthDebounce.Stop();
-        _ = PersistColumnWidthsAsync();
+        _ = FlushPendingWidthsAsync();
 
         if (App.Settings is not { } settings)
         {
@@ -449,30 +463,103 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>
-    /// Reads each column's settled <c>ActualWidth</c> and persists it if it
-    /// differs from what is stored — the debounced tail end of a resize
-    /// drag, or the final flush on window close.
-    /// </summary>
-    private async Task PersistColumnWidthsAsync()
-    {
-        if (_rebuildingColumns || ViewModel is not { } vm)
-        {
-            return;
-        }
-
-        // A user resize turns a column's Width into a pixel DataGridLength,
-        // so still-star columns are ones the user never touched: skip them,
-        // otherwise the first settle would pin them at the current window
-        // width and they would stop stretching.
-        Dictionary<string, double> widths = Grid.Columns
+    // A user resize turns a column's Width into a pixel DataGridLength, so
+    // still-star columns are ones the user never touched: skip them,
+    // otherwise the first settle would pin them at the current window width
+    // and they would stop stretching.
+    private Dictionary<string, double> CaptureColumnWidths()
+        => Grid.Columns
             .Where(c => c.Tag is string && c.ActualWidth > 0
                 && c.Width.UnitType != DataGridLengthUnitType.Star)
             .ToDictionary(c => (string)c.Tag!, c => c.ActualWidth);
 
-        if (widths.Count > 0 && !WidthsEqual(widths, vm.CurrentColumnWidths))
+    /// <summary>
+    /// Persists the pending width capture under the scope it was taken for,
+    /// merged over that scope's stored widths so columns hidden from the
+    /// current view keep their saved width.
+    /// </summary>
+    private async Task FlushPendingWidthsAsync()
+    {
+        _columnWidthDebounce.Stop();
+        if (_pendingWidths is not { } pending)
         {
-            await vm.SetColumnWidthsAsync(widths);
+            return;
+        }
+
+        _pendingWidths = null;
+        if (_gridScope is not { } scope || ViewModel is not { } vm)
+        {
+            return;
+        }
+
+        var merged = new Dictionary<string, double>(_gridStoredWidths);
+        foreach ((string key, double width) in pending)
+        {
+            merged[key] = width;
+        }
+
+        if (!WidthsEqual(merged, _gridStoredWidths))
+        {
+            _gridStoredWidths = merged;
+            await vm.SaveColumnWidthsAsync(scope, merged);
+        }
+    }
+
+    /// <summary>
+    /// Re-syncs grid column state after a view's settings were applied:
+    /// flushes any capture still owed to the previous view, rebuilds or
+    /// re-widths the columns, and re-arms capture for the new scope.
+    /// </summary>
+    private async void OnViewSettingsApplied()
+    {
+        await FlushPendingWidthsAsync();
+        RebuildColumns();
+        ApplyColumnWidths();
+        if (ViewModel is { } vm)
+        {
+            _gridScope = vm.CurrentScopeKey;
+            _gridStoredWidths = vm.CurrentColumnWidths;
+        }
+    }
+
+    /// <summary>
+    /// Applies the view-model's widths to the existing columns without a
+    /// rebuild: saved widths pin columns to pixels, unsaved columns return
+    /// to registry sizing. Needed on view switches where the column set is
+    /// unchanged and <see cref="RebuildColumns"/> short-circuits.
+    /// </summary>
+    private void ApplyColumnWidths()
+    {
+        if (ViewModel is not { } vm)
+        {
+            return;
+        }
+
+        IReadOnlyDictionary<string, double> widths = vm.CurrentColumnWidths;
+        _rebuildingColumns = true;
+        try
+        {
+            foreach (DataGridColumn column in Grid.Columns)
+            {
+                if (column.Tag is not string key || Models.TrackColumns.Find(key) is not { } spec)
+                {
+                    continue;
+                }
+
+                bool resized = widths.TryGetValue(key, out double saved);
+                DataGridLength target = resized || !spec.IsStar
+                    ? new DataGridLength(resized ? saved : spec.Width)
+                    : new DataGridLength(spec.Width, DataGridLengthUnitType.Star);
+                if (column.Width.UnitType != target.UnitType
+                    || Math.Abs(column.Width.Value - target.Value) > 0.5)
+                {
+                    column.Width = target;
+                }
+            }
+        }
+        finally
+        {
+            _rebuildingColumns = false;
         }
     }
 

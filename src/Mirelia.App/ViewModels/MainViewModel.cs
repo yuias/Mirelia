@@ -160,6 +160,14 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>True while view settings are being applied programmatically.</summary>
     private bool _applyingViewSettings;
 
+    /// <summary>
+    /// Raised after <see cref="ReloadAsync"/> has applied a view's saved
+    /// settings to the bound properties — even when the values are unchanged
+    /// and no PropertyChanged fires — so the window can re-sync grid column
+    /// state to the (possibly new) view scope.
+    /// </summary>
+    public event Action? ViewSettingsApplied;
+
     [ObservableProperty]
     private string _statusText = string.Empty;
 
@@ -729,7 +737,9 @@ public sealed partial class MainViewModel : ObservableObject
     // Ephemeral playlists share one view-settings scope rather than each
     // getting "playlist:{id}": their ids are freshly minted every session,
     // so a per-id scope would just accumulate orphaned rows in the store.
-    private string CurrentScopeKey => SelectedPlaylist is { Id: < 0 }
+
+    /// <summary>View-settings scope key for the currently selected view.</summary>
+    public string CurrentScopeKey => SelectedPlaylist is { Id: < 0 }
         ? "ephemeral"
         : SelectedPlaylist is { } playlist
             ? $"playlist:{playlist.Id}"
@@ -765,11 +775,27 @@ public sealed partial class MainViewModel : ObservableObject
         await PersistViewSettingsAsync();
     }
 
-    /// <summary>Applies captured column widths and persists them for this view.</summary>
-    public async Task SetColumnWidthsAsync(IReadOnlyDictionary<string, double> widths)
+    /// <summary>
+    /// Persists captured column widths for a scope — usually the current
+    /// view, but possibly the one just navigated away from when a resize
+    /// settles across a view switch. The stale-scope path is a
+    /// read-modify-write on that scope's stored settings, never a snapshot
+    /// of current view state.
+    /// </summary>
+    public async Task SaveColumnWidthsAsync(string scopeKey, IReadOnlyDictionary<string, double> widths)
     {
-        CurrentColumnWidths = widths;
-        await PersistViewSettingsAsync();
+        if (scopeKey == CurrentScopeKey)
+        {
+            CurrentColumnWidths = widths;
+            await PersistViewSettingsAsync();
+            return;
+        }
+
+        Library.Database.ViewSettings stored = await _library.GetViewSettingsAsync(scopeKey);
+        await _library.SetViewSettingsAsync(scopeKey, stored with
+        {
+            ColumnWidths = widths.Count > 0 ? new Dictionary<string, double>(widths) : null,
+        });
     }
 
     partial void OnSearchTextChanged(string value)
@@ -797,6 +823,14 @@ public sealed partial class MainViewModel : ObservableObject
         // Per-view settings decide sort and columns before the query runs.
         Library.Database.ViewSettings viewSettings =
             await _library.GetViewSettingsAsync(CurrentScopeKey);
+
+        // A newer reload may have started while settings were loading; let
+        // it win instead of applying stale view state over its result.
+        if (generation != _loadGeneration)
+        {
+            return;
+        }
+
         IReadOnlyList<SortChoice> available = isPlaylist || isFolder ? PlaylistSorts : BrowseSorts;
         TrackSortOrder defaultSort = isPlaylist || isFolder
             ? TrackSortOrder.PlaylistOrder
@@ -822,6 +856,8 @@ public sealed partial class MainViewModel : ObservableObject
         {
             _applyingViewSettings = false;
         }
+
+        ViewSettingsApplied?.Invoke();
 
         sort = SelectedSort?.Order ?? defaultSort;
 
