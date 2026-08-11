@@ -1,7 +1,10 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Templates;
+using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Layout;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
@@ -272,14 +275,27 @@ public partial class MainWindow : Window
                 bool resized = widths.TryGetValue(key, out double savedWidth);
                 double width = resized ? savedWidth : spec.Width;
                 bool isStar = spec.IsStar && !resized;
+                DataGridLength gridWidth = isStar
+                    ? new DataGridLength(width, DataGridLengthUnitType.Star)
+                    : new DataGridLength(width);
+
+                if (spec.Key == "rating")
+                {
+                    Grid.Columns.Add(new DataGridTemplateColumn
+                    {
+                        Header = spec.Header,
+                        Width = gridWidth,
+                        Tag = spec.Key,
+                        CellTemplate = RatingCellTemplate,
+                    });
+                    continue;
+                }
 
                 Grid.Columns.Add(new DataGridTextColumn
                 {
                     Header = spec.Header,
                     Binding = new Avalonia.Data.Binding(spec.Property),
-                    Width = isStar
-                        ? new DataGridLength(width, DataGridLengthUnitType.Star)
-                        : new DataGridLength(width),
+                    Width = gridWidth,
                     Tag = spec.Key,
                 });
             }
@@ -290,6 +306,69 @@ public partial class MainWindow : Window
         }
 
         UpdateSortGlyphs();
+    }
+
+    // Built once and shared by every rating cell: each star's glyph is a
+    // property binding (not a value captured at build time), so recycled
+    // cells stay correct across virtualization and an in-place rating edit
+    // repaints through TrackRow's own INPC rather than needing a rebuild.
+    private static readonly IDataTemplate RatingCellTemplate = BuildRatingCellTemplate();
+
+    private static IDataTemplate BuildRatingCellTemplate()
+    {
+        return new FuncDataTemplate<TrackRow>((_, _) =>
+        {
+            var panel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            for (int star = 1; star <= 5; star++)
+            {
+                var glyph = new TextBlock
+                {
+                    FontSize = 13,
+                    Tag = star,
+                    Cursor = new Cursor(StandardCursorType.Hand),
+                };
+                glyph.Bind(TextBlock.TextProperty, new Binding(nameof(TrackRow.Rating))
+                {
+                    Converter = RatingStarConverter.Instance,
+                    ConverterParameter = star,
+                });
+                glyph.PointerPressed += OnRatingStarPressed;
+                panel.Children.Add(glyph);
+            }
+
+            return panel;
+        });
+    }
+
+    /// <summary>
+    /// Click on star N sets the row's rating to N stars; clicking the
+    /// currently-set star again clears it to unrated. Writes go straight to
+    /// <see cref="App.Library"/> from here (not through the view-model) per
+    /// the "UI-only glue in code-behind" rule at the top of this class.
+    /// </summary>
+    private static async void OnRatingStarPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is not Control { DataContext: TrackRow row, Tag: int clicked }
+            || App.Library is not { } library)
+        {
+            return;
+        }
+
+        // Consume the press so it neither arms the grid's row-drag gesture
+        // nor reaches the DataGrid's own row-selection handling.
+        e.Handled = true;
+
+        int newStars = row.Rating == clicked ? 0 : clicked;
+
+        // Optimistic: TrackRow.Rating is an [ObservableProperty], so this
+        // repaints the bound star glyphs immediately, in place, without
+        // waiting on the write or reloading the page.
+        row.Rating = newStars;
+        await library.SetTrackRatingAsync(row.Id, newStars == 0 ? null : newStars * 20);
     }
 
     /// <summary>

@@ -164,6 +164,41 @@ public sealed class ViewSettingsTests : IDisposable
     }
 
     [Fact]
+    public void SetTrackRatingWritesAndBumpsGeneration()
+    {
+        long album = InsertAlbum("A", "a");
+        long t = InsertTrack("T", album, year: 2000, trackNo: 1, added: 1);
+        long generation = _db.GetLibraryGeneration();
+
+        TrackPager.SetTrackRating(_db, t, 80);
+        Assert.Equal(generation + 1, _db.GetLibraryGeneration());
+        Assert.Equal(80, TrackPager.HydratePage(_db, [t])[t].Rating);
+
+        // Clearing back to unrated (null) is also a membership-affecting
+        // write, so it bumps the generation again.
+        TrackPager.SetTrackRating(_db, t, null);
+        Assert.Equal(generation + 2, _db.GetLibraryGeneration());
+        Assert.Null(TrackPager.HydratePage(_db, [t])[t].Rating);
+    }
+
+    [Fact]
+    public void ColumnSortByRatingKeepsNullsLastInBothDirections()
+    {
+        long album = InsertAlbum("A", "a");
+        long rated = InsertTrack("Rated", album, year: 2020, trackNo: 1, added: 1);
+        long unrated = InsertTrack("Unrated", album, year: 2020, trackNo: 2, added: 2);
+        TrackPager.SetTrackRating(_db, rated, 100);
+
+        long[] ids = [unrated, rated];
+        Assert.Equal(
+            [rated, unrated],
+            TrackPager.SortIds(_db, ids, new ColumnSort("rating", Descending: false)));
+        Assert.Equal(
+            [rated, unrated],
+            TrackPager.SortIds(_db, ids, new ColumnSort("rating", Descending: true)));
+    }
+
+    [Fact]
     public void SortIdsPreservesDuplicates()
     {
         long album = InsertAlbum("A", "a");

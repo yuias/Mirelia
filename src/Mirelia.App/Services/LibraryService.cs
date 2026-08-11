@@ -117,6 +117,14 @@ public sealed class LibraryService : IDisposable
             return null;
         });
 
+    /// <summary>Stores a track's rating (0-100, or null to clear it).</summary>
+    public Task SetTrackRatingAsync(long id, int? rating)
+        => RunAsync<object?>(() =>
+        {
+            TrackPager.SetTrackRating(_db, id, rating);
+            return null;
+        });
+
     /// <summary>Total track count.</summary>
     public Task<long> CountAsync()
         => RunAsync(() => TrackPager.Count(_db));

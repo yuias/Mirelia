@@ -48,6 +48,15 @@ public sealed partial class TrackRow : ObservableObject
     [ObservableProperty]
     private string _added = string.Empty;
 
+    /// <summary>
+    /// Star rating, 0-5 (0 = unrated). Set directly by the grid's rating
+    /// cell on edit, and by <see cref="Apply"/> on (re)hydration; the
+    /// [ObservableProperty] notification is what lets an edit repaint the
+    /// bound star glyphs without a page reload.
+    /// </summary>
+    [ObservableProperty]
+    private int _rating;
+
     /// <summary>Returns the row to its placeholder state after LRU eviction.</summary>
     public void Reset()
     {
@@ -62,6 +71,7 @@ public sealed partial class TrackRow : ObservableObject
         Codec = string.Empty;
         Bitrate = string.Empty;
         Added = string.Empty;
+        Rating = 0;
     }
 
     /// <summary>Fills the row from a hydrated page entry. UI thread only.</summary>
@@ -82,5 +92,9 @@ public sealed partial class TrackRow : ObservableObject
         Added = DateTimeOffset.FromUnixTimeSeconds(row.AddedUnix)
             .ToLocalTime()
             .ToString("yyyy-MM-dd");
+        // Stored rating is 0-100 in steps of 20; round to the nearest star
+        // rather than truncate so hand-edited (non-multiple-of-20) values
+        // in the DB still land on a sane star count instead of always low.
+        Rating = row.Rating is { } raw ? Math.Clamp((raw + 10) / 20, 0, 5) : 0;
     }
 }

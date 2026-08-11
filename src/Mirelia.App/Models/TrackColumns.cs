@@ -26,6 +26,7 @@ public static class TrackColumns
         new("codec", "Codec", nameof(TrackRow.Codec), 64, false),
         new("bitrate", "kbps", nameof(TrackRow.Bitrate), 60, false),
         new("added", "Added", nameof(TrackRow.Added), 90, false),
+        new("rating", "Rating", nameof(TrackRow.Rating), 90, false),
     ];
 
     /// <summary>Columns shown when a view has no stored layout.</summary>

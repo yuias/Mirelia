@@ -50,6 +50,7 @@ public sealed record ColumnSort(string ColumnKey, bool Descending);
 /// <param name="Codec">Canonical codec id.</param>
 /// <param name="BitrateKbps">Average bitrate, or null.</param>
 /// <param name="AddedUnix">When the track entered the library.</param>
+/// <param name="Rating">Star rating, 0-100, or null if unrated.</param>
 public sealed record TrackPageRow(
     long Id,
     string? Title,
@@ -63,7 +64,8 @@ public sealed record TrackPageRow(
     long DurationMs,
     string Codec,
     int? BitrateKbps,
-    long AddedUnix);
+    long AddedUnix,
+    int? Rating);
 
 /// <summary>
 /// ID-array browsing and page hydration. Sorting always happens in SQL
@@ -113,6 +115,7 @@ public static class TrackPager
             "codec" => $"t.codec {dir}, ar.name_sort, al.name_sort, t.disc_no, t.track_no",
             "bitrate" => $"t.bitrate_kbps IS NULL, t.bitrate_kbps {dir}, ar.name_sort, al.name_sort, t.disc_no, t.track_no",
             "added" => $"t.added_unix {dir}, t.id {dir}",
+            "rating" => $"t.rating IS NULL, t.rating {dir}, ar.name_sort, al.name_sort, t.disc_no, t.track_no",
             _ => null,
         };
     }
@@ -252,6 +255,21 @@ public static class TrackPager
             ("$id", id));
     }
 
+    /// <summary>
+    /// Stores a track's rating (0-100, or null for unrated). Unlike
+    /// ReplayGain, <c>rating</c> is a DSL field (docs/query-dsl.md), so this
+    /// bumps the generation counter to invalidate cached smart-playlist
+    /// membership that may depend on it.
+    /// </summary>
+    public static void SetTrackRating(LibraryDatabase db, long id, int? rating)
+    {
+        db.Execute(
+            "UPDATE track SET rating = $r WHERE id = $id",
+            ("$r", rating),
+            ("$id", id));
+        db.BumpLibraryGeneration();
+    }
+
     /// <summary>Hydrates one page of rows; missing ids are simply absent.</summary>
     public static Dictionary<long, TrackPageRow> HydratePage(
         LibraryDatabase db, IReadOnlyList<long> ids)
@@ -263,7 +281,7 @@ public static class TrackPager
             using SqliteCommand cmd = db.Command($"""
                 SELECT t.id, t.title, ar.name, al.name, aa.name, g.name,
                        t.track_no, t.year, t.date_text,
-                       t.duration_ms, t.codec, t.bitrate_kbps, t.added_unix
+                       t.duration_ms, t.codec, t.bitrate_kbps, t.added_unix, t.rating
                 FROM track t
                 LEFT JOIN artist ar ON ar.id = t.artist_id
                 LEFT JOIN artist aa ON aa.id = t.album_artist_id
@@ -292,7 +310,8 @@ public static class TrackPager
                     reader.GetInt64(9),
                     reader.GetString(10),
                     reader.IsDBNull(11) ? null : reader.GetInt32(11),
-                    reader.GetInt64(12));
+                    reader.GetInt64(12),
+                    reader.IsDBNull(13) ? null : reader.GetInt32(13));
                 result[row.Id] = row;
             }
         }

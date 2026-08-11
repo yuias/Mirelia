@@ -19,6 +19,13 @@ public class App : Application
     /// <summary>The settings service, available app-wide after startup.</summary>
     public static SettingsService? Settings { get; private set; }
 
+    /// <summary>
+    /// The library service, available app-wide after startup. Lets code-behind
+    /// (e.g. the grid's rating cell) issue direct writes without routing
+    /// through the view-model.
+    /// </summary>
+    public static LibraryService? Library { get; private set; }
+
     /// <inheritdoc />
     public override void Initialize()
     {
@@ -31,6 +38,7 @@ public class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             _library = new LibraryService(LibraryPaths.DefaultDatabasePath);
+            Library = _library;
             Settings = new SettingsService(
                 Path.Combine(
                     Path.GetDirectoryName(Path.GetFullPath(LibraryPaths.DefaultDatabasePath))!,
