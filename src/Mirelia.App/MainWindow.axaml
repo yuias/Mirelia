@@ -25,8 +25,10 @@
         <MenuItem Header="Preferences…" Click="OnPreferencesClick" />
       </MenuItem>
       <MenuItem Header="_View">
+        <!-- MenuItem.IsChecked binds OneWay by default (unlike ToggleButton),
+             so the toggle needs TwoWay to reach the view-model. -->
         <MenuItem Header="Queue" ToggleType="CheckBox"
-                  IsChecked="{Binding Queue.IsOpen}" />
+                  IsChecked="{Binding Queue.IsOpen, Mode=TwoWay}" />
       </MenuItem>
     </Menu>
 
