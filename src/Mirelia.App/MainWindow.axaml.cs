@@ -34,6 +34,11 @@ public partial class MainWindow : Window
     private Point _dragOrigin;
     private PointerPressedEventArgs? _dragPress;
 
+    // Row under the initial press, and its index once a reorder-eligible
+    // drag is armed (null otherwise, including once a drop consumes it).
+    private TrackRow? _dragSourceRow;
+    private int? _dragSourceIndex;
+
     private Point _queueDragOrigin;
     private PointerPressedEventArgs? _queueDragPress;
     private long? _queueDragEntryId;
@@ -121,6 +126,12 @@ public partial class MainWindow : Window
         PlaylistTreeView.AddHandler(DragDrop.DropEvent, OnPlaylistDrop);
         AddHandler(DragDrop.DragOverEvent, OnWindowDragOver);
         AddHandler(DragDrop.DropEvent, OnWindowDrop);
+
+        // The grid is also a drop target on itself: a static playlist in
+        // "Playlist Order" accepts its own drag-selected row back to
+        // reorder it (see OnGridPointerMoved for the gate).
+        Grid.AddHandler(DragDrop.DragOverEvent, OnGridDragOver);
+        Grid.AddHandler(DragDrop.DropEvent, OnGridDrop);
 
         // Queue pane: drag source and drop target are the same list, for
         // in-place reordering.
@@ -730,13 +741,16 @@ public partial class MainWindow : Window
         // Arm row-dragging only for presses that land on an actual row.
         // Without this check, scrollbar-thumb and header drags get hijacked
         // into a drag&drop gesture and the grid stops scrolling.
-        bool onRow = (e.Source as Visual)?
+        _dragSourceRow = (e.Source as Visual)?
             .GetSelfAndVisualAncestors()
             .OfType<DataGridRow>()
-            .Any() == true;
+            .FirstOrDefault()?
+            .DataContext as TrackRow;
 
         _dragOrigin = e.GetPosition(this);
-        _dragPress = onRow && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed ? e : null;
+        _dragPress = _dragSourceRow is not null && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed
+            ? e
+            : null;
     }
 
     private async void OnGridPointerMoved(object? sender, PointerEventArgs e)
@@ -758,11 +772,76 @@ public partial class MainWindow : Window
             return;
         }
 
+        // Reordering only ever applies to a lone dragged row (queue-pane
+        // parity, kept simple for v1), in a view where grid rows are
+        // playlist positions, and only when the press actually landed on
+        // the row that ended up selected — guards against a stale
+        // _dragSourceRow if selection changed without a fresh press.
+        bool reorderEligible = ids.Length == 1
+            && ViewModel is { CanReorderStaticPlaylist: true }
+            && _dragSourceRow?.Id == ids[0];
+        _dragSourceIndex = reorderEligible ? _dragSourceRow!.Index : null;
+
         PointerPressedEventArgs press = _dragPress;
         _dragPress = null;
         var transfer = new DataTransfer();
         transfer.Add(DataTransferItem.Create(TrackIdsFormat, ids));
-        await DragDrop.DoDragDropAsync(press, transfer, DragDropEffects.Copy);
+        DragDropEffects allowed = DragDropEffects.Copy
+            | (reorderEligible ? DragDropEffects.Move : DragDropEffects.None);
+        await DragDrop.DoDragDropAsync(press, transfer, allowed);
+    }
+
+    private void OnGridDragOver(object? sender, DragEventArgs e)
+    {
+        bool ok = _dragSourceIndex is not null
+            && ViewModel is { CanReorderStaticPlaylist: true }
+            && e.DataTransfer.Contains(TrackIdsFormat);
+        e.DragEffects = ok ? DragDropEffects.Move : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private async void OnGridDrop(object? sender, DragEventArgs e)
+    {
+        if (ViewModel is not { } vm
+            || _dragSourceIndex is not { } from
+            || !vm.CanReorderStaticPlaylist
+            || vm.Tracks is not { } tracks
+            || !e.DataTransfer.Contains(TrackIdsFormat))
+        {
+            return;
+        }
+
+        e.Handled = true;
+        _dragSourceIndex = null;
+
+        int to = GridDropIndex(e, from, tracks.Count);
+        if (to == from)
+        {
+            return; // dropped back where it started
+        }
+
+        if (await vm.MoveStaticPlaylistEntryAsync(from, to))
+        {
+            Grid.SelectedIndex = to;
+        }
+    }
+
+    // Drops on the top half of a row insert before it, the bottom half
+    // insert after; drops past the last row (or on empty space) append.
+    // The result is converted from that pre-drag position to
+    // PlaylistStore.Move's post-removal index convention — the same
+    // adjustment PlayQueue.Move applies internally for the queue pane.
+    private static int GridDropIndex(DragEventArgs e, int from, int rowCount)
+    {
+        var row = (e.Source as Visual)?
+            .GetSelfAndVisualAncestors()
+            .OfType<DataGridRow>()
+            .FirstOrDefault();
+        int preDrag = row?.DataContext is TrackRow track
+            ? (e.GetPosition(row).Y < row.Bounds.Height / 2 ? track.Index : track.Index + 1)
+            : rowCount;
+
+        return preDrag > from ? preDrag - 1 : preDrag;
     }
 
     private static PlaylistInfo? PlaylistUnder(RoutedEventArgs e)

@@ -68,6 +68,23 @@ public sealed class PlaylistStoreTests : IDisposable
     }
 
     [Fact]
+    public void MoveToALaterPositionUsesPostRemovalIndexing()
+    {
+        PlaylistInfo p = _store.CreateStatic("Reorder");
+        _store.AddTracks(p.Id, _trackIds); // positions 0..4
+
+        // `to` counts positions in the list *after* `from` is removed (the
+        // grid's drag-drop reorder relies on this exact convention — see
+        // MainWindow.axaml.cs GridDropIndex), so moving 0 -> 2 lands the
+        // entry between the entries originally at positions 2 and 3, not 1
+        // and 2 as a naive pre-removal reading of `to` would suggest.
+        _store.Move(p.Id, from: 0, to: 2);
+        Assert.Equal(
+            [_trackIds[1], _trackIds[2], _trackIds[0], _trackIds[3], _trackIds[4]],
+            _store.GetStaticTracks(p.Id));
+    }
+
+    [Fact]
     public void SmartPlaylistIsCanonicalizedAndEvaluates()
     {
         PlaylistInfo p = _store.CreateSmart("Good", "rating   >=   60 order by title");

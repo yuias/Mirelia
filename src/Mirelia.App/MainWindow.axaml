@@ -233,7 +233,8 @@
                 GridLinesVisibility="Horizontal"
                 HorizontalGridLinesBrush="#14808080"
                 RowHeight="26"
-                DoubleTapped="OnGridDoubleTapped">
+                DoubleTapped="OnGridDoubleTapped"
+                DragDrop.AllowDrop="True">
         <DataGrid.ContextMenu>
           <ContextMenu Opened="OnGridMenuOpened">
             <MenuItem Header="Play" Click="OnPlaySelectedClick" />

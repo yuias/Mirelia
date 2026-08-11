@@ -204,6 +204,18 @@ public sealed class LibraryService : IDisposable
         });
 
     /// <summary>
+    /// Moves a static playlist entry (grid drag reorder). <paramref name="to"/>
+    /// follows <see cref="PlaylistStore.Move"/>'s contract: the index in the
+    /// list <em>after</em> the entry at <paramref name="from"/> is removed.
+    /// </summary>
+    public Task MovePlaylistEntryAsync(long playlistId, int from, int to)
+        => RunAsync<object?>(() =>
+        {
+            _playlists.Move(playlistId, from, to);
+            return null;
+        });
+
+    /// <summary>
     /// Embedded artwork bytes of a track's file, or null when the file is
     /// missing or carries no picture.
     /// </summary>

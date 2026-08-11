@@ -193,6 +193,18 @@ public sealed partial class MainViewModel : ObservableObject
     public IEnumerable<PlaylistInfo> Folders
         => Playlists.Where(p => p.Kind == PlaylistKind.Folder);
 
+    /// <summary>
+    /// True when the grid's row order equals playlist entry position, so a
+    /// drag-drop within the grid can reorder the playlist: a static playlist
+    /// is selected, no header-click column sort overrides it, the "Playlist
+    /// Order" preset is active, and no search filter is narrowing the view.
+    /// </summary>
+    public bool CanReorderStaticPlaylist
+        => SelectedPlaylist is { Kind: PlaylistKind.Static }
+            && SortColumnKey is null
+            && SelectedSort?.Order == TrackSortOrder.PlaylistOrder
+            && string.IsNullOrWhiteSpace(SearchText);
+
 
     /// <summary>Creates the view-model; call <see cref="InitializeAsync"/> after.</summary>
     public MainViewModel(LibraryService library, AudioPlayerService player, SettingsService settings)
@@ -472,6 +484,25 @@ public sealed partial class MainViewModel : ObservableObject
         {
             await ReloadAsync();
         }
+    }
+
+    /// <summary>
+    /// Reorders one entry within the currently viewed static playlist (grid
+    /// drag-drop). <paramref name="to"/> is already converted to
+    /// <see cref="Library.Playlists.PlaylistStore.Move"/>'s post-removal
+    /// index convention. The gate is re-checked here, defensively, since the
+    /// view could in principle change between drag start and drop.
+    /// </summary>
+    public async Task<bool> MoveStaticPlaylistEntryAsync(int from, int to)
+    {
+        if (!CanReorderStaticPlaylist || SelectedPlaylist is not { } playlist)
+        {
+            return false;
+        }
+
+        await _library.MovePlaylistEntryAsync(playlist.Id, from, to);
+        await ReloadAsync();
+        return true;
     }
 
     /// <summary>Exports a playlist to the chosen file, absolute paths.</summary>
