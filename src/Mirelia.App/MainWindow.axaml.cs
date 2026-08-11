@@ -44,6 +44,11 @@ public partial class MainWindow : Window
     private PointerPressedEventArgs? _queueDragPress;
     private long? _queueDragEntryId;
 
+    // Entry the queue pane last auto-scrolled to. Refreshes rebuild the row
+    // objects, so this keys off the entry id to scroll only when playback
+    // actually moves — a manual reorder must not yank the scroll position.
+    private long? _autoScrolledEntryId;
+
     // Last known bounds while WindowState was Normal, so a maximized (or
     // minimized) window's transient bounds never get saved in place of the
     // real normal-state geometry to restore next launch.
@@ -166,6 +171,21 @@ public partial class MainWindow : Window
             {
                 RebuildColumns();
                 vm.ViewSettingsApplied += OnViewSettingsApplied;
+                vm.Queue.PropertyChanged += (_, args) =>
+                {
+                    if (args.PropertyName == nameof(QueueViewModel.CurrentRow))
+                    {
+                        ScrollQueueToCurrent(onlyIfNewEntry: true);
+                    }
+                    else if (args.PropertyName == nameof(QueueViewModel.IsOpen) && vm.Queue.IsOpen)
+                    {
+                        // The pane has no layout yet when it just opened;
+                        // Background priority runs after the layout pass.
+                        Dispatcher.UIThread.Post(
+                            () => ScrollQueueToCurrent(onlyIfNewEntry: false),
+                            DispatcherPriority.Background);
+                    }
+                };
                 vm.PropertyChanged += (_, args) =>
                 {
                     if (args.PropertyName == nameof(MainViewModel.CurrentColumns))
@@ -718,6 +738,27 @@ public partial class MainWindow : Window
         {
             await vm.Queue.ClearAsync();
         }
+    }
+
+    /// <summary>
+    /// Keeps the audible entry visible in the queue pane. With
+    /// <paramref name="onlyIfNewEntry"/>, refreshes that merely rebuild the
+    /// rows (reorder, remove) do not yank the user's scroll position.
+    /// </summary>
+    private void ScrollQueueToCurrent(bool onlyIfNewEntry)
+    {
+        if (ViewModel?.Queue is not { IsOpen: true, CurrentRow: { } row })
+        {
+            return;
+        }
+
+        if (onlyIfNewEntry && _autoScrolledEntryId == row.EntryId)
+        {
+            return;
+        }
+
+        _autoScrolledEntryId = row.EntryId;
+        QueueList.ScrollIntoView(row);
     }
 
     private async void OnQueueDoubleTapped(object? sender, TappedEventArgs e)

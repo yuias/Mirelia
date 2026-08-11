@@ -70,6 +70,15 @@ public sealed partial class QueueViewModel : ObservableObject
     [ObservableProperty]
     private bool _isOpen;
 
+    /// <summary>
+    /// The row for the audible entry, or null. The pane auto-scrolls to it;
+    /// note a queue refresh rebuilds the row objects, so consumers must key
+    /// off <see cref="QueueRowViewModel.EntryId"/> to tell an actual track
+    /// change from a rebuild.
+    /// </summary>
+    [ObservableProperty]
+    private QueueRowViewModel? _currentRow;
+
     /// <summary>Creates the view-model and subscribes to the player's queue.</summary>
     public QueueViewModel(LibraryService library, AudioPlayerService player, SettingsService settings)
     {
@@ -109,6 +118,8 @@ public sealed partial class QueueViewModel : ObservableObject
         {
             row.IsCurrent = row.EntryId == entryId;
         }
+
+        CurrentRow = Rows.FirstOrDefault(r => r.IsCurrent);
     }
 
     private async Task RefreshAsync()
@@ -132,5 +143,7 @@ public sealed partial class QueueViewModel : ObservableObject
                 IsCurrent = entry.EntryId == currentId,
             });
         }
+
+        CurrentRow = Rows.FirstOrDefault(r => r.IsCurrent);
     }
 }
