@@ -179,11 +179,7 @@ public partial class MainWindow : Window
                     }
                     else if (args.PropertyName == nameof(QueueViewModel.IsOpen) && vm.Queue.IsOpen)
                     {
-                        // The pane has no layout yet when it just opened;
-                        // Background priority runs after the layout pass.
-                        Dispatcher.UIThread.Post(
-                            () => ScrollQueueToCurrent(onlyIfNewEntry: false),
-                            DispatcherPriority.Background);
+                        ScrollQueueToCurrent(onlyIfNewEntry: false);
                     }
                 };
                 vm.PropertyChanged += (_, args) =>
@@ -758,7 +754,22 @@ public partial class MainWindow : Window
         }
 
         _autoScrolledEntryId = row.EntryId;
-        QueueList.ScrollIntoView(row);
+
+        // The rows were only just added (or the pane only just shown), so the
+        // list has no realized containers to scroll to yet — scrolling now is
+        // silently dropped when the pane was empty beforehand. Background
+        // priority runs after the pending layout pass.
+        Dispatcher.UIThread.Post(
+            () =>
+            {
+                // Playback may have moved on again while this was queued.
+                if (ViewModel?.Queue is { IsOpen: true, CurrentRow: { } target }
+                    && target.EntryId == row.EntryId)
+                {
+                    QueueList.ScrollIntoView(target);
+                }
+            },
+            DispatcherPriority.Background);
     }
 
     private async void OnQueueDoubleTapped(object? sender, TappedEventArgs e)
