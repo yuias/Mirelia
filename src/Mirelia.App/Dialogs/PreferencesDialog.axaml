@@ -35,6 +35,18 @@
             <TextBlock Opacity="0.6" FontSize="12" TextWrapping="Wrap"
                        Text="Auto follows the Windows light/dark setting. Takes effect immediately." />
           </StackPanel>
+
+          <TextBlock FontWeight="SemiBold" Text="Font" />
+          <StackPanel Spacing="6">
+            <TextBlock Text="Family" Opacity="0.7" FontSize="12" />
+            <ComboBox x:Name="FontFamilyBox" HorizontalAlignment="Stretch" />
+            <TextBlock Text="Size" Opacity="0.7" FontSize="12" />
+            <NumericUpDown x:Name="FontSizeBox" HorizontalAlignment="Stretch"
+                            Minimum="10" Maximum="20" Increment="1"
+                            FormatString="0" />
+            <TextBlock Opacity="0.6" FontSize="12" TextWrapping="Wrap"
+                       Text="Applies app-wide, including the track grid. Takes effect immediately." />
+          </StackPanel>
         </StackPanel>
       </TabItem>
     </TabControl>

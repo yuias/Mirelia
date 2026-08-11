@@ -40,6 +40,12 @@ public sealed record AppSettings
     /// <summary>The UI color theme.</summary>
     public AppTheme Theme { get; init; } = AppTheme.Auto;
 
+    /// <summary>UI font family name, or null for the platform default.</summary>
+    public string? FontFamily { get; init; }
+
+    /// <summary>UI font size in points, applied app-wide.</summary>
+    public double FontSize { get; init; } = 14;
+
     /// <summary>Main window X position (device pixels), or null before first save.</summary>
     public int? WindowX { get; init; }
 

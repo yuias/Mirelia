@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Media;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using Mirelia.App.Services;
@@ -41,6 +42,12 @@ public class App : Application
             RequestedThemeVariant = ThemeVariantFor(Settings.Current.Theme);
             Settings.Changed += s => RequestedThemeVariant = ThemeVariantFor(s.Theme);
 
+            // AppFontFamily/AppFontSize back the Window/DataGrid styles
+            // above; re-set on save so a font change also applies without
+            // restart (DynamicResource observers re-evaluate immediately).
+            ApplyFontResources(Settings.Current);
+            Settings.Changed += s => ApplyFontResources(s);
+
             _player = new AudioPlayerService(_library, Settings);
             var viewModel = new MainViewModel(_library, _player);
 
@@ -80,4 +87,12 @@ public class App : Application
         AppTheme.Dark => ThemeVariant.Dark,
         _ => ThemeVariant.Default,
     };
+
+    private void ApplyFontResources(AppSettings settings)
+    {
+        Resources["AppFontFamily"] = string.IsNullOrEmpty(settings.FontFamily)
+            ? FontManager.Current.DefaultFontFamily
+            : new FontFamily(settings.FontFamily);
+        Resources["AppFontSize"] = settings.FontSize;
+    }
 }

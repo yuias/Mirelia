@@ -4,5 +4,19 @@
   <Application.Styles>
     <FluentTheme />
     <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml" />
+
+    <!-- App-wide font: Window covers most controls via property inheritance;
+         DataGrid is targeted explicitly since its cells are built in code
+         (MainWindow.axaml.cs RebuildColumns) and must pick up the setting
+         too. Local FontFamily on the DSL query boxes (monospace) still wins
+         over these Style setters, so they are unaffected. -->
+    <Style Selector="Window">
+      <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}" />
+      <Setter Property="FontSize" Value="{DynamicResource AppFontSize}" />
+    </Style>
+    <Style Selector="DataGrid">
+      <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}" />
+      <Setter Property="FontSize" Value="{DynamicResource AppFontSize}" />
+    </Style>
   </Application.Styles>
 </Application>

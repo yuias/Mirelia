@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.Media;
 using Mirelia.App.Services;
 using Mirelia.AudioBridge;
 
@@ -7,13 +8,18 @@ namespace Mirelia.App.Dialogs;
 
 /// <summary>
 /// Playback settings (output device, exclusive mode, ReplayGain) and
-/// appearance settings (theme), grouped into tabs. Device enumeration runs
-/// on a throwaway engine instance so the dialog never touches the playback
-/// engine.
+/// appearance settings (theme, font), grouped into tabs. Device enumeration
+/// runs on a throwaway engine instance so the dialog never touches the
+/// playback engine.
 /// </summary>
 public partial class PreferencesDialog : Window
 {
     private sealed record DeviceChoice(string? Id, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    private sealed record FontChoice(string? Name, string Label)
     {
         public override string ToString() => Label;
     }
@@ -58,6 +64,18 @@ public partial class PreferencesDialog : Window
 
         ThemeBox.ItemsSource = new[] { AppTheme.Auto, AppTheme.Light, AppTheme.Dark };
         ThemeBox.SelectedItem = settings.Current.Theme;
+
+        var fontChoices = new List<FontChoice> { new(null, "(Default)") };
+        fontChoices.AddRange(FontManager.Current.SystemFonts
+            .Select(f => f.Name)
+            .Distinct()
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .Select(name => new FontChoice(name, name)));
+        FontFamilyBox.ItemsSource = fontChoices;
+        FontFamilyBox.SelectedItem =
+            fontChoices.FirstOrDefault(f => f.Name == settings.Current.FontFamily) ?? fontChoices[0];
+
+        FontSizeBox.Value = (decimal)settings.Current.FontSize;
     }
 
     private void OnCancel(object? sender, RoutedEventArgs e) => Close(false);
@@ -78,6 +96,8 @@ public partial class PreferencesDialog : Window
             Exclusive = ExclusiveCheck.IsChecked == true,
             ReplayGain = RgBox.SelectedItem as ReplayGainMode? ?? ReplayGainMode.Off,
             Theme = ThemeBox.SelectedItem as AppTheme? ?? AppTheme.Auto,
+            FontFamily = (FontFamilyBox.SelectedItem as FontChoice)?.Name,
+            FontSize = (double?)FontSizeBox.Value ?? _settings.Current.FontSize,
         });
         Close(true);
     }

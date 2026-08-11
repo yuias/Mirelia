@@ -38,11 +38,23 @@ public partial class MainWindow : Window
     // written through to view settings.
     private readonly DispatcherTimer _columnWidthDebounce;
 
+    // RowHeight is not an inherited property, unlike FontFamily/FontSize, so
+    // it needs to be recomputed and pushed explicitly whenever the font size
+    // setting changes.
+    private const double BaseFontSize = 14;
+    private const double BaseRowHeight = 26;
+
     /// <summary>Initializes the window.</summary>
     public MainWindow()
     {
         InitializeComponent();
         RestoreWindowPlacement();
+
+        ApplyFontScaledRowHeight(App.Settings?.Current.FontSize ?? BaseFontSize);
+        if (App.Settings is { } settings)
+        {
+            settings.Changed += s => ApplyFontScaledRowHeight(s.FontSize);
+        }
 
         _columnWidthDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
         _columnWidthDebounce.Tick += async (_, _) =>
@@ -124,6 +136,13 @@ public partial class MainWindow : Window
         };
         Grid.ColumnReordered += async (_, _) => await PersistColumnOrderAsync();
     }
+
+    /// <summary>
+    /// Scales the grid row height with the font size so larger text does not
+    /// clip, keeping the 26px row height at the default 14pt font size.
+    /// </summary>
+    private void ApplyFontScaledRowHeight(double fontSize)
+        => Grid.RowHeight = Math.Max(BaseRowHeight, Math.Round(BaseRowHeight * fontSize / BaseFontSize));
 
     // ---- window placement persistence -----------------------------------
 
