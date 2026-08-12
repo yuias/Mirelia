@@ -1142,6 +1142,14 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void OnSyncClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is { } vm)
+        {
+            await new SyncDialog(vm.Library).ShowDialog(this);
+        }
+    }
+
     private async void OnPreferencesClick(object? sender, RoutedEventArgs e)
     {
         if (App.Settings is { } settings)

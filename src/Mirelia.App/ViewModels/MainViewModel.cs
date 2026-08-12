@@ -221,6 +221,9 @@ public sealed partial class MainViewModel : ObservableObject
             && string.IsNullOrWhiteSpace(SearchText);
 
 
+    /// <summary>The library facade, for dialogs that talk to it directly.</summary>
+    public LibraryService Library => _library;
+
     /// <summary>Creates the view-model; call <see cref="InitializeAsync"/> after.</summary>
     public MainViewModel(LibraryService library, AudioPlayerService player, SettingsService settings)
     {

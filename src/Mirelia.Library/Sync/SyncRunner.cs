@@ -138,38 +138,13 @@ public sealed class SyncRunner(SyncTargetStore targets)
                 : $"{track.Artist} - {track.Title}";
 
             entries.Add(new M3uEntry(
-                Reference(file.RelPath, export.RelPath, config),
+                SyncPaths.Reference(file.RelPath, export.RelPath, config),
                 display,
                 (int)Math.Round(track.DurationMs / 1000.0)));
         }
 
         return entries;
     }
-
-    /// <summary>
-    /// Path as the device will read it: rooted at its own view of the music
-    /// root, or relative to the playlist file's own directory.
-    /// </summary>
-    private static string Reference(string relPath, string playlistRelPath, SyncTargetConfig config)
-    {
-        char separator = config.Separator.Length > 0 ? config.Separator[0] : '\\';
-
-        if (config.PathStyle == SyncPathStyle.Absolute)
-        {
-            string root = (string.IsNullOrWhiteSpace(config.DeviceRoot)
-                ? config.MusicRoot
-                : config.DeviceRoot).TrimEnd('\\', '/');
-            return Retarget($"{root}/{relPath}", separator);
-        }
-
-        string musicPath = Path.GetFullPath(Path.Combine(config.MusicRoot, relPath));
-        string playlistDir = Path.GetDirectoryName(
-            Path.GetFullPath(Path.Combine(config.PlaylistDir, playlistRelPath)))!;
-        return Retarget(Path.GetRelativePath(playlistDir, musicPath), separator);
-    }
-
-    private static string Retarget(string path, char separator) =>
-        path.Replace('\\', separator).Replace('/', separator);
 
     private static SyncedFile ToRecord(PlannedFile file) => new(
         file.Track.TrackId,

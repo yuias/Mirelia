@@ -1,0 +1,171 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Mirelia.App.ViewModels"
+        x:Class="Mirelia.App.Dialogs.SyncDialog"
+        Title="Sync"
+        Width="900" Height="660"
+        MinWidth="760" MinHeight="560"
+        WindowStartupLocation="CenterOwner">
+
+  <Window.Styles>
+    <Style Selector="TextBlock.section">
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.label">
+      <Setter Property="Opacity" Value="0.7" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="TextBlock.preview">
+      <Setter Property="Opacity" Value="0.7" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontFamily" Value="Consolas, Menlo, monospace" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+  </Window.Styles>
+
+  <Grid Margin="12" RowDefinitions="*,Auto" ColumnDefinitions="230,12,*">
+
+    <!-- Target list -->
+    <DockPanel Grid.Row="0" Grid.Column="0">
+      <TextBlock DockPanel.Dock="Top" Classes="section" Text="Targets" Margin="0,0,0,6" />
+      <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
+                  Spacing="6" Margin="0,6,0,0">
+        <Button Content="Add" Click="OnAddTarget" />
+        <Button x:Name="RemoveButton" Content="Remove" Click="OnRemoveTarget" />
+      </StackPanel>
+      <ListBox x:Name="TargetList" SelectionChanged="OnTargetSelected" />
+    </DockPanel>
+
+    <!-- Detail -->
+    <ScrollViewer Grid.Row="0" Grid.Column="2" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel x:Name="DetailPanel" Spacing="14" Margin="0,0,8,0" IsEnabled="False">
+
+        <StackPanel Spacing="6">
+          <TextBlock Classes="section" Text="Target" />
+          <TextBlock Classes="label" Text="Name" />
+          <TextBox x:Name="NameBox" TextChanged="OnTextChanged" />
+        </StackPanel>
+
+        <StackPanel Spacing="6">
+          <TextBlock Classes="section" Text="Destination" />
+          <TextBlock Classes="label" Text="Music folder" />
+          <Grid ColumnDefinitions="*,6,Auto">
+            <TextBox x:Name="MusicRootBox" Grid.Column="0" TextChanged="OnTextChanged" />
+            <Button Grid.Column="2" Content="Browse…" Click="OnBrowseMusicRoot" />
+          </Grid>
+          <TextBlock Classes="label" Text="Playlist folder" />
+          <Grid ColumnDefinitions="*,6,Auto">
+            <TextBox x:Name="PlaylistDirBox" Grid.Column="0" TextChanged="OnTextChanged" />
+            <Button Grid.Column="2" Content="Browse…" Click="OnBrowsePlaylistDir" />
+          </Grid>
+        </StackPanel>
+
+        <StackPanel Spacing="6">
+          <TextBlock Classes="section" Text="Content" />
+          <RadioButton x:Name="ScopeAllMusic" GroupName="Scope"
+                       Content="All music" IsCheckedChanged="OnScopeChanged" />
+          <RadioButton x:Name="ScopeAllPlaylists" GroupName="Scope"
+                       Content="All playlists" IsCheckedChanged="OnScopeChanged" />
+          <RadioButton x:Name="ScopeSelected" GroupName="Scope"
+                       Content="Selected playlists" IsCheckedChanged="OnScopeChanged" />
+          <Border x:Name="PlaylistPickerBox" BorderThickness="1" CornerRadius="4"
+                  BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                  Height="150" IsVisible="False">
+            <ListBox x:Name="PlaylistPicker" SelectionMode="Toggle">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:SyncPlaylistChoice">
+                  <CheckBox Content="{Binding Label}"
+                            IsChecked="{Binding IsSelected, Mode=TwoWay}" />
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Border>
+          <TextBlock Classes="label" TextWrapping="Wrap"
+                     Text="Selecting a folder includes every playlist beneath it. Smart playlists are frozen to a track list as they are written." />
+        </StackPanel>
+
+        <StackPanel Spacing="6">
+          <TextBlock Classes="section" Text="File layout" />
+          <ComboBox x:Name="PresetBox" HorizontalAlignment="Stretch"
+                    SelectionChanged="OnPresetChanged" />
+          <TextBox x:Name="TemplateBox" TextChanged="OnTextChanged" />
+          <TextBlock Classes="label" Text="Names containing / : ? and friends are rewritten as" />
+          <ComboBox x:Name="ReservedBox" HorizontalAlignment="Stretch"
+                    SelectionChanged="OnComboChanged" />
+          <TextBlock x:Name="LayoutPreview" Classes="preview" />
+        </StackPanel>
+
+        <StackPanel Spacing="6">
+          <TextBlock Classes="section" Text="Playlists" />
+          <TextBlock Classes="label" Text="Format" />
+          <Grid ColumnDefinitions="*,6,Auto">
+            <ComboBox x:Name="FormatBox" Grid.Column="0" HorizontalAlignment="Stretch"
+                      SelectionChanged="OnFormatChanged" />
+            <NumericUpDown x:Name="CodepageBox" Grid.Column="2" Width="120"
+                           Minimum="1" Maximum="65001" Increment="1" FormatString="0"
+                           IsVisible="False" ValueChanged="OnNumericChanged"
+                           ToolTip.Tip="Code page for .m3u (932 = Shift_JIS, 1252 = Western)" />
+          </Grid>
+
+          <TextBlock Classes="label" Text="Paths" />
+          <StackPanel Orientation="Horizontal" Spacing="12">
+            <RadioButton x:Name="PathRelative" GroupName="PathStyle"
+                         Content="Relative" IsCheckedChanged="OnPathStyleChanged" />
+            <RadioButton x:Name="PathAbsolute" GroupName="PathStyle"
+                         Content="Absolute" IsCheckedChanged="OnPathStyleChanged" />
+          </StackPanel>
+
+          <TextBlock Classes="label" Text="Device root (what the device calls the music folder)" />
+          <TextBox x:Name="DeviceRootBox" PlaceholderText="A:\Music" TextChanged="OnTextChanged" />
+
+          <Grid ColumnDefinitions="*,12,*">
+            <StackPanel Grid.Column="0" Spacing="6">
+              <TextBlock Classes="label" Text="Separator" />
+              <ComboBox x:Name="SeparatorBox" HorizontalAlignment="Stretch"
+                        SelectionChanged="OnComboChanged" />
+            </StackPanel>
+            <StackPanel Grid.Column="2" Spacing="6">
+              <TextBlock Classes="label" Text="Playlist folders" />
+              <ComboBox x:Name="FolderModeBox" HorizontalAlignment="Stretch"
+                        SelectionChanged="OnComboChanged" />
+            </StackPanel>
+          </Grid>
+
+          <TextBlock x:Name="PlaylistPreview" Classes="preview" />
+        </StackPanel>
+
+        <StackPanel Spacing="6">
+          <TextBlock Classes="section" Text="Cleanup" />
+          <CheckBox x:Name="OrphanCheck" Content="Remove files no longer in scope"
+                    IsCheckedChanged="OnCheckChanged" />
+          <TextBlock Classes="label" TextWrapping="Wrap"
+                     Text="Only files this app copied are ever removed. Anything else in the music folder is left alone." />
+        </StackPanel>
+      </StackPanel>
+    </ScrollViewer>
+
+    <!-- Preflight and actions -->
+    <StackPanel Grid.Row="1" Grid.ColumnSpan="3" Spacing="8" Margin="0,12,0,0">
+      <Border BorderThickness="1" CornerRadius="4" Padding="10"
+              BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
+        <StackPanel Spacing="4">
+          <TextBlock x:Name="SummaryText" TextWrapping="Wrap"
+                     Text="Preview a sync to see what it would change." />
+          <!-- Amber picked explicitly rather than from the theme: it has to
+               stay legible on both the light and dark backgrounds. -->
+          <TextBlock x:Name="WarningText" TextWrapping="Wrap" IsVisible="False"
+                     Foreground="#D08A00" />
+          <ProgressBar x:Name="Progress" Height="4" IsVisible="False" />
+        </StackPanel>
+      </Border>
+
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+        <Button x:Name="PreviewButton" Content="Preview…" Click="OnPreview" />
+        <Button x:Name="SyncButton" Content="Sync now" Classes="accent"
+                Click="OnSync" IsEnabled="False" />
+        <Button x:Name="CancelButton" Content="Stop" Click="OnStop" IsVisible="False" />
+        <Button Content="Close" Click="OnClose" />
+      </StackPanel>
+    </StackPanel>
+  </Grid>
+</Window>

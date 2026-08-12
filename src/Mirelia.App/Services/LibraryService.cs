@@ -3,6 +3,7 @@ using Mirelia.Library.Export;
 using Mirelia.Library.Playlists;
 using Mirelia.Library.Querying;
 using Mirelia.Library.Scanning;
+using Mirelia.Library.Sync;
 using Mirelia.Query.Ast;
 using Mirelia.Query.Compilation;
 using Mirelia.Query.Parsing;
@@ -270,6 +271,73 @@ public sealed class LibraryService : IDisposable
     public Task<ExportResult> ExportPlaylistAsync(
         PlaylistInfo playlist, string outPath, M3u8Options? options = null)
         => RunAsync(() => M3u8Exporter.Export(_db, _playlists.Evaluate(playlist), outPath, options));
+
+    // ---- sync ----------------------------------------------------------
+
+    /// <summary>All configured sync targets.</summary>
+    public Task<List<SyncTarget>> GetSyncTargetsAsync()
+        => RunAsync(() => new SyncTargetStore(_db).List());
+
+    /// <summary>Playlist ids a target syncs when its scope is "selected".</summary>
+    public Task<List<long>> GetSyncScopeAsync(long targetId)
+        => RunAsync(() => new SyncTargetStore(_db).GetScope(targetId));
+
+    /// <summary>Creates a folder target and returns it.</summary>
+    public Task<SyncTarget> CreateSyncTargetAsync(string name, SyncTargetConfig config)
+        => RunAsync(() => new SyncTargetStore(_db).Create(name, SyncTargetKind.Folder, config));
+
+    /// <summary>Stores a target's name, settings, and selected playlists.</summary>
+    public Task SaveSyncTargetAsync(long id, string name, SyncTargetConfig config, IEnumerable<long> scope)
+        => RunAsync<object?>(() =>
+        {
+            var store = new SyncTargetStore(_db);
+            store.Update(id, name, config);
+            store.SetScope(id, scope);
+            return null;
+        });
+
+    /// <summary>Deletes a target; its file records go with it.</summary>
+    public Task DeleteSyncTargetAsync(long id)
+        => RunAsync<object?>(() =>
+        {
+            new SyncTargetStore(_db).Delete(id);
+            return null;
+        });
+
+    /// <summary>
+    /// Computes the preflight plan. Runs on its own connection: planning
+    /// stats every destination file and would otherwise hold the read gate
+    /// for the whole sweep.
+    /// </summary>
+    public Task<SyncPlan> PlanSyncAsync(SyncTarget target, CancellationToken ct = default)
+    {
+        return Task.Run(
+            () =>
+            {
+                using var syncDb = LibraryDatabase.Open(_dbPath);
+                using var sink = new FileSystemSink(target.Config.MusicRoot);
+                var planner = new SyncPlanner(
+                    syncDb, new PlaylistStore(syncDb), new SyncTargetStore(syncDb));
+                return planner.Plan(target, sink, ct);
+            },
+            ct);
+    }
+
+    /// <summary>Executes a plan, on its own connection for the same reason.</summary>
+    public Task<SyncResult> RunSyncAsync(
+        SyncPlan plan, IProgress<SyncProgress>? progress, CancellationToken ct = default)
+    {
+        return Task.Run(
+            () =>
+            {
+                using var syncDb = LibraryDatabase.Open(_dbPath);
+                using var music = new FileSystemSink(plan.Target.Config.MusicRoot);
+                using var playlists = new FileSystemSink(plan.Target.Config.PlaylistDir);
+                return new SyncRunner(new SyncTargetStore(syncDb))
+                    .Run(plan, music, playlists, progress, ct);
+            },
+            ct);
+    }
 
     /// <inheritdoc />
     public void Dispose()
