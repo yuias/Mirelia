@@ -187,6 +187,52 @@ CREATE TABLE view_settings (
 ALTER TABLE track ADD COLUMN date_key INTEGER;
 ```
 
+## Schema v4 additions (planned, M7)
+
+Not yet applied — recorded here so the sync design in `sync-protocol.md` has
+a concrete shape to refer to.
+
+```sql
+-- A named sync destination. 'folder' targets write to a mounted path;
+-- 'network' targets serve over HTTP. config_json holds the per-kind
+-- settings (roots, path style, layout template, orphan policy, and the
+-- delivery/transcode slot left empty until M8).
+CREATE TABLE sync_target (
+    id            INTEGER PRIMARY KEY,
+    name          TEXT NOT NULL UNIQUE,
+    kind          TEXT NOT NULL,      -- 'folder' | 'network'
+    config_json   TEXT NOT NULL,
+    created_unix  INTEGER NOT NULL,
+    modified_unix INTEGER NOT NULL
+);
+
+-- Populated only when config_json's scope is 'selected'.
+CREATE TABLE sync_target_scope (
+    target_id   INTEGER NOT NULL REFERENCES sync_target(id) ON DELETE CASCADE,
+    playlist_id INTEGER NOT NULL REFERENCES playlist(id) ON DELETE CASCADE,
+    PRIMARY KEY (target_id, playlist_id)
+) WITHOUT ROWID;
+
+-- What is actually on the target, as of the last sync. This is the source of
+-- truth for deletion and orphan detection: destination paths are never
+-- re-derived from the layout template, so a template change or a collision
+-- suffix cannot orphan files already written.
+CREATE TABLE sync_target_file (
+    target_id      INTEGER NOT NULL REFERENCES sync_target(id) ON DELETE CASCADE,
+    track_id       INTEGER NOT NULL REFERENCES track(id) ON DELETE CASCADE,
+    rel_path       TEXT    NOT NULL,  -- below musicRoot, target separators
+    rel_path_lower TEXT    NOT NULL,
+    size_bytes     INTEGER NOT NULL,
+    mtime_unix     INTEGER NOT NULL,
+    content_hash   BLOB,
+    synced_unix    INTEGER NOT NULL,
+    PRIMARY KEY (target_id, track_id)
+) WITHOUT ROWID;
+
+CREATE UNIQUE INDEX ix_sync_target_file_path
+    ON sync_target_file(target_id, rel_path_lower);
+```
+
 ## Migration log
 
 | Version | Date | Change |
