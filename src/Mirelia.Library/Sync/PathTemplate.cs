@@ -13,6 +13,8 @@ public sealed class PathTemplateException(string message) : Exception(message);
 /// <param name="MTimeUnix">Source modification time, for delta comparison.</param>
 /// <param name="ContentHash">Source content hash when one has been computed.</param>
 /// <param name="DurationMs">Playing time, for the playlist's <c>#EXTINF</c> line.</param>
+/// <param name="Codec">Codec name, for the delivery policy.</param>
+/// <param name="IsLossless">Whether the codec is lossless, for the delivery policy.</param>
 /// <param name="Title">Track title.</param>
 /// <param name="Artist">Track artist.</param>
 /// <param name="AlbumArtist">Album artist, already resolved to "Various Artists" for compilations.</param>
@@ -31,6 +33,8 @@ public sealed record TrackLayoutInfo(
     long MTimeUnix,
     byte[]? ContentHash,
     long DurationMs,
+    string Codec,
+    bool IsLossless,
     string? Title,
     string? Artist,
     string? AlbumArtist,
@@ -114,7 +118,8 @@ public static class PathTemplate
     public static string? Validate(string template)
     {
         var probe = new TrackLayoutInfo(
-            1, "probe.flac", 0, 0, null, 0, "Title", "Artist", "Album Artist", "Album",
+            1, "probe.flac", 0, 0, null, 0, "flac", true,
+            "Title", "Artist", "Album Artist", "Album",
             1, 1, 1, false, "Genre", 2000, "Artist/Album/probe.flac");
         try
         {

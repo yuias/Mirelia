@@ -14,6 +14,34 @@ public enum CopyReason
 
     /// <summary>The layout now puts the track somewhere else.</summary>
     Relocated,
+
+    /// <summary>The user asked for this one to be re-copied regardless.</summary>
+    Forced,
+}
+
+/// <summary>
+/// One-shot overrides for a single plan. Not persisted on the target: these
+/// describe an action the user is taking now, not how the target behaves.
+/// </summary>
+public sealed record SyncPlanOptions
+{
+    /// <summary>Re-copy every in-scope track, whatever the delta says.</summary>
+    public bool ForceAll { get; init; }
+
+    /// <summary>
+    /// Playlists (and folders, expanded to their descendants) whose tracks
+    /// are re-copied whatever the delta says.
+    /// </summary>
+    /// <remarks>
+    /// This exists because size and modification time are not proof: tag
+    /// editors that rewrite in place and restore the timestamp produce a file
+    /// that differs from the copy on the device while looking identical to
+    /// the delta.
+    /// </remarks>
+    public IReadOnlyCollection<long>? ForcePlaylistIds { get; init; }
+
+    /// <summary>Whether anything is being forced at all.</summary>
+    public bool IsForcing => ForceAll || ForcePlaylistIds is { Count: > 0 };
 }
 
 /// <summary>Where one in-scope track lands on the target.</summary>
@@ -56,6 +84,7 @@ public sealed record PlaylistExport(long PlaylistId, string RelPath, IReadOnlyLi
 /// <param name="FreeSpaceBytes">Free space at the music root, when known.</param>
 /// <param name="UnchangedCount">Tracks already present and current.</param>
 /// <param name="MissingSourceCount">Tracks skipped because the source file is gone.</param>
+/// <param name="SkippedByPolicy">Tracks the delivery policy left behind, and why.</param>
 public sealed record SyncPlan(
     SyncTarget Target,
     IReadOnlyDictionary<long, PlannedFile> Files,
@@ -66,8 +95,12 @@ public sealed record SyncPlan(
     long BytesToCopy,
     long? FreeSpaceBytes,
     int UnchangedCount,
-    int MissingSourceCount)
+    int MissingSourceCount,
+    IReadOnlyDictionary<string, int> SkippedByPolicy)
 {
+    /// <summary>Total tracks the delivery policy left behind.</summary>
+    public int SkippedByPolicyCount => SkippedByPolicy.Values.Sum();
+
     /// <summary>Whether the plan would change anything on the target.</summary>
     public bool IsEmpty => Copies.Count == 0 && Deletes.Count == 0 && Playlists.Count == 0;
 

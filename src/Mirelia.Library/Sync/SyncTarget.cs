@@ -118,10 +118,11 @@ public sealed record SyncTargetConfig
     public int MaxDevicePathLength { get; init; } = 255;
 
     /// <summary>
-    /// Transcode settings. Empty until M8; present so a target written today
-    /// round-trips through a build that understands them.
+    /// What the device can play. Null accepts everything, which is right for
+    /// a plain card whose player is unknown. The M8+ transcode settings
+    /// attach here.
     /// </summary>
-    public Dictionary<string, string>? Delivery { get; init; }
+    public DeviceProfile? Device { get; init; }
 }
 
 /// <summary>One persisted sync destination.</summary>

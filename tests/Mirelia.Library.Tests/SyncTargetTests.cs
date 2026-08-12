@@ -62,10 +62,10 @@ public sealed class SyncTargetTests : IDisposable
             PlaylistDir = _devicePlaylists,
         };
 
-    private SyncPlan PlanFor(SyncTarget target)
+    private SyncPlan PlanFor(SyncTarget target, SyncPlanOptions? options = null)
     {
         using var sink = new FileSystemSink(_deviceMusic);
-        return new SyncPlanner(_db, _playlists, _targets).Plan(target, sink);
+        return new SyncPlanner(_db, _playlists, _targets).Plan(target, sink, options);
     }
 
     private SyncResult Run(SyncPlan plan)
@@ -332,6 +332,116 @@ public sealed class SyncTargetTests : IDisposable
         });
 
         Assert.Contains(PlanFor(target).Warnings, w => w.Contains("device root"));
+    }
+
+    [Fact]
+    public void UnplayableCodecsAreSkippedAndRemovedIfAlreadyThere()
+    {
+        SyncTarget target = AllMusicTarget();
+        Run(PlanFor(target));
+        Assert.Equal(5, Directory.GetFiles(_deviceMusic, "*", SearchOption.AllDirectories).Length);
+
+        // The fixtures cover mp3/aac/alac/flac/pcm; this device plays two.
+        _targets.Update(target.Id, target.Name, target.Config with
+        {
+            Device = new DeviceProfile { SupportedCodecs = ["mp3", "aac"] },
+        });
+
+        SyncPlan replan = PlanFor(_targets.Get(target.Id)!);
+        Assert.Equal(3, replan.SkippedByPolicyCount);
+        Assert.Equal(3, replan.Deletes.Count);
+        Assert.Empty(replan.Copies);
+
+        Run(replan);
+        Assert.Equal(2, Directory.GetFiles(_deviceMusic, "*", SearchOption.AllDirectories).Length);
+    }
+
+    [Fact]
+    public void SkipLosslessLeavesTheLossyTracksAlone()
+    {
+        SyncTarget target = AllMusicTarget(new SyncTargetConfig
+        {
+            Device = new DeviceProfile { SkipLossless = true },
+        });
+
+        SyncPlan plan = PlanFor(target);
+        Assert.Equal(3, plan.SkippedByPolicyCount); // alac, flac, pcm
+        Assert.Equal(2, plan.Copies.Count);
+    }
+
+    [Fact]
+    public void AnEmptyDeviceProfileAcceptsEverything()
+    {
+        SyncTarget target = AllMusicTarget(new SyncTargetConfig
+        {
+            Device = new DeviceProfile { SupportedCodecs = [] },
+        });
+
+        SyncPlan plan = PlanFor(target);
+        Assert.Equal(0, plan.SkippedByPolicyCount);
+        Assert.Equal(5, plan.Copies.Count);
+    }
+
+    [Fact]
+    public void ForcingEverythingRecopiesTracksTheDeltaCallsCurrent()
+    {
+        SyncTarget target = AllMusicTarget();
+        Run(PlanFor(target));
+        Assert.Empty(PlanFor(target).Copies);
+
+        SyncPlan forced = PlanFor(target, new SyncPlanOptions { ForceAll = true });
+        Assert.Equal(5, forced.Copies.Count);
+        Assert.All(forced.Copies, c => Assert.Equal(CopyReason.Forced, c.Reason));
+        Assert.Equal(5, Run(forced).Copied);
+    }
+
+    [Fact]
+    public void ForcingOnePlaylistLeavesTheRestOnTheDelta()
+    {
+        PlaylistInfo playlist = _playlists.CreateStatic("Retagged");
+        _playlists.AddTracks(playlist.Id, _trackIds.Take(2));
+
+        SyncTarget target = AllMusicTarget();
+        Run(PlanFor(target));
+
+        SyncPlan forced = PlanFor(target, new SyncPlanOptions
+        {
+            ForcePlaylistIds = [playlist.Id],
+        });
+        Assert.Equal(2, forced.Copies.Count);
+        Assert.Equal(3, forced.UnchangedCount);
+    }
+
+    [Fact]
+    public void ForcingAFolderCoversThePlaylistsBeneathIt()
+    {
+        PlaylistInfo folder = _playlists.CreateFolder("Retagged");
+        PlaylistInfo playlist = _playlists.CreateStatic("Batch 1");
+        _playlists.SetParent(playlist.Id, folder.Id);
+        _playlists.AddTracks(playlist.Id, _trackIds.Take(3));
+
+        SyncTarget target = AllMusicTarget();
+        Run(PlanFor(target));
+
+        SyncPlan forced = PlanFor(target, new SyncPlanOptions
+        {
+            ForcePlaylistIds = [folder.Id],
+        });
+        Assert.Equal(3, forced.Copies.Count);
+    }
+
+    [Fact]
+    public void ForcingDoesNotMaskARealReason()
+    {
+        SyncTarget target = AllMusicTarget();
+        Run(PlanFor(target));
+
+        string victim = Directory.GetFiles(_deviceMusic, "*", SearchOption.AllDirectories)[0];
+        File.Delete(victim);
+
+        SyncPlan forced = PlanFor(target, new SyncPlanOptions { ForceAll = true });
+        Assert.Equal(5, forced.Copies.Count);
+        Assert.Single(forced.Copies, c => c.Reason == CopyReason.MissingOnTarget);
     }
 
     [Fact]

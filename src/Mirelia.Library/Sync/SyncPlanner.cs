@@ -21,8 +21,13 @@ public sealed class SyncPlanner(LibraryDatabase db, PlaylistStore playlists, Syn
     private const string VariousArtists = "Various Artists";
 
     /// <summary>Computes the plan for <paramref name="target"/> against <paramref name="musicSink"/>.</summary>
-    public SyncPlan Plan(SyncTarget target, ISyncFileSink musicSink, CancellationToken ct = default)
+    public SyncPlan Plan(
+        SyncTarget target,
+        ISyncFileSink musicSink,
+        SyncPlanOptions? options = null,
+        CancellationToken ct = default)
     {
+        options ??= new SyncPlanOptions();
         SyncTargetConfig config = target.Config;
         var warnings = new List<string>();
 
@@ -30,7 +35,10 @@ public sealed class SyncPlanner(LibraryDatabase db, PlaylistStore playlists, Syn
         ct.ThrowIfCancellationRequested();
 
         Dictionary<long, TrackLayoutInfo> tracks = LoadLayoutInfo(trackIds);
-        Dictionary<long, string> layout = AssignPaths(trackIds, tracks, config, warnings);
+        var skippedByPolicy = new Dictionary<string, int>(StringComparer.Ordinal);
+        List<long> deliverable = ApplyDeliveryPolicy(trackIds, tracks, config.Device, skippedByPolicy);
+        Dictionary<long, string> layout = AssignPaths(deliverable, tracks, config, warnings);
+        HashSet<long> forced = ResolveForced(options);
         ct.ThrowIfCancellationRequested();
 
         Dictionary<long, SyncedFile> recorded = targets.GetFiles(target.Id);
@@ -41,7 +49,7 @@ public sealed class SyncPlanner(LibraryDatabase db, PlaylistStore playlists, Syn
         int unchanged = 0;
         int missingSource = 0;
 
-        foreach (long trackId in trackIds)
+        foreach (long trackId in deliverable)
         {
             ct.ThrowIfCancellationRequested();
             if (!tracks.TryGetValue(trackId, out TrackLayoutInfo? track)
@@ -61,6 +69,11 @@ public sealed class SyncPlanner(LibraryDatabase db, PlaylistStore playlists, Syn
 
             recorded.TryGetValue(trackId, out SyncedFile? previous);
             CopyReason? reason = ClassifyCopy(track, relPath, previous, musicSink);
+            if (reason is null && (options.ForceAll || forced.Contains(trackId)))
+            {
+                reason = CopyReason.Forced;
+            }
+
             if (reason is null)
             {
                 unchanged++;
@@ -99,7 +112,73 @@ public sealed class SyncPlanner(LibraryDatabase db, PlaylistStore playlists, Syn
             bytes,
             musicSink.FreeSpaceBytes,
             unchanged,
-            missingSource);
+            missingSource,
+            skippedByPolicy);
+    }
+
+    /// <summary>
+    /// Filters the scope through <see cref="DeliveryPolicy"/>, tallying the
+    /// reasons anything was left behind. Skipped tracks never reach the
+    /// layout, so a target that already holds one treats it as an orphan.
+    /// </summary>
+    private static List<long> ApplyDeliveryPolicy(
+        List<long> trackIds,
+        Dictionary<long, TrackLayoutInfo> tracks,
+        DeviceProfile? profile,
+        Dictionary<string, int> skipped)
+    {
+        if (profile is null)
+        {
+            return trackIds;
+        }
+
+        var deliverable = new List<long>(trackIds.Count);
+        foreach (long trackId in trackIds)
+        {
+            if (!tracks.TryGetValue(trackId, out TrackLayoutInfo? track))
+            {
+                continue;
+            }
+
+            DeliveryDecision decision = DeliveryPolicy.Decide(track, profile);
+            if (decision.Kind == DeliveryKind.Skip)
+            {
+                string reason = decision.Reason ?? "skipped";
+                skipped[reason] = skipped.GetValueOrDefault(reason) + 1;
+                continue;
+            }
+
+            deliverable.Add(trackId);
+        }
+
+        return deliverable;
+    }
+
+    /// <summary>Track ids covered by a one-shot force request.</summary>
+    private HashSet<long> ResolveForced(SyncPlanOptions options)
+    {
+        var forced = new HashSet<long>();
+        if (options.ForceAll || options.ForcePlaylistIds is not { Count: > 0 } requested)
+        {
+            return forced;
+        }
+
+        List<PlaylistInfo> all = playlists.List();
+        HashSet<long> expanded = Expand([.. requested], all);
+        foreach (PlaylistInfo playlist in all)
+        {
+            if (playlist.Kind == PlaylistKind.Folder || !expanded.Contains(playlist.Id))
+            {
+                continue;
+            }
+
+            foreach (long id in playlists.Evaluate(playlist))
+            {
+                forced.Add(id);
+            }
+        }
+
+        return forced;
     }
 
     /// <summary>
@@ -425,7 +504,8 @@ public sealed class SyncPlanner(LibraryDatabase db, PlaylistStore playlists, Syn
             string placeholders = string.Join(", ", chunk.Select((_, i) => $"$id{i}"));
             using SqliteCommand cmd = db.Command($"""
                 SELECT t.id, t.path, t.size_bytes, t.mtime_unix, t.content_hash,
-                       t.duration_ms, t.title, ar.name, aa.name, al.name, t.album_id,
+                       t.duration_ms, t.codec, t.is_lossless,
+                       t.title, ar.name, aa.name, al.name, t.album_id,
                        t.track_no, t.disc_no, g.name, t.year
                 FROM track t
                 LEFT JOIN artist ar ON ar.id = t.artist_id
@@ -444,12 +524,12 @@ public sealed class SyncPlanner(LibraryDatabase db, PlaylistStore playlists, Syn
             {
                 long id = reader.GetInt64(0);
                 string path = reader.GetString(1);
-                long? albumId = reader.IsDBNull(10) ? null : reader.GetInt64(10);
+                long? albumId = reader.IsDBNull(12) ? null : reader.GetInt64(12);
                 (int discs, int artists) = albumId is { } key && albums.TryGetValue(key, out var shape)
                     ? shape
                     : (1, 1);
 
-                string? albumArtist = reader.IsDBNull(8) ? null : reader.GetString(8);
+                string? albumArtist = reader.IsDBNull(10) ? null : reader.GetString(10);
 
                 // No compilation flag exists in the schema, so an album with
                 // no album artist but several track artists is treated as one.
@@ -465,16 +545,18 @@ public sealed class SyncPlanner(LibraryDatabase db, PlaylistStore playlists, Syn
                     reader.GetInt64(3),
                     reader.IsDBNull(4) ? null : (byte[])reader[4],
                     reader.GetInt64(5),
-                    reader.IsDBNull(6) ? null : reader.GetString(6),
-                    reader.IsDBNull(7) ? null : reader.GetString(7),
-                    albumArtist,
+                    reader.GetString(6),
+                    reader.GetInt64(7) != 0,
+                    reader.IsDBNull(8) ? null : reader.GetString(8),
                     reader.IsDBNull(9) ? null : reader.GetString(9),
+                    albumArtist,
+                    reader.IsDBNull(11) ? null : reader.GetString(11),
                     albumId,
-                    reader.IsDBNull(11) ? null : reader.GetInt32(11),
-                    reader.IsDBNull(12) ? null : reader.GetInt32(12),
-                    discs > 1,
-                    reader.IsDBNull(13) ? null : reader.GetString(13),
+                    reader.IsDBNull(13) ? null : reader.GetInt32(13),
                     reader.IsDBNull(14) ? null : reader.GetInt32(14),
+                    discs > 1,
+                    reader.IsDBNull(15) ? null : reader.GetString(15),
+                    reader.IsDBNull(16) ? null : reader.GetInt32(16),
                     RelativeToWatchFolder(path, watchFolders));
             }
         }

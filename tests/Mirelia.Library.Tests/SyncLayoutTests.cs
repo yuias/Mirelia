@@ -22,6 +22,8 @@ public sealed class SyncLayoutTests
             MTimeUnix: 0,
             ContentHash: null,
             DurationMs: 240000,
+            Codec: "flac",
+            IsLossless: true,
             Title: title,
             Artist: artist,
             AlbumArtist: albumArtist,

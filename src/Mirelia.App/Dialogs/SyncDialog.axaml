@@ -135,11 +135,53 @@
         </StackPanel>
 
         <StackPanel Spacing="6">
+          <TextBlock Classes="section" Text="What the device plays" />
+          <CheckBox x:Name="AllCodecsCheck" Content="Send every format"
+                    IsCheckedChanged="OnAllCodecsChanged" />
+          <Border x:Name="CodecPickerBox" BorderThickness="1" CornerRadius="4"
+                  BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                  Height="110">
+            <ListBox x:Name="CodecPicker" SelectionMode="Toggle">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:SyncCodecChoice">
+                  <CheckBox Content="{Binding Label}"
+                            IsChecked="{Binding IsSelected, Mode=TwoWay}" />
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Border>
+          <CheckBox x:Name="SkipLosslessCheck" Content="Leave lossless tracks behind"
+                    IsCheckedChanged="OnCheckChanged" />
+          <TextBlock Classes="label" TextWrapping="Wrap"
+                     Text="Tracks the device cannot play are skipped, and removed if they are already there. Converting them instead arrives with the transcode pipeline." />
+        </StackPanel>
+
+        <StackPanel Spacing="6">
           <TextBlock Classes="section" Text="Cleanup" />
           <CheckBox x:Name="OrphanCheck" Content="Remove files no longer in scope"
                     IsCheckedChanged="OnCheckChanged" />
           <TextBlock Classes="label" TextWrapping="Wrap"
                      Text="Only files this app copied are ever removed. Anything else in the music folder is left alone." />
+        </StackPanel>
+
+        <StackPanel Spacing="6">
+          <TextBlock Classes="section" Text="Force re-copy" />
+          <TextBlock Classes="label" TextWrapping="Wrap"
+                     Text="Copies again even when size and date say nothing changed — for tags rewritten by tools that preserve the file date. Applies to the next run only." />
+          <CheckBox x:Name="ForceAllCheck" Content="Everything in scope"
+                    IsCheckedChanged="OnForceAllChanged" />
+          <Border x:Name="ForcePickerBox" BorderThickness="1" CornerRadius="4"
+                  BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}"
+                  Height="150">
+            <ListBox x:Name="ForcePicker" SelectionMode="Toggle">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:SyncPlaylistChoice">
+                  <CheckBox Content="{Binding Label}"
+                            IsChecked="{Binding IsSelected, Mode=TwoWay}" />
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Border>
         </StackPanel>
       </StackPanel>
     </ScrollViewer>

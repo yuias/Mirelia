@@ -30,6 +30,8 @@ public partial class SyncDialog : Window
         MTimeUnix: 0,
         ContentHash: null,
         DurationMs: 240000,
+        Codec: "flac",
+        IsLossless: true,
         Title: "Fixture Song",
         Artist: "Fixture Artist",
         AlbumArtist: "Fixture Artist",
@@ -44,6 +46,11 @@ public partial class SyncDialog : Window
 
     private readonly LibraryService? _library;
     private readonly ObservableCollection<SyncPlaylistChoice> _playlistChoices = [];
+
+    // A second list over the same playlists: scope is what the target holds,
+    // force is a one-shot instruction for the next run.
+    private readonly ObservableCollection<SyncPlaylistChoice> _forceChoices = [];
+    private readonly ObservableCollection<SyncCodecChoice> _codecChoices = [];
     private List<SyncTarget> _targets = [];
     private SyncTarget? _current;
     private SyncPlan? _plan;
@@ -90,6 +97,8 @@ public partial class SyncDialog : Window
         };
 
         PlaylistPicker.ItemsSource = _playlistChoices;
+        ForcePicker.ItemsSource = _forceChoices;
+        CodecPicker.ItemsSource = _codecChoices;
         _ = LoadAsync();
     }
 
@@ -102,10 +111,16 @@ public partial class SyncDialog : Window
 
         foreach (PlaylistInfo playlist in await _library.GetPlaylistsAsync())
         {
-            _playlistChoices.Add(new SyncPlaylistChoice(
-                playlist.Id,
-                playlist.Kind == PlaylistKind.Folder ? $"{playlist.Name}  (folder)" : playlist.Name,
-                selected: false));
+            string label = playlist.Kind == PlaylistKind.Folder
+                ? $"{playlist.Name}  (folder)"
+                : playlist.Name;
+            _playlistChoices.Add(new SyncPlaylistChoice(playlist.Id, label, selected: false));
+            _forceChoices.Add(new SyncPlaylistChoice(playlist.Id, label, selected: false));
+        }
+
+        foreach (string codec in await _library.GetCodecsAsync())
+        {
+            _codecChoices.Add(new SyncCodecChoice(codec, selected: true));
         }
 
         await ReloadTargetsAsync(null);
@@ -243,6 +258,27 @@ public partial class SyncDialog : Window
             DeviceRootBox.IsEnabled = config.PathStyle == SyncPathStyle.Absolute;
 
             OrphanCheck.IsChecked = config.OrphanPolicy == OrphanPolicy.Delete;
+
+            // A null profile and a profile listing every codec mean the same
+            // thing to the policy; the checkbox shows the former.
+            List<string>? supported = config.Device?.SupportedCodecs;
+            AllCodecsCheck.IsChecked = supported is not { Count: > 0 };
+            CodecPickerBox.IsEnabled = supported is { Count: > 0 };
+            foreach (SyncCodecChoice choice in _codecChoices)
+            {
+                choice.IsSelected = supported is not { Count: > 0 }
+                    || supported.Contains(choice.Codec, StringComparer.OrdinalIgnoreCase);
+            }
+
+            SkipLosslessCheck.IsChecked = config.Device?.SkipLossless == true;
+
+            // Force is per-run, not per-target, so switching target clears it.
+            ForceAllCheck.IsChecked = false;
+            ForcePickerBox.IsEnabled = true;
+            foreach (SyncPlaylistChoice choice in _forceChoices)
+            {
+                choice.IsSelected = false;
+            }
         }
         finally
         {
@@ -280,6 +316,31 @@ public partial class SyncDialog : Window
             : TemplateBox.Text,
         ReservedChars = Value(ReservedBox, ReservedCharMode.Underscore),
         OrphanPolicy = OrphanCheck.IsChecked == true ? OrphanPolicy.Delete : OrphanPolicy.Keep,
+        Device = ReadDeviceProfile(),
+    };
+
+    private DeviceProfile? ReadDeviceProfile()
+    {
+        bool everyCodec = AllCodecsCheck.IsChecked == true;
+        bool skipLossless = SkipLosslessCheck.IsChecked == true;
+        if (everyCodec && !skipLossless)
+        {
+            return null;
+        }
+
+        return new DeviceProfile
+        {
+            SupportedCodecs = everyCodec
+                ? null
+                : [.. _codecChoices.Where(c => c.IsSelected).Select(c => c.Codec)],
+            SkipLossless = skipLossless,
+        };
+    }
+
+    private SyncPlanOptions ReadForceOptions() => new()
+    {
+        ForceAll = ForceAllCheck.IsChecked == true,
+        ForcePlaylistIds = [.. _forceChoices.Where(c => c.IsSelected).Select(c => c.Id)],
     };
 
     private async Task SaveCurrentAsync()
@@ -330,6 +391,19 @@ public partial class SyncDialog : Window
 
         PlaylistPickerBox.IsVisible = ScopeSelected.IsChecked == true;
         InvalidatePlan();
+    }
+
+    private void OnAllCodecsChanged(object? sender, RoutedEventArgs e)
+    {
+        CodecPickerBox.IsEnabled = AllCodecsCheck.IsChecked != true;
+        OnSettingChanged();
+    }
+
+    private void OnForceAllChanged(object? sender, RoutedEventArgs e)
+    {
+        // Forcing everything makes the per-playlist choice meaningless.
+        ForcePickerBox.IsEnabled = ForceAllCheck.IsChecked != true;
+        OnSettingChanged();
     }
 
     private void OnPathStyleChanged(object? sender, RoutedEventArgs e)
@@ -444,7 +518,7 @@ public partial class SyncDialog : Window
         PreviewButton.IsEnabled = false;
         try
         {
-            _plan = await _library.PlanSyncAsync(_current);
+            _plan = await _library.PlanSyncAsync(_current, ReadForceOptions());
             ShowPlan(_plan);
             SyncButton.IsEnabled = !_plan.IsEmpty && _plan.FitsInFreeSpace;
             return _plan;
@@ -481,6 +555,11 @@ public partial class SyncDialog : Window
         if (plan.MissingSourceCount > 0)
         {
             warnings.Add($"{plan.MissingSourceCount} tracks were skipped; their files are missing.");
+        }
+
+        foreach ((string reason, int count) in plan.SkippedByPolicy)
+        {
+            warnings.Add($"{count} tracks skipped: {reason}.");
         }
 
         WarningText.IsVisible = warnings.Count > 0;
@@ -522,6 +601,7 @@ public partial class SyncDialog : Window
                 + $"deleted {result.Deleted}, wrote {result.PlaylistsWritten} playlists.");
             WarningText.IsVisible = result.Failures.Count > 0;
             WarningText.Text = string.Join(Environment.NewLine, result.Failures.Take(10));
+            ClearForce();
         }
         catch (OperationCanceledException)
         {
@@ -533,6 +613,25 @@ public partial class SyncDialog : Window
             _cts?.Dispose();
             _cts = null;
             InvalidatePlan();
+        }
+    }
+
+    /// <summary>Drops the force selection once it has been acted on.</summary>
+    private void ClearForce()
+    {
+        _loading = true;
+        try
+        {
+            ForceAllCheck.IsChecked = false;
+            ForcePickerBox.IsEnabled = true;
+            foreach (SyncPlaylistChoice choice in _forceChoices)
+            {
+                choice.IsSelected = false;
+            }
+        }
+        finally
+        {
+            _loading = false;
         }
     }
 

@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Mirelia.Library.Database;
 using Mirelia.Library.Export;
 using Mirelia.Library.Playlists;
@@ -309,7 +310,8 @@ public sealed class LibraryService : IDisposable
     /// stats every destination file and would otherwise hold the read gate
     /// for the whole sweep.
     /// </summary>
-    public Task<SyncPlan> PlanSyncAsync(SyncTarget target, CancellationToken ct = default)
+    public Task<SyncPlan> PlanSyncAsync(
+        SyncTarget target, SyncPlanOptions? options = null, CancellationToken ct = default)
     {
         return Task.Run(
             () =>
@@ -318,10 +320,25 @@ public sealed class LibraryService : IDisposable
                 using var sink = new FileSystemSink(target.Config.MusicRoot);
                 var planner = new SyncPlanner(
                     syncDb, new PlaylistStore(syncDb), new SyncTargetStore(syncDb));
-                return planner.Plan(target, sink, ct);
+                return planner.Plan(target, sink, options, ct);
             },
             ct);
     }
+
+    /// <summary>Codecs actually present in the library, for the device profile editor.</summary>
+    public Task<List<string>> GetCodecsAsync()
+        => RunAsync(() =>
+        {
+            var codecs = new List<string>();
+            using SqliteCommand cmd = _db.Command("SELECT DISTINCT codec FROM track ORDER BY codec");
+            using SqliteDataReader reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                codecs.Add(reader.GetString(0));
+            }
+
+            return codecs;
+        });
 
     /// <summary>Executes a plan, on its own connection for the same reason.</summary>
     public Task<SyncResult> RunSyncAsync(
