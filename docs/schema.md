@@ -187,10 +187,7 @@ CREATE TABLE view_settings (
 ALTER TABLE track ADD COLUMN date_key INTEGER;
 ```
 
-## Schema v4 additions (planned, M7)
-
-Not yet applied — recorded here so the sync design in `sync-protocol.md` has
-a concrete shape to refer to.
+## Schema v4 additions
 
 ```sql
 -- A named sync destination. 'folder' targets write to a mounted path;
@@ -220,7 +217,7 @@ CREATE TABLE sync_target_scope (
 CREATE TABLE sync_target_file (
     target_id      INTEGER NOT NULL REFERENCES sync_target(id) ON DELETE CASCADE,
     track_id       INTEGER NOT NULL REFERENCES track(id) ON DELETE CASCADE,
-    rel_path       TEXT    NOT NULL,  -- below musicRoot, target separators
+    rel_path       TEXT    NOT NULL,  -- below musicRoot, '/'-separated
     rel_path_lower TEXT    NOT NULL,
     size_bytes     INTEGER NOT NULL,
     mtime_unix     INTEGER NOT NULL,
@@ -240,3 +237,4 @@ CREATE UNIQUE INDEX ix_sync_target_file_path
 | 1 | 2026-08-08 | Initial schema, applied by `LibraryDatabase.Open` |
 | 2 | 2026-08-08 | `view_settings` table for per-view columns/sort |
 | 3 | 2026-08-08 | `track.date_key` normalized date sort key, backfilled |
+| 4 | 2026-08-13 | `sync_target`, `sync_target_scope`, `sync_target_file` for M7 sync |

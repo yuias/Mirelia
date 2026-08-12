@@ -24,12 +24,17 @@ public sealed class ViewSettingsTests : IDisposable
     [Fact]
     public void FreshDatabaseIsCurrentSchema()
     {
-        Assert.Equal("3", _db.Scalar("SELECT value FROM meta WHERE key = 'schema_version'"));
+        Assert.Equal("4", _db.Scalar("SELECT value FROM meta WHERE key = 'schema_version'"));
         Assert.Equal(1L, _db.Scalar(
             "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'view_settings'"));
         // v3's date_key column exists (the query throws if it does not);
         // an empty table yields SQL NULL, surfaced as DBNull.
         Assert.Equal(DBNull.Value, _db.Scalar("SELECT MAX(date_key) FROM track"));
+        Assert.Equal(3L, _db.Scalar("""
+            SELECT count(*) FROM sqlite_master
+            WHERE type = 'table'
+              AND name IN ('sync_target', 'sync_target_scope', 'sync_target_file')
+            """));
     }
 
     [Fact]

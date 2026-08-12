@@ -8,7 +8,43 @@ namespace Mirelia.Library.Database;
 internal static class Schema
 {
     /// <summary>Current schema version written to <c>meta['schema_version']</c>.</summary>
-    internal const int CurrentVersion = 3;
+    internal const int CurrentVersion = 4;
+
+    /// <summary>
+    /// Schema v4: sync targets, their playlist scope, and the record of what
+    /// each target already holds.
+    /// </summary>
+    internal const string V4 = """
+        CREATE TABLE sync_target (
+            id            INTEGER PRIMARY KEY,
+            name          TEXT NOT NULL UNIQUE,
+            kind          TEXT NOT NULL,
+            config_json   TEXT NOT NULL,
+            created_unix  INTEGER NOT NULL,
+            modified_unix INTEGER NOT NULL
+        );
+
+        CREATE TABLE sync_target_scope (
+            target_id   INTEGER NOT NULL REFERENCES sync_target(id) ON DELETE CASCADE,
+            playlist_id INTEGER NOT NULL REFERENCES playlist(id) ON DELETE CASCADE,
+            PRIMARY KEY (target_id, playlist_id)
+        ) WITHOUT ROWID;
+
+        CREATE TABLE sync_target_file (
+            target_id      INTEGER NOT NULL REFERENCES sync_target(id) ON DELETE CASCADE,
+            track_id       INTEGER NOT NULL REFERENCES track(id) ON DELETE CASCADE,
+            rel_path       TEXT    NOT NULL,
+            rel_path_lower TEXT    NOT NULL,
+            size_bytes     INTEGER NOT NULL,
+            mtime_unix     INTEGER NOT NULL,
+            content_hash   BLOB,
+            synced_unix    INTEGER NOT NULL,
+            PRIMARY KEY (target_id, track_id)
+        ) WITHOUT ROWID;
+
+        CREATE UNIQUE INDEX ix_sync_target_file_path
+            ON sync_target_file(target_id, rel_path_lower);
+        """;
 
     /// <summary>
     /// Schema v3: normalized release-date sort key (yyyymmdd int; year-only
