@@ -195,6 +195,7 @@ public sealed class SyncTargetStore(LibraryDatabase db)
     private static string KindText(SyncTargetKind kind) => kind switch
     {
         SyncTargetKind.Folder => "folder",
+        SyncTargetKind.Mtp => "mtp",
         SyncTargetKind.Network => "network",
         _ => throw new ArgumentOutOfRangeException(nameof(kind)),
     };
@@ -202,6 +203,7 @@ public sealed class SyncTargetStore(LibraryDatabase db)
     private static SyncTargetKind ParseKind(string kind) => kind switch
     {
         "folder" => SyncTargetKind.Folder,
+        "mtp" => SyncTargetKind.Mtp,
         "network" => SyncTargetKind.Network,
         _ => throw new InvalidOperationException($"Unknown sync target kind '{kind}'."),
     };

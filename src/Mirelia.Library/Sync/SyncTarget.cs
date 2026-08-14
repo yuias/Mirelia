@@ -6,6 +6,9 @@ public enum SyncTargetKind
     /// <summary>Writes to a mounted path: SD card, USB stick, UNC share.</summary>
     Folder,
 
+    /// <summary>Writes to a phone or DAP over USB, through Windows Portable Devices.</summary>
+    Mtp,
+
     /// <summary>Serves over HTTP to OpenSubsonic clients.</summary>
     Network,
 }
@@ -70,10 +73,26 @@ public enum ReservedCharMode
 /// </summary>
 public sealed record SyncTargetConfig
 {
-    /// <summary>Directory audio files are written under, as seen from this PC.</summary>
+    /// <summary>
+    /// Plug-and-Play device id of an MTP target. Null for every other kind.
+    /// It is stable across reconnects for the same physical device, which a
+    /// friendly name is not.
+    /// </summary>
+    public string? DeviceId { get; init; }
+
+    /// <summary>
+    /// Friendly name of an MTP target, cached so the target list can say
+    /// "Pixel 8 (not connected)" rather than showing a raw PnP string.
+    /// </summary>
+    public string? DeviceLabel { get; init; }
+
+    /// <summary>
+    /// Directory audio files are written under. A path on this PC for a folder
+    /// target; a path inside the device, storage name first, for an MTP one.
+    /// </summary>
     public string MusicRoot { get; init; } = string.Empty;
 
-    /// <summary>Directory playlist files are written to, as seen from this PC.</summary>
+    /// <summary>Directory playlist files are written to, in the same form as <see cref="MusicRoot"/>.</summary>
     public string PlaylistDir { get; init; } = string.Empty;
 
     /// <summary>Which tracks the target receives.</summary>
