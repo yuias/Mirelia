@@ -2,6 +2,7 @@ using System.Reflection;
 using Mirelia.AudioBridge;
 using Mirelia.Library.Database;
 using Mirelia.Library.Export;
+using Mirelia.Library.Import;
 using Mirelia.Library.Playlists;
 using Mirelia.Library.Querying;
 using Mirelia.Library.Scanning;
@@ -19,6 +20,7 @@ return args switch
     ["seed", var count, .. var rest] => Seed(count, ParseDbOption(rest)),
     ["playlist", .. var plArgs] => PlaylistCommand(plArgs),
     ["export", var name, .. var rest] => Export(name, rest),
+    ["import", "musicbee", var folder, .. var rest] => ImportMusicBee(folder, rest),
     ["rgscan", .. var rest] => RgScan(ParseDbOption(rest)),
     [] or ["--help"] or ["-h"] => PrintHelp(0),
     _ => PrintHelp(2),
@@ -386,6 +388,68 @@ static int Export(string name, string[] rest)
     }
 }
 
+static int ImportMusicBee(string folder, string[] rest)
+{
+    (rest, string? dbPath) = ExtractDbOption(rest);
+    string db = dbPath ?? DefaultDbPath();
+    var options = new MusicBeeImportOptions();
+
+    foreach (string argument in rest)
+    {
+        switch (argument)
+        {
+            case "--no-scan":
+                options = options with { ScanRoots = false };
+                break;
+            case "--no-playlists":
+                options = options with { ImportPlaylists = false };
+                break;
+            default:
+                Console.Error.WriteLine($"import: unknown argument: {argument}");
+                return 2;
+        }
+    }
+
+    Directory.CreateDirectory(Path.GetDirectoryName(db)!);
+    using var database = LibraryDatabase.Open(db);
+
+    // One line per stage rather than a live counter: the scan dominates and
+    // its own progress is already per-file.
+    string lastPhase = string.Empty;
+    var progress = new Progress<MusicBeeImportProgress>(p =>
+    {
+        if (p.Phase != lastPhase)
+        {
+            lastPhase = p.Phase;
+            Console.WriteLine($"  {p.Phase}…");
+        }
+    });
+
+    try
+    {
+        MusicBeeImportReport report = new MusicBeeImporter(database)
+            .Import(folder, options, progress);
+
+        Console.WriteLine(
+            $"tracks: {report.TracksMatched} of {report.TracksInExport} matched"
+            + (report.TracksMissing > 0 ? $", {report.TracksMissing} missing" : string.Empty));
+        Console.WriteLine(
+            $"playlists: {report.StaticPlaylists} static, {report.SmartPlaylists} smart, "
+            + $"{report.SnapshotPlaylists} frozen, {report.FoldersCreated} folders");
+        foreach (string note in report.Notes)
+        {
+            Console.WriteLine(note.StartsWith(' ') ? note : $"note: {note}");
+        }
+
+        return 0;
+    }
+    catch (Exception ex) when (ex is IOException or InvalidOperationException)
+    {
+        Console.Error.WriteLine($"import: {ex.Message}");
+        return 1;
+    }
+}
+
 static int RgScan(string? dbPath)
 {
     string db = dbPath ?? DefaultDbPath();
@@ -461,6 +525,7 @@ static int PrintHelp(int exitCode)
           mirelia-cli playlist list | show <name> | delete <name>
           mirelia-cli playlist add <name> <dsl>    Add query results to a static playlist.
           mirelia-cli export <name> --out <file.m3u8> [--relative] [--copy] [--rewrite from=to]
+          mirelia-cli import musicbee <library folder> [--no-scan] [--no-playlists]
           mirelia-cli native-smoke                 Load the native audio backend.
           mirelia-cli --version                    Print the version and exit.
 
