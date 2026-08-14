@@ -1,7 +1,7 @@
 # MusicBee import
 
-Status: built and run end to end 2026-08-15 against the library
-this was developed on — see "The reference run" below.
+Status: built and run end to end 2026-08-15 against the library this was
+developed on — see "The reference run" below.
 
 A one-way migration off MusicBee, not a playlist importer. What has to
 survive the move: the library entries themselves, ratings, play counts, date
@@ -144,21 +144,36 @@ import report saying why. The cases:
 An auto-playlist that builds on another comes across intact. Playlists are
 created in reference order so that saving one can check what it points at.
 
-Against the library this was developed on, every auto-playlist
-translates and none has to be frozen.
+Against the library this was developed on, every auto-playlist translates
+and none has to be frozen.
 
 ## The reference run
 
-The full pass — scan included — has been run against a real library.
-Every `Location` in the export resolved to a file the scan had just
-written, so nothing went missing, and the ratings, play counts and
-dates that came across are the export's own, not the scan's clock.
+The full pass — scan included — has been run against a real library. Every
+`Location` in the export resolved to a file the scan had just written, so
+nothing went missing, and the ratings, play counts and dates that came
+across are the export's own, not the scan's clock.
 
-The import expects an empty database. Running it twice over the same one is
-safe for tracks — they match by path and are updated in place — but the
-playlists come across a second time as `Genres (2)`, `Playlists/Mixes`
-and so on, since nothing ties a playlist row back to the run that made it.
-See `backlog.md`.
+## Running it again
+
+Tracks are safe either way: they match by path and are updated in place.
+Playlists are not, because nothing ties a playlist row back to the run that
+made it, so the default is to keep both — the second run's `Genres` arrives as
+`Genres (2)`, its `Playlists/Mixes` beside the first `Mixes`.
+
+`--merge` reads a name already in the library as *this same playlist, from an
+earlier run*: the old row is deleted and the incoming one takes the name. It
+is by name and nothing else, so a hand-made playlist that happens to share a
+name with a MusicBee one is replaced too. Playlists this run knows nothing
+about are left alone. Deleting a folder re-parents its children to the
+folder's parent, so a hand-made playlist filed under a MusicBee folder
+resurfaces one level up.
+
+Identity that survives without relying on names would mean storing MusicBee's
+`Playlist Persistent ID` on the playlist row — a schema change, deferred.
+
+Re-run with `--merge` over that library: every playlist replaced, none
+renamed, and every smart playlist still pointing at the plain names.
 
 ## Where the code lives
 

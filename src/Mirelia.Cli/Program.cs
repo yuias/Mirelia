@@ -408,6 +408,9 @@ static int ImportMusicBee(string folder, string[] rest)
             case "--no-playlists":
                 options = options with { ImportPlaylists = false };
                 break;
+            case "--merge":
+                options = options with { Merge = true };
+                break;
             default:
                 Console.Error.WriteLine($"import: unknown argument: {argument}");
                 return 2;
@@ -439,7 +442,8 @@ static int ImportMusicBee(string folder, string[] rest)
             + (report.TracksMissing > 0 ? $", {report.TracksMissing} missing" : string.Empty));
         Console.WriteLine(
             $"playlists: {report.StaticPlaylists} static, {report.SmartPlaylists} smart, "
-            + $"{report.SnapshotPlaylists} frozen, {report.FoldersCreated} folders");
+            + $"{report.SnapshotPlaylists} frozen, {report.FoldersCreated} folders"
+            + (report.PlaylistsReplaced > 0 ? $", {report.PlaylistsReplaced} replaced" : string.Empty));
         foreach (string note in report.Notes)
         {
             Console.WriteLine(note.StartsWith(' ') ? note : $"note: {note}");
@@ -529,7 +533,9 @@ static int PrintHelp(int exitCode)
           mirelia-cli playlist list | show <name> | delete <name>
           mirelia-cli playlist add <name> <dsl>    Add query results to a static playlist.
           mirelia-cli export <name> --out <file.m3u8> [--relative] [--copy] [--rewrite from=to]
-          mirelia-cli import musicbee <library folder> [--no-scan] [--no-playlists]
+          mirelia-cli import musicbee <library folder> [--no-scan] [--no-playlists] [--merge]
+                                                   --merge replaces same-named playlists
+                                                   instead of importing a second copy.
           mirelia-cli native-smoke                 Load the native audio backend.
           mirelia-cli --version                    Print the version and exit.
 

@@ -368,6 +368,78 @@ public sealed class MusicBeeImportTests : IDisposable
     }
 
     [Fact]
+    public void ASecondImportRenamesRatherThanTouchingTheFirst()
+    {
+        WriteExport(
+            [Track(1, "fixture.mp3"), Track(2, "fixture.flac")],
+            [Playlist("PL01", "Favourites", trackIds: [1])]);
+        Import();
+        WriteExport(
+            [Track(1, "fixture.mp3"), Track(2, "fixture.flac")],
+            [Playlist("PL01", "Favourites", trackIds: [2])]);
+
+        MusicBeeImportReport report = Import();
+
+        Assert.Equal(0, report.PlaylistsReplaced);
+        var store = new PlaylistStore(_db);
+        Assert.Equal(2, store.List().Count(p => p.Name.StartsWith("Favourites", StringComparison.Ordinal)));
+        Assert.Equal(
+            [PathOf("fixture.mp3")],
+            store.GetStaticTracks(store.FindByName("Favourites")!.Id).Select(TrackPath));
+    }
+
+    [Fact]
+    public void MergingReplacesTheSameNamedPlaylistInstead()
+    {
+        WriteExport(
+            [Track(1, "fixture.mp3"), Track(2, "fixture.flac")],
+            [Playlist("PL01", "Favourites", trackIds: [1])]);
+        Import();
+        WriteExport(
+            [Track(1, "fixture.mp3"), Track(2, "fixture.flac")],
+            [Playlist("PL01", "Favourites", trackIds: [2])]);
+
+        MusicBeeImportReport report = Import(new MusicBeeImportOptions { Merge = true });
+
+        Assert.Equal(1, report.PlaylistsReplaced);
+        var store = new PlaylistStore(_db);
+        PlaylistInfo playlist = Assert.Single(store.List(), p => p.Name == "Favourites");
+        Assert.Equal([PathOf("fixture.flac")], store.GetStaticTracks(playlist.Id).Select(TrackPath));
+    }
+
+    [Fact]
+    public void MergingRebuildsTheFolderNesting()
+    {
+        WriteExport(
+            [Track(1, "fixture.mp3")],
+            [
+                Folder("FOLDER01", "Anime"),
+                Playlist("PL01", "Favourites", parent: "FOLDER01", trackIds: [1]),
+            ]);
+        Import();
+
+        Import(new MusicBeeImportOptions { Merge = true });
+
+        List<PlaylistInfo> all = new PlaylistStore(_db).List();
+        PlaylistInfo folder = Assert.Single(all, p => p.Kind == PlaylistKind.Folder);
+        PlaylistInfo child = Assert.Single(all, p => p.Name == "Favourites");
+        Assert.Equal(folder.Id, child.ParentId);
+    }
+
+    [Fact]
+    public void MergingKeepsPlaylistsThisRunDoesNotKnowAbout()
+    {
+        var store = new PlaylistStore(_db);
+        store.CreateStatic("Handmade");
+        WriteExport([Track(1, "fixture.mp3")], [Playlist("PL01", "Favourites", trackIds: [1])]);
+
+        Import(new MusicBeeImportOptions { Merge = true });
+
+        Assert.Single(store.List(), p => p.Name == "Handmade");
+        Assert.Single(store.List(), p => p.Name == "Favourites");
+    }
+
+    [Fact]
     public void FoldersComeAcrossWithTheirNesting()
     {
         WriteExport(

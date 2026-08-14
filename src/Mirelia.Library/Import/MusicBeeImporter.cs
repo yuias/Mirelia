@@ -26,6 +26,13 @@ public sealed record MusicBeeImportOptions
 
     /// <summary>Whether playlists come across as well as track state.</summary>
     public bool ImportPlaylists { get; init; } = true;
+
+    /// <summary>
+    /// Whether a playlist whose name is already in the library is this same
+    /// playlist from an earlier run. On, the old one is replaced; off (the
+    /// default), the incoming one is renamed and both are kept.
+    /// </summary>
+    public bool Merge { get; init; }
 }
 
 /// <summary>What one import did.</summary>
@@ -39,6 +46,11 @@ public sealed record MusicBeeImportOptions
 /// Auto-playlists whose rules would not translate, imported as the tracks
 /// they held at export time.
 /// </param>
+/// <param name="PlaylistsReplaced">
+/// Playlists that already existed under the same name and were dropped to
+/// make way for this run. Always zero unless
+/// <see cref="MusicBeeImportOptions.Merge"/> is on.
+/// </param>
 /// <param name="Notes">One line per thing the user should know about.</param>
 public sealed record MusicBeeImportReport(
     int TracksInExport,
@@ -48,6 +60,7 @@ public sealed record MusicBeeImportReport(
     int StaticPlaylists,
     int SmartPlaylists,
     int SnapshotPlaylists,
+    int PlaylistsReplaced,
     IReadOnlyList<string> Notes);
 
 /// <summary>
@@ -111,13 +124,14 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
             ApplyTrackState(library, byPath, progress, ct);
         ReportMissing(missing, notes);
 
-        (int folders, int statics, int smart, int snapshots) = options.ImportPlaylists
-            ? ImportPlaylists(library, libraryFolder, byPath, notes, progress, ct)
-            : (0, 0, 0, 0);
+        (int folders, int statics, int smart, int snapshots, int replaced) = options.ImportPlaylists
+            ? ImportPlaylists(library, libraryFolder, byPath, options.Merge, notes, progress, ct)
+            : (0, 0, 0, 0, 0);
 
         db.BumpLibraryGeneration();
         return new MusicBeeImportReport(
-            library.Tracks.Count, matched, missing.Count, folders, statics, smart, snapshots, notes);
+            library.Tracks.Count, matched, missing.Count,
+            folders, statics, smart, snapshots, replaced, notes);
     }
 
     /// <summary>
@@ -300,10 +314,11 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
         public PlaylistInfo? Created { get; set; }
     }
 
-    private (int Folders, int Static, int Smart, int Snapshots) ImportPlaylists(
+    private (int Folders, int Static, int Smart, int Snapshots, int Replaced) ImportPlaylists(
         MusicBeeLibrary library,
         string libraryFolder,
         Dictionary<string, long> byPath,
+        bool merge,
         List<string> notes,
         IProgress<MusicBeeImportProgress>? progress,
         CancellationToken ct)
@@ -313,14 +328,14 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
             .ReadFolder(playlistFolder)
             .ToDictionary(a => a.Reference, StringComparer.OrdinalIgnoreCase);
 
-        List<Planned> plan = Plan(library, rules);
+        List<Planned> plan = Plan(library, rules, merge);
         var store = new PlaylistStore(db);
         var byReference = plan.ToDictionary(p => p.Reference, StringComparer.OrdinalIgnoreCase);
         var byPersistentId = plan.ToDictionary(p => p.Source.PersistentId, StringComparer.Ordinal);
         var trackIds = library.Tracks.ToDictionary(t => t.Id, t => t.Path);
         List<Planned> planned = InReferenceOrder(plan, byReference);
 
-        int folders = 0, statics = 0, smart = 0, snapshots = 0;
+        int folders = 0, statics = 0, smart = 0, snapshots = 0, replaced = 0;
         int done = 0;
 
         foreach (Planned item in planned)
@@ -328,6 +343,15 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
             ct.ThrowIfCancellationRequested();
             progress?.Report(new MusicBeeImportProgress(
                 "Creating playlists", done++, planned.Count));
+
+            // Merging takes a name already in the library to be this same
+            // playlist from an earlier run, and lets the new one have it.
+            // Without merging, Plan has already made the name unique.
+            if (merge && store.FindByName(item.Name) is { } previous)
+            {
+                store.Delete(previous.Id);
+                replaced++;
+            }
 
             if (item.Source.IsFolder)
             {
@@ -384,7 +408,12 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
             }
         }
 
-        return (folders, statics, smart, snapshots);
+        if (replaced > 0)
+        {
+            notes.Add($"{replaced} existing playlists were replaced by name (--merge).");
+        }
+
+        return (folders, statics, smart, snapshots, replaced);
     }
 
     private static bool TryCreateSmart(
@@ -504,11 +533,16 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
     /// it points at will be called.
     /// </summary>
     private List<Planned> Plan(
-        MusicBeeLibrary library, Dictionary<string, MusicBeeAutoPlaylist> rules)
+        MusicBeeLibrary library, Dictionary<string, MusicBeeAutoPlaylist> rules, bool merge)
     {
         var byId = library.Playlists.ToDictionary(p => p.PersistentId, StringComparer.Ordinal);
+
+        // Merging wants the natural names, clash with the library or not —
+        // the clash is the point. Only names this run itself hands out twice
+        // still have to be made unique.
         var used = new HashSet<string>(
-            new PlaylistStore(db).List().Select(p => p.Name), StringComparer.OrdinalIgnoreCase);
+            merge ? [] : new PlaylistStore(db).List().Select(p => p.Name),
+            StringComparer.OrdinalIgnoreCase);
 
         var planned = new List<Planned>(library.Playlists.Count);
         foreach (MusicBeePlaylist source in library.Playlists)
