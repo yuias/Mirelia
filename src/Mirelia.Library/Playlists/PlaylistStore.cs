@@ -141,6 +141,10 @@ public sealed class PlaylistStore(LibraryDatabase db)
             ("$now", Now()),
             ("$id", id));
         _smartCache.Remove(id);
+
+        // Another playlist may reference this one, and its membership just
+        // changed with this query.
+        db.BumpLibraryGeneration();
     }
 
     /// <summary>Renames a playlist; names stay unique.</summary>
@@ -152,6 +156,9 @@ public sealed class PlaylistStore(LibraryDatabase db)
             ("$n", newName),
             ("$now", Now()),
             ("$id", id));
+
+        // References are by name, so a rename moves what they point at.
+        db.BumpLibraryGeneration();
     }
 
     /// <summary>
@@ -263,19 +270,38 @@ public sealed class PlaylistStore(LibraryDatabase db)
 
         // @now is resolved here, so time-relative playlists refresh on any
         // library write; a coarse but correct staleness bound for v1 (§6.3).
-        CompiledQuery compiled = SqlCompiler.Compile(QueryParser.Parse(playlist.QueryText ?? ""));
+        CompiledQuery compiled = SqlCompiler.Compile(
+            QueryParser.Parse(playlist.QueryText ?? ""), now: null, SmartPlaylistResolver);
         long[] ids = [.. TrackQueryRunner.Run(db, compiled)];
         _smartCache[playlist.Id] = (generation, ids);
         return ids;
     }
+
+    /// <summary>
+    /// Looks a smart playlist up by name, so <c>playlist =</c> can test
+    /// membership of one. Static playlists resolve to null here and are
+    /// matched against their entries instead.
+    /// </summary>
+    /// <remarks>
+    /// Pass this to <see cref="SqlCompiler.Compile"/> anywhere a query is run
+    /// against a real library; without it a reference to a smart playlist
+    /// matches nothing at all.
+    /// </remarks>
+    public ParsedQuery? SmartPlaylistResolver(string name)
+        => FindByName(name) is { Kind: PlaylistKind.Smart, QueryText: { } text }
+            ? QueryParser.Parse(text)
+            : null;
 
     // ---- internals -----------------------------------------------------
 
     private string Validate(string name, string queryText)
     {
         ParsedQuery parsed = QueryParser.Parse(queryText);
-        _ = SqlCompiler.Compile(parsed); // field/type validation
+
+        // Cycles first: compiling inlines the playlists this one references,
+        // and a loop would be found as a depth limit rather than as a cycle.
         RejectCycles(name, parsed);
+        _ = SqlCompiler.Compile(parsed, now: null, SmartPlaylistResolver);
         return DslPrinter.Print(parsed);
     }
 

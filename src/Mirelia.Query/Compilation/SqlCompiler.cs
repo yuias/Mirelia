@@ -31,11 +31,28 @@ public static class SqlCompiler
         ["y"] = 31_536_000, // 365 days
     };
 
+    /// <summary>How deep <c>playlist =</c> may chase smart playlists.</summary>
+    /// <remarks>
+    /// Cycles are rejected when a playlist is saved, so this only catches a
+    /// reference graph that got into the database some other way.
+    /// </remarks>
+    private const int MaxPlaylistDepth = 16;
+
     /// <summary>Compiles the query. <paramref name="now"/> anchors <c>@now</c>; defaults to the current time.</summary>
+    /// <param name="query">The parsed query.</param>
+    /// <param name="now">Anchor for <c>@now</c>.</param>
+    /// <param name="smartPlaylists">
+    /// Looks up a smart playlist's query by name, so <c>playlist =</c> can test
+    /// membership of one. Without it only static playlists are visible, and a
+    /// reference to a smart playlist matches nothing.
+    /// </param>
     /// <exception cref="QueryCompileException">On unknown fields or type mismatches.</exception>
-    public static CompiledQuery Compile(ParsedQuery query, DateTimeOffset? now = null)
+    public static CompiledQuery Compile(
+        ParsedQuery query,
+        DateTimeOffset? now = null,
+        Func<string, ParsedQuery?>? smartPlaylists = null)
     {
-        var ctx = new Context(now ?? DateTimeOffset.Now);
+        var ctx = new Context(now ?? DateTimeOffset.Now, smartPlaylists);
         string where = ctx.CompileExpr(query.Where);
         List<(string Expr, bool Desc)> order = CompileOrder(query.OrderBy);
 
@@ -120,9 +137,10 @@ public static class SqlCompiler
         return result;
     }
 
-    private sealed class Context(DateTimeOffset now)
+    private sealed class Context(DateTimeOffset now, Func<string, ParsedQuery?>? smartPlaylists)
     {
         private readonly List<KeyValuePair<string, object>> _parameters = [];
+        private int _playlistDepth;
 
         public IReadOnlyList<KeyValuePair<string, object>> Parameters => _parameters;
 
@@ -333,12 +351,49 @@ public static class SqlCompiler
 
         private string CompilePlaylist(PlaylistMembership p)
         {
+            if (smartPlaylists?.Invoke(p.PlaylistName) is { } referenced)
+            {
+                return CompileSmartPlaylist(p, referenced);
+            }
+
             string param = AddParameter(p.PlaylistName);
             string exists =
                 "EXISTS (SELECT 1 FROM playlist_entry pe " +
                 "JOIN playlist pl ON pl.id = pe.playlist_id " +
                 $"WHERE pe.track_id = t.id AND pl.name = {param})";
             return p.Negated ? "NOT " + exists : exists;
+        }
+
+        /// <summary>
+        /// A smart playlist keeps no entries, so its membership is its own
+        /// predicate, inlined here over the same row.
+        /// </summary>
+        private string CompileSmartPlaylist(PlaylistMembership p, ParsedQuery referenced)
+        {
+            // A limit picks rows out of an ordered result. There is no row set
+            // to order inside a predicate about one track, so pretending
+            // otherwise would quietly widen the reference.
+            if (referenced.Limit is not null)
+            {
+                throw new QueryCompileException(
+                    $"Playlist '{p.PlaylistName}' is limited and cannot be referenced.");
+            }
+
+            if (++_playlistDepth > MaxPlaylistDepth)
+            {
+                throw new QueryCompileException(
+                    $"Playlist references nest more than {MaxPlaylistDepth} deep at '{p.PlaylistName}'.");
+            }
+
+            try
+            {
+                string inner = CompileExpr(referenced.Where);
+                return p.Negated ? $"NOT ({inner})" : $"({inner})";
+            }
+            finally
+            {
+                _playlistDepth--;
+            }
         }
 
         private string CompileFreeText(FreeText f)

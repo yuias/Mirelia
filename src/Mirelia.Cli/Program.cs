@@ -128,10 +128,14 @@ static int RunQuery(string dsl, string? dbPath)
         return 1;
     }
 
+    using var database = LibraryDatabase.Open(db);
+
     CompiledQuery compiled;
     try
     {
-        compiled = SqlCompiler.Compile(QueryParser.Parse(dsl));
+        // The store is what lets 'playlist =' see a smart playlist.
+        compiled = SqlCompiler.Compile(
+            QueryParser.Parse(dsl), now: null, new PlaylistStore(database).SmartPlaylistResolver);
     }
     catch (Exception ex) when (ex is QueryParseException or QueryCompileException)
     {
@@ -139,7 +143,6 @@ static int RunQuery(string dsl, string? dbPath)
         return 1;
     }
 
-    using var database = LibraryDatabase.Open(db);
     List<long> ids = TrackQueryRunner.Run(database, compiled);
     foreach (TrackSummary row in TrackQueryRunner.Hydrate(database, ids))
     {
@@ -298,7 +301,8 @@ static int PlaylistCommand(string[] args)
             case ["add", var name, var dsl]:
             {
                 PlaylistInfo p = RequirePlaylist(store, name);
-                CompiledQuery compiled = SqlCompiler.Compile(QueryParser.Parse(dsl));
+                CompiledQuery compiled = SqlCompiler.Compile(
+                    QueryParser.Parse(dsl), now: null, store.SmartPlaylistResolver);
                 List<long> ids = TrackQueryRunner.Run(database, compiled);
                 store.AddTracks(p.Id, ids);
                 Console.WriteLine($"added {ids.Count} track(s) to '{name}'");

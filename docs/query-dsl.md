@@ -129,3 +129,21 @@ precomputed `*_search` shadow columns; matching runs against those. Never
 - `ORDER BY random` is materialized once per evaluation, not per read.
 - Cyclic `playlist =` references are rejected at save time with a DFS over
   the reference graph.
+
+## Playlist references
+
+`playlist = "name"` reaches both kinds. A static playlist is tested against
+its entries; a smart one keeps none, so its own predicate is compiled in
+place of the reference. Either way the result is live — editing the
+referenced playlist changes what refers to it on the next evaluation.
+
+Two consequences worth stating:
+
+- **A referenced playlist may not carry a `LIMIT`.** A limit picks rows out
+  of an ordered result, and a predicate about a single track has no result to
+  order; ignoring it would quietly widen the reference to the unlimited set.
+  Referencing one is a compile error.
+- **Compilation needs the library.** `SqlCompiler.Compile` only sees smart
+  playlists when handed a resolver — `PlaylistStore.SmartPlaylistResolver`.
+  Without one it falls back to entries alone, which is right for a static
+  reference and matches nothing for a smart one.

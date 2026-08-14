@@ -92,7 +92,8 @@ public sealed class LibraryService : IDisposable
         => RunAsync(() =>
         {
             ParsedQuery parsed = QueryParser.Parse(dsl);
-            CompiledQuery compiled = SqlCompiler.Compile(parsed);
+            CompiledQuery compiled = SqlCompiler.Compile(
+                parsed, now: null, _playlists.SmartPlaylistResolver);
             return (TrackQueryRunner.Run(_db, compiled).ToArray(), parsed.OrderBy.Count > 0);
         });
 

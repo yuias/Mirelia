@@ -133,6 +133,52 @@ public sealed class PlaylistStoreTests : IDisposable
     }
 
     [Fact]
+    public void ASmartPlaylistCanReferenceAnotherSmartPlaylist()
+    {
+        // Tracks are rated 0, 20, 40, 60, 80.
+        _store.CreateSmart("Rated", "rating >= 40");
+        PlaylistInfo narrowed = _store.CreateSmart(
+            "Rated Not Top", """playlist = "Rated" AND rating < 80 ORDER BY title""");
+
+        // A smart playlist has no entries, so this only works if the
+        // reference compiles to the referenced playlist's own predicate.
+        Assert.Equal([_trackIds[2], _trackIds[3]], _store.Evaluate(narrowed));
+    }
+
+    [Fact]
+    public void ANegatedReferenceToASmartPlaylistExcludesIt()
+    {
+        _store.CreateSmart("Rated", "rating >= 40");
+        PlaylistInfo rest = _store.CreateSmart(
+            "Unrated", """playlist != "Rated" ORDER BY title""");
+
+        Assert.Equal([_trackIds[0], _trackIds[1]], _store.Evaluate(rest));
+    }
+
+    [Fact]
+    public void AReferencedSmartPlaylistStaysLive()
+    {
+        PlaylistInfo source = _store.CreateSmart("Rated", "rating >= 80");
+        PlaylistInfo mirror = _store.CreateSmart("Mirror", """playlist = "Rated" """);
+        Assert.Equal([_trackIds[4]], _store.Evaluate(mirror));
+
+        _store.UpdateSmartQuery(source.Id, "rating >= 60");
+        Assert.Equal([_trackIds[3], _trackIds[4]], _store.Evaluate(mirror).Order().ToArray());
+    }
+
+    [Fact]
+    public void ALimitedPlaylistCannotBeReferenced()
+    {
+        _store.CreateSmart("Top", "rating >= 40 ORDER BY rating DESC LIMIT 1");
+
+        // A limit picks rows out of an ordered set, and a predicate about one
+        // track has no set to order — silently ignoring it would widen the
+        // reference to every rated track.
+        Assert.Throws<QueryCompileException>(
+            () => _store.CreateSmart("Mirror", """playlist = "Top" """));
+    }
+
+    [Fact]
     public void ReferenceCyclesAreRejected()
     {
         _store.CreateStatic("Seed");
