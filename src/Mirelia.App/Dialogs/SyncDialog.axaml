@@ -28,9 +28,11 @@
     <!-- Target list -->
     <DockPanel Grid.Row="0" Grid.Column="0">
       <TextBlock DockPanel.Dock="Top" Classes="section" Text="Targets" Margin="0,0,0,6" />
-      <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
-                  Spacing="6" Margin="0,6,0,0">
-        <Button Content="Add" Click="OnAddTarget" />
+      <StackPanel DockPanel.Dock="Bottom" Spacing="6" Margin="0,6,0,0">
+        <StackPanel Orientation="Horizontal" Spacing="6">
+          <Button Content="Add folder" Click="OnAddFolderTarget" />
+          <Button Content="Add device" Click="OnAddDeviceTarget" />
+        </StackPanel>
         <Button x:Name="RemoveButton" Content="Remove" Click="OnRemoveTarget" />
       </StackPanel>
       <ListBox x:Name="TargetList" SelectionChanged="OnTargetSelected" />
@@ -48,15 +50,29 @@
 
         <StackPanel Spacing="6">
           <TextBlock Classes="section" Text="Destination" />
+
+          <StackPanel x:Name="DevicePanel" Spacing="6" IsVisible="False">
+            <TextBlock Classes="label" Text="Device" />
+            <Grid ColumnDefinitions="*,6,Auto">
+              <ComboBox x:Name="DeviceBox" Grid.Column="0" HorizontalAlignment="Stretch"
+                        SelectionChanged="OnComboChanged" />
+              <Button Grid.Column="2" Content="Refresh" Click="OnRefreshDevices" />
+            </Grid>
+            <TextBlock Classes="label" TextWrapping="Wrap"
+                       Text="Folders below are inside the device, storage name first — Internal shared storage/Music. Unlock the phone and switch its USB mode to file transfer for it to appear." />
+          </StackPanel>
+
           <TextBlock Classes="label" Text="Music folder" />
           <Grid ColumnDefinitions="*,6,Auto">
             <TextBox x:Name="MusicRootBox" Grid.Column="0" TextChanged="OnTextChanged" />
-            <Button Grid.Column="2" Content="Browse…" Click="OnBrowseMusicRoot" />
+            <Button x:Name="BrowseMusicButton" Grid.Column="2"
+                    Content="Browse…" Click="OnBrowseMusicRoot" />
           </Grid>
           <TextBlock Classes="label" Text="Playlist folder" />
           <Grid ColumnDefinitions="*,6,Auto">
             <TextBox x:Name="PlaylistDirBox" Grid.Column="0" TextChanged="OnTextChanged" />
-            <Button Grid.Column="2" Content="Browse…" Click="OnBrowsePlaylistDir" />
+            <Button x:Name="BrowsePlaylistButton" Grid.Column="2"
+                    Content="Browse…" Click="OnBrowsePlaylistDir" />
           </Grid>
         </StackPanel>
 

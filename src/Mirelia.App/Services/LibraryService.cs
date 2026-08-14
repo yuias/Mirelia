@@ -8,6 +8,7 @@ using Mirelia.Library.Sync;
 using Mirelia.Query.Ast;
 using Mirelia.Query.Compilation;
 using Mirelia.Query.Parsing;
+using Mirelia.Sync.Mtp;
 
 namespace Mirelia.App.Services;
 
@@ -283,9 +284,19 @@ public sealed class LibraryService : IDisposable
     public Task<List<long>> GetSyncScopeAsync(long targetId)
         => RunAsync(() => new SyncTargetStore(_db).GetScope(targetId));
 
-    /// <summary>Creates a folder target and returns it.</summary>
-    public Task<SyncTarget> CreateSyncTargetAsync(string name, SyncTargetConfig config)
-        => RunAsync(() => new SyncTargetStore(_db).Create(name, SyncTargetKind.Folder, config));
+    /// <summary>Creates a target and returns it.</summary>
+    public Task<SyncTarget> CreateSyncTargetAsync(
+        string name, SyncTargetKind kind, SyncTargetConfig config)
+        => RunAsync(() => new SyncTargetStore(_db).Create(name, kind, config));
+
+    /// <summary>
+    /// Portable devices Windows can currently see, for the target editor.
+    /// Empty everywhere else, and when nothing is plugged in.
+    /// </summary>
+    public static Task<IReadOnlyList<MtpDeviceInfo>> GetMtpDevicesAsync()
+        => OperatingSystem.IsWindowsVersionAtLeast(5)
+            ? Task.Run(MtpDevices.List)
+            : Task.FromResult<IReadOnlyList<MtpDeviceInfo>>([]);
 
     /// <summary>Stores a target's name, settings, and selected playlists.</summary>
     public Task SaveSyncTargetAsync(long id, string name, SyncTargetConfig config, IEnumerable<long> scope)
@@ -317,7 +328,8 @@ public sealed class LibraryService : IDisposable
             () =>
             {
                 using var syncDb = LibraryDatabase.Open(_dbPath);
-                using var sink = new FileSystemSink(target.Config.MusicRoot);
+                using ISyncSinkFactory sinks = OpenSinks(target);
+                using ISyncFileSink sink = sinks.Open(target.Config.MusicRoot);
                 var planner = new SyncPlanner(
                     syncDb, new PlaylistStore(syncDb), new SyncTargetStore(syncDb));
                 return planner.Plan(target, sink, options, ct);
@@ -348,12 +360,38 @@ public sealed class LibraryService : IDisposable
             () =>
             {
                 using var syncDb = LibraryDatabase.Open(_dbPath);
-                using var music = new FileSystemSink(plan.Target.Config.MusicRoot);
-                using var playlists = new FileSystemSink(plan.Target.Config.PlaylistDir);
+                using ISyncSinkFactory sinks = OpenSinks(plan.Target);
+                using ISyncFileSink music = sinks.Open(plan.Target.Config.MusicRoot);
+                using ISyncFileSink playlists = sinks.Open(plan.Target.Config.PlaylistDir);
                 return new SyncRunner(new SyncTargetStore(syncDb))
                     .Run(plan, music, playlists, progress, ct);
             },
             ct);
+    }
+
+    /// <summary>
+    /// Opens the byte-moving layer a target needs. MTP wants both roots on one
+    /// device session, so the factory outlives the sinks it hands out.
+    /// </summary>
+    private static ISyncSinkFactory OpenSinks(SyncTarget target)
+    {
+        if (target.Kind != SyncTargetKind.Mtp)
+        {
+            return new FileSystemSinkFactory();
+        }
+
+        if (!OperatingSystem.IsWindowsVersionAtLeast(5))
+        {
+            throw new PlatformNotSupportedException(
+                "MTP targets need Windows Portable Devices.");
+        }
+
+        if (string.IsNullOrEmpty(target.Config.DeviceId))
+        {
+            throw new InvalidOperationException($"Target '{target.Name}' names no device.");
+        }
+
+        return MtpSinkFactory.Open(target.Config.DeviceId, target.Config.DeviceLabel ?? target.Name);
     }
 
     /// <inheritdoc />

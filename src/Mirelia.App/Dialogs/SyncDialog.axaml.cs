@@ -7,6 +7,7 @@ using Mirelia.App.Services;
 using Mirelia.App.ViewModels;
 using Mirelia.Library.Playlists;
 using Mirelia.Library.Sync;
+using Mirelia.Sync.Mtp;
 
 namespace Mirelia.App.Dialogs;
 
@@ -20,6 +21,15 @@ public partial class SyncDialog : Window
     private sealed record Choice<T>(T Value, string Label)
     {
         public override string ToString() => Label;
+    }
+
+    /// <summary>
+    /// A portable device the user can point a target at. A target keeps its
+    /// device even while it is unplugged, so the list holds absent ones too.
+    /// </summary>
+    private sealed record DeviceChoice(string Id, string Name, bool Connected)
+    {
+        public override string ToString() => Connected ? Name : $"{Name}  (not connected)";
     }
 
     /// <summary>Illustrative track for the layout and playlist previews.</summary>
@@ -52,6 +62,7 @@ public partial class SyncDialog : Window
     private readonly ObservableCollection<SyncPlaylistChoice> _forceChoices = [];
     private readonly ObservableCollection<SyncCodecChoice> _codecChoices = [];
     private List<SyncTarget> _targets = [];
+    private IReadOnlyList<MtpDeviceInfo> _devices = [];
     private SyncTarget? _current;
     private SyncPlan? _plan;
     private CancellationTokenSource? _cts;
@@ -123,6 +134,7 @@ public partial class SyncDialog : Window
             _codecChoices.Add(new SyncCodecChoice(codec, selected: true));
         }
 
+        _devices = await LibraryService.GetMtpDevicesAsync();
         await ReloadTargetsAsync(null);
     }
 
@@ -135,7 +147,7 @@ public partial class SyncDialog : Window
 
         _targets = await _library.GetSyncTargetsAsync();
         _loading = true;
-        TargetList.ItemsSource = _targets.Select(t => t.Name).ToList();
+        TargetList.ItemsSource = _targets.Select(TargetLabel).ToList();
         _loading = false;
 
         int index = selectId is { } id ? _targets.FindIndex(t => t.Id == id) : 0;
@@ -150,7 +162,44 @@ public partial class SyncDialog : Window
 
     // ---- target list ---------------------------------------------------
 
-    private async void OnAddTarget(object? sender, RoutedEventArgs e)
+    /// <summary>
+    /// Names a target in the list. An MTP target says which device it is for,
+    /// since its own name rarely does and the device may be unplugged.
+    /// </summary>
+    private string TargetLabel(SyncTarget target)
+    {
+        if (target.Kind != SyncTargetKind.Mtp)
+        {
+            return target.Name;
+        }
+
+        bool connected = target.Config.DeviceId is { } id
+            && _devices.Any(d => d.DeviceId == id);
+        string device = target.Config.DeviceLabel ?? "no device";
+        return connected ? $"{target.Name}  ·  {device}" : $"{target.Name}  ·  {device} (not connected)";
+    }
+
+    private async void OnAddFolderTarget(object? sender, RoutedEventArgs e)
+    {
+        await AddTargetAsync(SyncTargetKind.Folder, new SyncTargetConfig());
+    }
+
+    private async void OnAddDeviceTarget(object? sender, RoutedEventArgs e)
+    {
+        // Android's own layout, so a fresh target is usable without editing.
+        MtpDeviceInfo? device = _devices.Count > 0 ? _devices[0] : null;
+        await AddTargetAsync(
+            SyncTargetKind.Mtp,
+            new SyncTargetConfig
+            {
+                DeviceId = device?.DeviceId,
+                DeviceLabel = device?.Label,
+                MusicRoot = "Internal shared storage/Music",
+                PlaylistDir = "Internal shared storage/Playlists",
+            });
+    }
+
+    private async Task AddTargetAsync(SyncTargetKind kind, SyncTargetConfig config)
     {
         if (_library is null)
         {
@@ -158,9 +207,30 @@ public partial class SyncDialog : Window
         }
 
         await SaveCurrentAsync();
-        string name = UniqueName("New target");
-        SyncTarget created = await _library.CreateSyncTargetAsync(name, new SyncTargetConfig());
+        string name = UniqueName(kind == SyncTargetKind.Mtp ? "New device" : "New target");
+        SyncTarget created = await _library.CreateSyncTargetAsync(name, kind, config);
         await ReloadTargetsAsync(created.Id);
+    }
+
+    private async void OnRefreshDevices(object? sender, RoutedEventArgs e)
+    {
+        _devices = await LibraryService.GetMtpDevicesAsync();
+
+        _loading = true;
+        try
+        {
+            int selected = TargetList.SelectedIndex;
+            TargetList.ItemsSource = _targets.Select(TargetLabel).ToList();
+            TargetList.SelectedIndex = selected;
+            if (_current is not null)
+            {
+                FillDeviceBox(_current.Config);
+            }
+        }
+        finally
+        {
+            _loading = false;
+        }
     }
 
     private string UniqueName(string basis)
@@ -232,6 +302,14 @@ public partial class SyncDialog : Window
             MusicRootBox.Text = config.MusicRoot;
             PlaylistDirBox.Text = config.PlaylistDir;
 
+            // MTP has no drive letter, so the OS folder picker cannot reach it;
+            // the paths are typed as the device itself shows them.
+            bool mtp = target.Kind == SyncTargetKind.Mtp;
+            DevicePanel.IsVisible = mtp;
+            BrowseMusicButton.IsVisible = !mtp;
+            BrowsePlaylistButton.IsVisible = !mtp;
+            FillDeviceBox(config);
+
             ScopeAllMusic.IsChecked = config.Scope == SyncScopeKind.AllMusic;
             ScopeAllPlaylists.IsChecked = config.Scope == SyncScopeKind.AllPlaylists;
             ScopeSelected.IsChecked = config.Scope == SyncScopeKind.Selected;
@@ -288,6 +366,26 @@ public partial class SyncDialog : Window
         UpdatePreviews();
     }
 
+    /// <summary>
+    /// Lists the connected devices plus, when it is not among them, the one
+    /// this target already names — losing that on an unplugged phone would
+    /// silently repoint the target.
+    /// </summary>
+    private void FillDeviceBox(SyncTargetConfig config)
+    {
+        var choices = _devices
+            .Select(d => new DeviceChoice(d.DeviceId, d.Label, Connected: true))
+            .ToList();
+
+        if (config.DeviceId is { Length: > 0 } id && choices.All(c => c.Id != id))
+        {
+            choices.Insert(0, new DeviceChoice(id, config.DeviceLabel ?? id, Connected: false));
+        }
+
+        DeviceBox.ItemsSource = choices;
+        DeviceBox.SelectedItem = choices.FirstOrDefault(c => c.Id == config.DeviceId);
+    }
+
     private static void Select<T>(ComboBox box, T value)
     {
         box.SelectedItem = box.ItemsSource?
@@ -300,6 +398,8 @@ public partial class SyncDialog : Window
 
     private SyncTargetConfig ReadConfig() => new()
     {
+        DeviceId = SelectedDevice?.Id,
+        DeviceLabel = SelectedDevice?.Name,
         MusicRoot = MusicRootBox.Text ?? string.Empty,
         PlaylistDir = PlaylistDirBox.Text ?? string.Empty,
         Scope = ScopeAllMusic.IsChecked == true ? SyncScopeKind.AllMusic
@@ -318,6 +418,11 @@ public partial class SyncDialog : Window
         OrphanPolicy = OrphanCheck.IsChecked == true ? OrphanPolicy.Delete : OrphanPolicy.Keep,
         Device = ReadDeviceProfile(),
     };
+
+    /// <summary>The device a target points at, or null when it is not an MTP one.</summary>
+    private DeviceChoice? SelectedDevice => _current?.Kind == SyncTargetKind.Mtp
+        ? DeviceBox.SelectedItem as DeviceChoice
+        : null;
 
     private DeviceProfile? ReadDeviceProfile()
     {
@@ -459,10 +564,11 @@ public partial class SyncDialog : Window
         }
 
         string relPath = PathTemplate.Render(config.LayoutTemplate, SampleTrack, config.ReservedChars);
-        string onDisk = Path.Combine(
-            string.IsNullOrWhiteSpace(config.MusicRoot) ? "…" : config.MusicRoot,
-            relPath.Replace('/', Path.DirectorySeparatorChar));
-        LayoutPreview.Text = $"Example:  {onDisk}";
+        string root = string.IsNullOrWhiteSpace(config.MusicRoot) ? "…" : config.MusicRoot;
+        string example = _current?.Kind == SyncTargetKind.Mtp
+            ? $"{root.TrimEnd('/')}/{relPath}"
+            : Path.Combine(root, relPath.Replace('/', Path.DirectorySeparatorChar));
+        LayoutPreview.Text = $"Example:  {example}";
 
         string playlistName = "Favourites" + (config.PlaylistFormat == "m3u" ? ".m3u" : ".m3u8");
         PlaylistPreview.Text =
@@ -514,6 +620,12 @@ public partial class SyncDialog : Window
             return null;
         }
 
+        if (_current.Kind == SyncTargetKind.Mtp && SelectedDevice is null)
+        {
+            SummaryText.Text = "Connect the device and choose it above first.";
+            return null;
+        }
+
         await SaveCurrentAsync();
         PreviewButton.IsEnabled = false;
         try
@@ -523,7 +635,10 @@ public partial class SyncDialog : Window
             SyncButton.IsEnabled = !_plan.IsEmpty && _plan.FitsInFreeSpace;
             return _plan;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException
+            or UnauthorizedAccessException
+            or MtpDeviceLostException
+            or PlatformNotSupportedException)
         {
             SummaryText.Text = $"Could not read the destination: {ex.Message}";
             return null;
@@ -606,6 +721,13 @@ public partial class SyncDialog : Window
         catch (OperationCanceledException)
         {
             SummaryText.Text = "Sync stopped. Files already copied are recorded and will not be redone.";
+        }
+        catch (MtpDeviceLostException ex)
+        {
+            // One unwritable file is survivable and already reported per file;
+            // a device that went away is not, so the run ended here.
+            SummaryText.Text = $"The device disconnected: {ex.Message} "
+                + "Files already copied are recorded and will not be redone.";
         }
         finally
         {

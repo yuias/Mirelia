@@ -17,6 +17,7 @@
     <ProjectReference Include="..\Mirelia.Library\Mirelia.Library.csproj" />
     <ProjectReference Include="..\Mirelia.Query\Mirelia.Query.csproj" />
     <ProjectReference Include="..\Mirelia.AudioBridge\Mirelia.AudioBridge.csproj" />
+    <ProjectReference Include="..\Mirelia.Sync.Mtp\Mirelia.Sync.Mtp.csproj" />
   </ItemGroup>
 
 </Project>
