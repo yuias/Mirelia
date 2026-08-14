@@ -20,6 +20,8 @@
     <!-- Lifts the transitive SQLitePCLRaw above 2.1.11 (NU1903, GHSA-2m69-gcr7-jv3q). -->
     <PackageVersion Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
     <PackageVersion Include="TagLibSharp" Version="2.3.0" />
+    <!-- WPD interop for MTP sync; source-generated, no runtime dependency. -->
+    <PackageVersion Include="Microsoft.Windows.CsWin32" Version="0.3.183" />
   </ItemGroup>
 
   <ItemGroup>

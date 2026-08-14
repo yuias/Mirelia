@@ -6,10 +6,12 @@
     <Project Path="src/Mirelia.Library/Mirelia.Library.csproj" />
     <Project Path="src/Mirelia.Query/Mirelia.Query.csproj" />
     <Project Path="src/Mirelia.Sync/Mirelia.Sync.csproj" />
+    <Project Path="src/Mirelia.Sync.Mtp/Mirelia.Sync.Mtp.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Mirelia.App.Tests/Mirelia.App.Tests.csproj" />
     <Project Path="tests/Mirelia.Library.Tests/Mirelia.Library.Tests.csproj" />
     <Project Path="tests/Mirelia.Query.Tests/Mirelia.Query.Tests.csproj" />
+    <Project Path="tests/Mirelia.Sync.Mtp.Tests/Mirelia.Sync.Mtp.Tests.csproj" />
   </Folder>
 </Solution>
