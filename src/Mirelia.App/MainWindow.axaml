@@ -13,6 +13,9 @@
     <!-- Menu bar -->
     <Menu DockPanel.Dock="Top">
       <MenuItem Header="_File">
+        <MenuItem Header="Open Library…" Click="OnOpenLibraryClick"
+                  ToolTip.Tip="Switch to another Mirelia library file" />
+        <Separator />
         <MenuItem Header="Add Folder…" Click="OnAddFolderClick" />
         <MenuItem Header="Rescan Library" Click="OnRescanClick"
                   ToolTip.Tip="Re-reads tags of every file in all scanned folders" />

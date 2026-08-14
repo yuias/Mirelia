@@ -14,6 +14,25 @@ temp_store   = MEMORY
 mmap_size    = 268435456
 ```
 
+## Which file is open
+
+One library at a time. The app opens `%APPDATA%/Mirelia/library.db` unless
+`MIRELIA_DB` is set (tests and the UI smoke run) or the user picked another
+file with **File ▸ Open Library…**, which is remembered in `settings.json` as
+`LibraryPath` and reopened next launch — MIRELIA_DB still outranks it.
+
+`settings.json` itself is anchored to the default library's folder, not the
+open one, so theme, font, output device and window placement do not fork per
+library. Everything genuinely per-library — playlists, view settings, sync
+targets — already lives inside the `.db`, so it moves with the file.
+
+A switch reopens the new file before closing the old one, so a bad pick leaves
+the current library untouched. Track and playlist ids do not survive the move:
+playback stops, the queue is emptied, and every cached view is rebuilt.
+`LibraryDatabase.DescribeLibraryProblem` gates the pick — `Open` would
+otherwise adopt an unrelated file as a brand-new library and start creating
+tables in it.
+
 ## Schema v1
 
 ```sql

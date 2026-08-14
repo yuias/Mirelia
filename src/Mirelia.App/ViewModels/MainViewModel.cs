@@ -2,8 +2,10 @@ using System.Collections.ObjectModel;
 using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
+using Microsoft.Data.Sqlite;
 using Mirelia.App.Models;
 using Mirelia.App.Services;
+using Mirelia.Library.Database;
 using Mirelia.Library.Playlists;
 using Mirelia.Library.Querying;
 using Mirelia.Query.Compilation;
@@ -631,6 +633,52 @@ public sealed partial class MainViewModel : ObservableObject
             $"Scan finished: {result.Added} added, {result.Updated} updated, " +
             $"{result.Unchanged} unchanged, {result.Skipped} skipped";
         await ReloadAsync();
+    }
+
+    /// <summary>
+    /// Switches the window to a different library file. Returns null on
+    /// success, otherwise why the file was refused. Everything on screen is
+    /// keyed by track and playlist ids, and none of those survive the move,
+    /// so playback, the queue, and every cached view are dropped first.
+    /// </summary>
+    public async Task<string?> OpenLibraryAsync(string dbPath)
+    {
+        if (LibraryDatabase.DescribeLibraryProblem(dbPath) is { } problem)
+        {
+            return problem;
+        }
+
+        // Checked before anything is torn down; SwitchToAsync checks it again
+        // to close the race, but by then the queue would already be gone.
+        if (_library.IsBusy)
+        {
+            return "A scan or sync is still running against the current library.";
+        }
+
+        _player.StopAndClear();
+        _ephemeralPlaylists.Clear();
+        SelectedPlaylist = null;
+        SelectedNode = null;
+        SearchText = string.Empty;
+        SortColumnKey = null;
+        SortDescending = false;
+        SelectedSource = Sources[0];
+        StatusText = "Opening library…";
+
+        try
+        {
+            await _library.SwitchToAsync(dbPath);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or SqliteException)
+        {
+            StatusText = "Library unchanged.";
+            return ex.Message;
+        }
+
+        await RefreshPlaylistsAsync();
+        await ReloadAsync();
+        await Queue.InitializeAsync();
+        return null;
     }
 
     /// <summary>Plays the grid row at <paramref name="rowIndex"/> with the current view as queue.</summary>

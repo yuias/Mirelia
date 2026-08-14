@@ -230,6 +230,19 @@ public sealed class PlayQueueTests
     }
 
     [Fact]
+    public void RemoveAllDropsTheCurrentEntryToo()
+    {
+        var queue = new PlayQueue();
+        queue.Replace([1, 2, 3], startIndex: 1);
+
+        queue.RemoveAll();
+
+        Assert.Equal(0, queue.Count);
+        Assert.Null(queue.Current);
+        Assert.Equal(-1, queue.CurrentIndex);
+    }
+
+    [Fact]
     public void NextAndPreviousEntryReflectPositionAroundCurrent()
     {
         var queue = new PlayQueue();

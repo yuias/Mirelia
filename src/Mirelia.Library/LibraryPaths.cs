@@ -4,13 +4,29 @@ namespace Mirelia.Library;
 public static class LibraryPaths
 {
     /// <summary>
+    /// The MIRELIA_DB override, or null when unset. Tests and the UI smoke
+    /// run set it, and it outranks the library the app last had open.
+    /// </summary>
+    public static string? DatabaseOverride =>
+        Environment.GetEnvironmentVariable("MIRELIA_DB");
+
+    /// <summary>
     /// The default library database path. Overridable with the MIRELIA_DB
     /// environment variable (used by tests and the UI smoke run).
     /// </summary>
     public static string DefaultDatabasePath =>
-        Environment.GetEnvironmentVariable("MIRELIA_DB")
+        DatabaseOverride
         ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "Mirelia",
             "library.db");
+
+    /// <summary>
+    /// Where app-level settings live. Anchored to the default library's
+    /// folder, not to whichever library happens to be open, so preferences
+    /// like theme and output device do not fork per library.
+    /// </summary>
+    public static string SettingsFilePath => Path.Combine(
+        Path.GetDirectoryName(Path.GetFullPath(DefaultDatabasePath))!,
+        "settings.json");
 }

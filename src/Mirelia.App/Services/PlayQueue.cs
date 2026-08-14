@@ -222,6 +222,18 @@ public sealed class PlayQueue
         }
     }
 
+    /// <summary>
+    /// Empties the queue completely, current entry included — unlike
+    /// <see cref="Clear"/>, which is the UI affordance and spares whatever is
+    /// playing. Used when the entries stop meaning anything at all, as on a
+    /// library switch.
+    /// </summary>
+    public void RemoveAll()
+    {
+        _entries.Clear();
+        _currentEntryId = null;
+    }
+
     /// <summary>Marks an existing entry as current. Returns false if it is not in the queue.</summary>
     public bool SetCurrent(long entryId)
     {

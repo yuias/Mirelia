@@ -13,6 +13,7 @@ using Avalonia.VisualTree;
 using Mirelia.App.Dialogs;
 using Mirelia.App.Models;
 using Mirelia.App.ViewModels;
+using Mirelia.Library;
 using Mirelia.Library.Playlists;
 
 namespace Mirelia.App;
@@ -163,6 +164,8 @@ public partial class MainWindow : Window
         // Tree context menus are built in code: the "Move to" submenu is
         // per-node and data-driven, which XAML templates handle poorly.
         PlaylistTreeView.AddHandler(ContextRequestedEvent, OnTreeContextRequested);
+
+        UpdateLibraryTitle();
 
         // Columns are data-driven from per-view settings.
         DataContextChanged += (_, _) =>
@@ -892,6 +895,57 @@ public partial class MainWindow : Window
     }
 
     // ---- library scan --------------------------------------------------
+
+    private async void OnOpenLibraryClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { } vm)
+        {
+            return;
+        }
+
+        IReadOnlyList<IStorageFile> files = await StorageProvider.OpenFilePickerAsync(
+            new FilePickerOpenOptions
+            {
+                Title = "Open library",
+                AllowMultiple = false,
+                FileTypeFilter =
+                [
+                    new FilePickerFileType("Mirelia library") { Patterns = ["*.db"] },
+                ],
+            });
+        if (files.Count != 1 || files[0].TryGetLocalPath() is not { } path)
+        {
+            return;
+        }
+
+        if (await vm.OpenLibraryAsync(path) is { } problem)
+        {
+            vm.StatusText = problem;
+            return;
+        }
+
+        UpdateLibraryTitle();
+        if (App.Settings is { } settings)
+        {
+            settings.Save(settings.Current with { LibraryPath = path });
+        }
+    }
+
+    /// <summary>
+    /// Names the open library in the title bar. The default library stays
+    /// anonymous — its name only matters once there is more than one.
+    /// </summary>
+    private void UpdateLibraryTitle()
+    {
+        string? path = App.Library?.DatabasePath;
+        Title = path is null
+            || string.Equals(
+                Path.GetFullPath(path),
+                Path.GetFullPath(LibraryPaths.DefaultDatabasePath),
+                StringComparison.OrdinalIgnoreCase)
+            ? "Mirelia"
+            : $"Mirelia — {Path.GetFileNameWithoutExtension(path)}";
+    }
 
     private async void OnAddFolderClick(object? sender, RoutedEventArgs e)
     {

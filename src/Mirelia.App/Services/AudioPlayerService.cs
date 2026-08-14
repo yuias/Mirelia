@@ -184,6 +184,30 @@ public sealed class AudioPlayerService : IDisposable
         await ReconcilePreloadAsync();
     }
 
+    /// <summary>
+    /// Stops playback and empties the queue outright, current entry included.
+    /// Used when the library underneath changes: queued track ids belong to
+    /// the database that is going away, and would resolve to the wrong files
+    /// (or none) in the new one.
+    /// </summary>
+    public void StopAndClear()
+    {
+        _timer.Stop();
+        try
+        {
+            _engine?.Stop();
+        }
+        catch (AudioEngineException)
+        {
+            // Device may already be gone; the queue still has to go.
+        }
+
+        _preloadedEntryId = null;
+        _queue.RemoveAll();
+        CurrentEntryChanged?.Invoke(null);
+        QueueChanged?.Invoke();
+    }
+
     /// <summary>Jumps playback directly to a queue entry (double-click in the queue pane).</summary>
     public Task PlayEntryAsync(long entryId)
         => _queue.Find(entryId) is { } entry ? StartAtEntryAsync(entry) : Task.CompletedTask;

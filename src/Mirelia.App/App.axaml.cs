@@ -37,12 +37,18 @@ public class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            _library = new LibraryService(LibraryPaths.DefaultDatabasePath);
+            Settings = new SettingsService(LibraryPaths.SettingsFilePath);
+
+            // Reopen the library last chosen with File ▸ Open Library…, unless
+            // it has since gone — a missing file would otherwise be recreated
+            // empty and read as a lost library. MIRELIA_DB still outranks it,
+            // so the smoke run and tests are never pointed at a saved library.
+            string libraryPath = LibraryPaths.DatabaseOverride
+                ?? (Settings.Current.LibraryPath is { } saved && File.Exists(saved)
+                    ? saved
+                    : LibraryPaths.DefaultDatabasePath);
+            _library = new LibraryService(libraryPath);
             Library = _library;
-            Settings = new SettingsService(
-                Path.Combine(
-                    Path.GetDirectoryName(Path.GetFullPath(LibraryPaths.DefaultDatabasePath))!,
-                    "settings.json"));
 
             // Applied before the main window is created so there is no
             // flash of the wrong theme; re-applied on every settings save

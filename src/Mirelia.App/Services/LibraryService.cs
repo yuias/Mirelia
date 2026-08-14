@@ -19,11 +19,17 @@ namespace Mirelia.App.Services;
 /// </summary>
 public sealed class LibraryService : IDisposable
 {
-    private readonly string _dbPath;
-    private readonly LibraryDatabase _db;
-    private readonly PlaylistStore _playlists;
-    private readonly ViewSettingsStore _viewSettings;
     private readonly SemaphoreSlim _gate = new(1, 1);
+
+    private string _dbPath;
+    private LibraryDatabase _db;
+    private PlaylistStore _playlists;
+    private ViewSettingsStore _viewSettings;
+
+    // Scans and syncs run off the gate on their own connections, so the gate
+    // cannot tell whether one is still writing. A switch has to wait for
+    // them, and this is the only thing that knows they are in flight.
+    private int _backgroundJobs;
 
     /// <summary>Opens (creating if needed) the library at <paramref name="dbPath"/>.</summary>
     public LibraryService(string dbPath)
@@ -32,6 +38,44 @@ public sealed class LibraryService : IDisposable
         _db = LibraryDatabase.Open(dbPath);
         _playlists = new PlaylistStore(_db);
         _viewSettings = new ViewSettingsStore(_db);
+    }
+
+    /// <summary>The library file currently open.</summary>
+    public string DatabasePath => _dbPath;
+
+    /// <summary>True while a scan or sync is writing on its own connection.</summary>
+    public bool IsBusy => Volatile.Read(ref _backgroundJobs) > 0;
+
+    /// <summary>
+    /// Points this service at a different library file. The new database is
+    /// opened before the old one is closed, so a bad path leaves the current
+    /// library untouched. Callers own the invalidation of everything derived
+    /// from the old library — track ids do not survive the move.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">A scan or sync is running.</exception>
+    public async Task SwitchToAsync(string dbPath)
+    {
+        if (IsBusy)
+        {
+            throw new InvalidOperationException(
+                "A scan or sync is still running against the current library.");
+        }
+
+        await _gate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            LibraryDatabase opened = await Task.Run(() => LibraryDatabase.Open(dbPath))
+                .ConfigureAwait(false);
+            _db.Dispose();
+            _db = opened;
+            _dbPath = dbPath;
+            _playlists = new PlaylistStore(_db);
+            _viewSettings = new ViewSettingsStore(_db);
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 
     /// <summary>Per-view UI settings for a scope key.</summary>
@@ -139,9 +183,10 @@ public sealed class LibraryService : IDisposable
     /// </summary>
     public Task<ScanResult> ScanAsync(string directory, IProgress<int>? progress)
     {
-        return Task.Run(() =>
+        string path = _dbPath;
+        return RunJobAsync(() =>
         {
-            using var scanDb = LibraryDatabase.Open(_dbPath);
+            using var scanDb = LibraryDatabase.Open(path);
             return new LibraryScanner(scanDb).Scan(directory, progress);
         });
     }
@@ -152,9 +197,10 @@ public sealed class LibraryService : IDisposable
     /// </summary>
     public Task<ScanResult> RescanAllAsync(IProgress<int>? progress)
     {
-        return Task.Run(() =>
+        string path = _dbPath;
+        return RunJobAsync(() =>
         {
-            using var scanDb = LibraryDatabase.Open(_dbPath);
+            using var scanDb = LibraryDatabase.Open(path);
             return LibraryScanner.RescanEverything(scanDb, progress);
         });
     }
@@ -162,9 +208,10 @@ public sealed class LibraryService : IDisposable
     /// <summary>Scans dropped files/folders, same isolation as <see cref="ScanAsync"/>.</summary>
     public Task<ScanResult> ScanPathsAsync(IReadOnlyList<string> paths, IProgress<int>? progress)
     {
-        return Task.Run(() =>
+        string path = _dbPath;
+        return RunJobAsync(() =>
         {
-            using var scanDb = LibraryDatabase.Open(_dbPath);
+            using var scanDb = LibraryDatabase.Open(path);
             return new LibraryScanner(scanDb).ScanPaths(paths, progress);
         });
     }
@@ -325,10 +372,11 @@ public sealed class LibraryService : IDisposable
     public Task<SyncPlan> PlanSyncAsync(
         SyncTarget target, SyncPlanOptions? options = null, CancellationToken ct = default)
     {
-        return Task.Run(
+        string path = _dbPath;
+        return RunJobAsync(
             () =>
             {
-                using var syncDb = LibraryDatabase.Open(_dbPath);
+                using var syncDb = LibraryDatabase.Open(path);
                 using ISyncSinkFactory sinks = OpenSinks(target);
                 using ISyncFileSink sink = sinks.Open(target.Config.MusicRoot);
                 var planner = new SyncPlanner(
@@ -357,10 +405,11 @@ public sealed class LibraryService : IDisposable
     public Task<SyncResult> RunSyncAsync(
         SyncPlan plan, IProgress<SyncProgress>? progress, CancellationToken ct = default)
     {
-        return Task.Run(
+        string path = _dbPath;
+        return RunJobAsync(
             () =>
             {
-                using var syncDb = LibraryDatabase.Open(_dbPath);
+                using var syncDb = LibraryDatabase.Open(path);
                 using ISyncSinkFactory sinks = OpenSinks(plan.Target);
                 using ISyncFileSink music = sinks.Open(plan.Target.Config.MusicRoot);
                 using ISyncFileSink playlists = sinks.Open(plan.Target.Config.PlaylistDir);
@@ -400,6 +449,19 @@ public sealed class LibraryService : IDisposable
     {
         _gate.Dispose();
         _db.Dispose();
+    }
+
+    private async Task<T> RunJobAsync<T>(Func<T> job, CancellationToken ct = default)
+    {
+        Interlocked.Increment(ref _backgroundJobs);
+        try
+        {
+            return await Task.Run(job, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _backgroundJobs);
+        }
     }
 
     private async Task<T> RunAsync<T>(Func<T> operation)

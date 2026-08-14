@@ -63,12 +63,19 @@ public sealed record AppSettings
 
     /// <summary>Whether the playing-queue pane is shown.</summary>
     public bool QueuePaneOpen { get; init; } = true;
+
+    /// <summary>
+    /// The library file to reopen at startup, or null for the default one.
+    /// Set by "Open Library…"; falls back to the default when the file has
+    /// since gone.
+    /// </summary>
+    public string? LibraryPath { get; init; }
 }
 
 /// <summary>
-/// Loads and saves <see cref="AppSettings"/> as JSON next to the library
-/// database. Unreadable files fall back to defaults rather than blocking
-/// startup.
+/// Loads and saves <see cref="AppSettings"/> as JSON in the app's own data
+/// folder — not the open library's — so preferences do not fork per library.
+/// Unreadable files fall back to defaults rather than blocking startup.
 /// </summary>
 public sealed class SettingsService
 {

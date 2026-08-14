@@ -102,6 +102,50 @@ public sealed class LibraryDatabase : IDisposable
         }
     }
 
+    /// <summary>
+    /// Checks whether <paramref name="path"/> is a library this build can
+    /// open, without opening it for real. Returns null when it is, otherwise
+    /// a sentence explaining why not. <see cref="Open"/> adopts an empty file
+    /// as a brand-new library, so a user picking the wrong file needs to be
+    /// stopped before that happens.
+    /// </summary>
+    public static string? DescribeLibraryProblem(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return $"{path} does not exist.";
+        }
+
+        try
+        {
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = path,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false,
+            }.ToString());
+            connection.Open();
+
+            using SqliteCommand meta = connection.CreateCommand();
+            meta.CommandText =
+                "SELECT value FROM meta WHERE key = 'schema_version'";
+            if (meta.ExecuteScalar() is not string raw
+                || !int.TryParse(raw, CultureInfo.InvariantCulture, out int version))
+            {
+                return $"{Path.GetFileName(path)} is not a Mirelia library.";
+            }
+
+            return version > Schema.CurrentVersion
+                ? $"{Path.GetFileName(path)} is a v{version} library, newer than this build (v{Schema.CurrentVersion})."
+                : null;
+        }
+        catch (SqliteException)
+        {
+            // No meta table, not SQLite at all, or unreadable — same answer.
+            return $"{Path.GetFileName(path)} is not a Mirelia library.";
+        }
+    }
+
     /// <summary>Current value of <c>meta['library_generation']</c>.</summary>
     public long GetLibraryGeneration()
     {
