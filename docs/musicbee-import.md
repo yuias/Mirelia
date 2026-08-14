@@ -1,6 +1,7 @@
 # MusicBee import
 
-Status: source format settled 2026-08-15; nothing built yet.
+Status: built and run end to end 2026-08-15 against the library
+this was developed on — see "The reference run" below.
 
 A one-way migration off MusicBee, not a playlist importer. What has to
 survive the move: the library entries themselves, ratings, play counts, date
@@ -145,6 +146,19 @@ created in reference order so that saving one can check what it points at.
 
 Against the library this was developed on, every auto-playlist
 translates and none has to be frozen.
+
+## The reference run
+
+The full pass — scan included — has been run against a real library.
+Every `Location` in the export resolved to a file the scan had just
+written, so nothing went missing, and the ratings, play counts and
+dates that came across are the export's own, not the scan's clock.
+
+The import expects an empty database. Running it twice over the same one is
+safe for tracks — they match by path and are updated in place — but the
+playlists come across a second time as `Genres (2)`, `Playlists/Mixes`
+and so on, since nothing ties a playlist row back to the run that made it.
+See `backlog.md`.
 
 ## Where the code lives
 
