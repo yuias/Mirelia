@@ -1,8 +1,9 @@
 # Sync protocol
 
-Status: local folder sync **shipped in M7**; MTP and the network transport
-are designed but not built. This file records all three, plus the decisions
-frozen at kickoff so earlier milestones don't preclude them.
+Status: local folder sync **shipped in M7**; MTP is **built in M8** but not yet
+run against a physical device; the network transport is designed and not built.
+This file records all three, plus the decisions frozen at kickoff so earlier
+milestones don't preclude them.
 
 ## Transports
 
@@ -13,7 +14,7 @@ layer differs.
 | Transport | Kind | Destination | Status |
 |---|---|---|---|
 | Local folder | `folder` | A drive letter or UNC path — mounted SD card, USB stick, network share | M7 |
-| MTP | `mtp` | An Android phone or DAP connected over USB, reached through WPD | M8 |
+| MTP | `mtp` | An Android phone or DAP connected over USB, reached through WPD | M8, unverified |
 | Network | `network` | OpenSubsonic HTTP server, reached over WiFi | M8+ |
 
 Writes go through a single `ISyncFileSink` abstraction (`Stat`, `WriteFile`,
@@ -382,6 +383,14 @@ Directory creation is `CreateObjectWithPropertiesOnly` with
 `WPD_OBJECT_CONTENT_TYPE = WPD_CONTENT_TYPE_FOLDER`, walking down from the
 nearest cached ancestor.
 
+### One session, two roots
+
+`musicRoot` and `playlistDir` are two `ISyncFileSink` instances. On MTP they
+must share one `IPortableDevice` session — opening the same device twice is
+allowed but doubles the enumeration cost and lets the two caches disagree.
+`ISyncSinkFactory` owns the session and hands out rooted views;
+`FileSystemSinkFactory` gets the same treatment so the call sites stay uniform.
+
 ### Scope of the sink
 
 `Enumerate` is used by the reconcile step and by nothing else. It walks the
@@ -392,20 +401,40 @@ phone by hand, which is a real workflow on a device the user browses.
 
 ### What is not attempted
 
-- **Two sinks, one device.** `musicRoot` and `playlistDir` are two
-  `ISyncFileSink` instances today, constructed independently. On MTP they
-  must share one `IPortableDevice` session — opening the same device twice is
-  allowed but doubles the enumeration cost and lets the two caches disagree.
-  A `SyncSinkFactory` owns the session and hands out two rooted views;
-  `FileSystemSink` gets the same treatment so the call sites stay uniform.
 - **Transferring metadata.** WPD can set `WPD_MEDIA_ARTIST` and friends on
   the created object. Mirelia does not: the tags travel inside the file, and
   a device that reads one and not the other is not worth the divergence.
 - **Automated tests against a real device.** There is no way to fake a phone
   in CI. The path→object-ID translation, the cache, and the overwrite
-  sequence are tested against an in-memory fake WPD content layer; the sink
-  itself is verified by a manual checklist (copy, re-run, rename, delete on
-  device, reconnect, cancel mid-copy).
+  sequence are tested against an in-memory fake WPD content layer
+  (`Mirelia.Sync.Mtp.Tests`); the WPD layer beneath is verified by the manual
+  checklist below.
+
+### Manual checklist
+
+Nothing below has been run yet. `WpdObjectStore` compiles clean under
+`-warnaserror` and is written against the CsWin32-generated signatures, which
+is all that can be claimed without a phone on the end of a cable.
+
+1. **Device list.** Plug in an unlocked Android phone set to file transfer.
+   The target editor's device dropdown names it.
+2. **First copy.** Point a target at `Internal shared storage/Music`, sync,
+   and check the files and folders appear with the expected names.
+3. **Re-run.** Sync again with nothing changed: zero copies, zero deletes.
+4. **Overwrite.** Re-tag a track, sync, and confirm one object with the new
+   bytes — not two objects with the same name.
+5. **Delete on the device.** Remove a file with Explorer, sync, and confirm it
+   comes back.
+6. **Orphan removal.** Narrow the scope, sync, and confirm the files leave and
+   the directories they emptied go with them.
+7. **Cancel mid-copy.** Stop during a large file; confirm no partial object is
+   left, and that the next run copies it.
+8. **Disconnect mid-run.** Unplug during a sync: the run stops with a
+   disconnect message rather than churning through every remaining file.
+9. **Free space.** The preflight summary reports the phone's free space, or
+   omits the line if the driver does not supply it.
+10. **Reconnect.** Unplug, replug, sync again: the target still resolves the
+    same device by its Plug-and-Play id.
 
 ## Network transport: discovery and delta
 
