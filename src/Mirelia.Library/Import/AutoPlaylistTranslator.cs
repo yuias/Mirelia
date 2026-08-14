@@ -4,14 +4,6 @@ using Mirelia.Query.Compilation;
 
 namespace Mirelia.Library.Import;
 
-/// <summary>A Mirelia playlist a MusicBee reference resolved to.</summary>
-/// <param name="Name">Its name in Mirelia, which is what the DSL matches on.</param>
-/// <param name="IsSmart">
-/// Whether it is a smart playlist. <c>playlist =</c> tests static membership
-/// only, so a reference to one cannot be expressed.
-/// </param>
-public sealed record ReferencedPlaylist(string Name, bool IsSmart);
-
 /// <summary>The outcome of translating one auto-playlist.</summary>
 /// <param name="Query">The translated query, or null when anything failed.</param>
 /// <param name="Problems">
@@ -99,11 +91,11 @@ public static class AutoPlaylistTranslator
     /// <param name="source">The rules, as read from the <c>.xautopf</c> file.</param>
     /// <param name="resolve">
     /// Expands a MusicBee playlist reference — which may name a folder — into
-    /// the Mirelia playlists it covers. An unknown reference resolves to
+    /// the Mirelia playlist names it covers. An unknown reference resolves to
     /// nothing, and the translation fails.
     /// </param>
     public static AutoPlaylistTranslation Translate(
-        MusicBeeAutoPlaylist source, Func<string, IReadOnlyList<ReferencedPlaylist>> resolve)
+        MusicBeeAutoPlaylist source, Func<string, IReadOnlyList<string>> resolve)
     {
         var problems = new List<string>();
         var terms = new List<QueryExpr>();
@@ -156,7 +148,7 @@ public static class AutoPlaylistTranslator
 
     private static QueryExpr? ToExpr(
         MusicBeeCondition condition,
-        Func<string, IReadOnlyList<ReferencedPlaylist>> resolve,
+        Func<string, IReadOnlyList<string>> resolve,
         List<string> problems)
     {
         if (string.Equals(condition.Field, "Playlists", StringComparison.OrdinalIgnoreCase))
@@ -268,30 +260,22 @@ public static class AutoPlaylistTranslator
     private static QueryExpr? Membership(
         IReadOnlyList<string> references,
         bool negated,
-        Func<string, IReadOnlyList<ReferencedPlaylist>> resolve,
+        Func<string, IReadOnlyList<string>> resolve,
         List<string> problems)
     {
         var tests = new List<QueryExpr>();
         foreach (string reference in references)
         {
-            IReadOnlyList<ReferencedPlaylist> targets = resolve(reference);
+            IReadOnlyList<string> targets = resolve(reference);
             if (targets.Count == 0)
             {
                 problems.Add($"no playlist matches the reference '{reference}'");
                 return null;
             }
 
-            foreach (ReferencedPlaylist target in targets)
+            foreach (string target in targets)
             {
-                if (target.IsSmart)
-                {
-                    // 'playlist =' tests entries, and a smart playlist has
-                    // none; the reference would quietly match nothing.
-                    problems.Add($"it refers to the auto-playlist '{target.Name}'");
-                    return null;
-                }
-
-                tests.Add(new PlaylistMembership(negated, target.Name));
+                tests.Add(new PlaylistMembership(negated, target));
             }
         }
 

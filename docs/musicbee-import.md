@@ -137,10 +137,14 @@ import report saying why. The cases:
   grouping, mood, conductor, BPM, and the multi-value `Artist2`/`Genre2`
   family. Adding these means schema columns, which the import is not the
   place to decide.
-- A reference to another *auto*-playlist. `playlist = "X"` compiles to a test
-  against static entries only, so a reference to a smart playlist silently
-  matches nothing — see the backlog entry; it is a query-engine gap, not an
-  import one. References to static playlists and to folders of them are fine.
+- A reference to a playlist that carries a limit, which the DSL cannot
+  express — see `query-dsl.md`.
+
+An auto-playlist that builds on another comes across intact. Playlists are
+created in reference order so that saving one can check what it points at.
+
+Against the library this was developed on, every auto-playlist
+translates and none has to be frozen.
 
 ## Where the code lives
 

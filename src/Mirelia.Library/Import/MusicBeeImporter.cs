@@ -313,11 +313,12 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
             .ReadFolder(playlistFolder)
             .ToDictionary(a => a.Reference, StringComparer.OrdinalIgnoreCase);
 
-        List<Planned> planned = Plan(library, rules);
+        List<Planned> plan = Plan(library, rules);
         var store = new PlaylistStore(db);
-        var byReference = planned.ToDictionary(p => p.Reference, StringComparer.OrdinalIgnoreCase);
-        var byPersistentId = planned.ToDictionary(p => p.Source.PersistentId, StringComparer.Ordinal);
+        var byReference = plan.ToDictionary(p => p.Reference, StringComparer.OrdinalIgnoreCase);
+        var byPersistentId = plan.ToDictionary(p => p.Source.PersistentId, StringComparer.Ordinal);
         var trackIds = library.Tracks.ToDictionary(t => t.Id, t => t.Path);
+        List<Planned> planned = InReferenceOrder(plan, byReference);
 
         int folders = 0, statics = 0, smart = 0, snapshots = 0;
         int done = 0;
@@ -338,7 +339,8 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
             if (item.Rules is { } rule)
             {
                 AutoPlaylistTranslation translation = AutoPlaylistTranslator.Translate(
-                    rule, reference => Resolve(reference, byReference));
+                    rule,
+                    reference => [.. Referenced(reference, byReference).Select(p => p.Name)]);
 
                 if (translation.Query is { } query && TryCreateSmart(store, item, query, notes))
                 {
@@ -406,7 +408,11 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
     /// Expands a MusicBee playlist reference. One ending in <c>/</c> names a
     /// folder and covers every playlist below it.
     /// </summary>
-    private static IReadOnlyList<ReferencedPlaylist> Resolve(
+    /// <summary>
+    /// Expands a MusicBee playlist reference. One ending in a separator names
+    /// a folder and covers every playlist below it.
+    /// </summary>
+    private static List<Planned> Referenced(
         string rawReference, Dictionary<string, Planned> byReference)
     {
         // Rules write Windows separators; plans hold the '/' form.
@@ -415,7 +421,7 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
         if (!reference.EndsWith('/'))
         {
             return byReference.TryGetValue(reference, out Planned? exact) && !exact.Source.IsFolder
-                ? [Referenced(exact)]
+                ? [exact]
                 : [];
         }
 
@@ -423,18 +429,74 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
         [
             .. byReference.Values
                 .Where(p => !p.Source.IsFolder
-                    && p.Reference.StartsWith(reference, StringComparison.OrdinalIgnoreCase))
-                .Select(Referenced),
+                    && p.Reference.StartsWith(reference, StringComparison.OrdinalIgnoreCase)),
         ];
     }
 
     /// <summary>
-    /// Anything with rules counts as an auto-playlist, even one whose rules
-    /// did not translate and so became a fixed list. Deciding otherwise would
-    /// make the result depend on the order playlists happen to be created in.
+    /// Puts a playlist after everything it refers to, so that saving it can
+    /// check the reference against a playlist that already exists.
     /// </summary>
-    private static ReferencedPlaylist Referenced(Planned playlist)
-        => new(playlist.Name, playlist.Rules is not null);
+    private static List<Planned> InReferenceOrder(
+        List<Planned> planned, Dictionary<string, Planned> byReference)
+    {
+        var ordered = new List<Planned>(planned.Count);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (Planned item in planned)
+        {
+            Visit(item);
+        }
+
+        return ordered;
+
+        void Visit(Planned item)
+        {
+            // Already placed, or being placed: a reference loop stops here and
+            // leaves the playlist where the walk reached it.
+            if (!seen.Add(item.Reference))
+            {
+                return;
+            }
+
+            foreach (string reference in ReferencesOf(item))
+            {
+                foreach (Planned dependency in Referenced(reference, byReference))
+                {
+                    Visit(dependency);
+                }
+            }
+
+            ordered.Add(item);
+        }
+    }
+
+    /// <summary>Every playlist reference a rule set names.</summary>
+    private static IEnumerable<string> ReferencesOf(Planned item)
+    {
+        if (item.Rules is not { } rules)
+        {
+            yield break;
+        }
+
+        foreach (string source in rules.SourcePlaylists)
+        {
+            yield return source;
+        }
+
+        foreach (MusicBeeCondition condition in rules.Conditions)
+        {
+            if (!string.Equals(condition.Field, "Playlists", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            foreach (string value in condition.Values)
+            {
+                yield return value;
+            }
+        }
+    }
 
     /// <summary>
     /// Works out every playlist's reference and its final name before anything

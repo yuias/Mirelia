@@ -306,20 +306,6 @@ public sealed class MusicBeeImportTests : IDisposable
     }
 
     [Fact]
-    public void AReferenceToAnAutoPlaylistStopsTheTranslation()
-    {
-        AutoPlaylistTranslation result = AutoPlaylistTranslator.Translate(
-            new MusicBeeAutoPlaylist(
-                "x", [], MatchAll: true, [Condition("Playlists", "Is", "Smart")], Limit: null),
-            Resolver);
-
-        // 'playlist =' tests static entries, so the reference would silently
-        // match nothing rather than fail loudly.
-        Assert.Null(result.Query);
-        Assert.Contains(result.Problems, p => p.Contains("auto-playlist", StringComparison.Ordinal));
-    }
-
-    [Fact]
     public void AnUnknownReferenceStopsTheTranslation()
     {
         AutoPlaylistTranslation result = AutoPlaylistTranslator.Translate(
@@ -424,6 +410,42 @@ public sealed class MusicBeeImportTests : IDisposable
     }
 
     [Fact]
+    public void AnAutoPlaylistMayBuildOnAnother()
+    {
+        WriteExport(
+            [Track(1, "fixture.mp3", rating: 60), Track(2, "fixture.flac")],
+            [
+                Playlist("PL01", "Rated", trackIds: [1]),
+                Playlist("PL02", "Rated Lossy", trackIds: [1]),
+            ]);
+        WriteAutoPlaylist(
+            "Rated",
+            """
+                <Conditions CombineMethod="All">
+                  <Condition Field="Rating" Comparison="IsNotNull" />
+                </Conditions>
+            """);
+        WriteAutoPlaylist(
+            "Rated Lossy",
+            """
+                <Conditions CombineMethod="All">
+                  <Condition Field="Playlists" Comparison="Is" Value="Rated" />
+                  <Condition Field="Kind" Comparison="Is" Value="mp3" />
+                </Conditions>
+            """);
+
+        MusicBeeImportReport report = Import();
+
+        // The referenced playlist has to exist first for the reference to be
+        // checkable when the referring one is saved.
+        Assert.Equal(2, report.SmartPlaylists);
+        var store = new PlaylistStore(_db);
+        PlaylistInfo derived = Assert.Single(store.List(), p => p.Name == "Rated Lossy");
+        Assert.Equal("""playlist = "Rated" AND codec = "mp3" """.TrimEnd(), derived.QueryText);
+        Assert.Equal([PathOf("fixture.mp3")], store.Evaluate(derived).Select(TrackPath));
+    }
+
+    [Fact]
     public void AnUntranslatableAutoPlaylistIsFrozenAsItStands()
     {
         WriteExport(
@@ -500,16 +522,15 @@ public sealed class MusicBeeImportTests : IDisposable
         => new(field, comparison, values);
 
     /// <summary>
-    /// Resolves the references the translator tests use: two static playlists
-    /// and one auto-playlist, plus a folder holding one of them.
+    /// Resolves the references the translator tests use: two playlists, plus
+    /// a folder holding one of them.
     /// </summary>
-    private static IReadOnlyList<ReferencedPlaylist> Resolver(string reference) =>
+    private static IReadOnlyList<string> Resolver(string reference) =>
         reference.Replace('\\', '/') switch
         {
-            "Tmp/Picks" => [new ReferencedPlaylist("Picks", IsSmart: false)],
-            "Hidden/skip" => [new ReferencedPlaylist("Skip", IsSmart: false)],
-            "Hidden/" => [new ReferencedPlaylist("Skip", IsSmart: false)],
-            "Smart" => [new ReferencedPlaylist("Smart", IsSmart: true)],
+            "Tmp/Picks" => ["Picks"],
+            "Hidden/skip" => ["Skip"],
+            "Hidden/" => ["Skip"],
             _ => [],
         };
 
