@@ -34,6 +34,9 @@
         <MenuItem Header="Queue" ToggleType="CheckBox"
                   IsChecked="{Binding Queue.IsOpen, Mode=TwoWay}" />
       </MenuItem>
+      <MenuItem Header="_Help">
+        <MenuItem Header="About Mirelia" Click="OnAboutClick" />
+      </MenuItem>
     </Menu>
 
     <!-- Toolbar: search + sort -->

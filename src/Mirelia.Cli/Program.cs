@@ -1,4 +1,3 @@
-using System.Reflection;
 using Mirelia.AudioBridge;
 using Mirelia.Library.Database;
 using Mirelia.Library.Export;
@@ -55,10 +54,7 @@ static int Seed(string countText, string? dbPath)
 
 static int PrintVersion()
 {
-    string version = typeof(Program).Assembly
-        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-        ?? "unknown";
-    Console.WriteLine($"mirelia-cli {version}");
+    Console.WriteLine(Mirelia.Library.AppInfo.VersionLine);
     return 0;
 }
 

@@ -1,0 +1,21 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Mirelia.App.Dialogs.AboutDialog"
+        Title="About Mirelia"
+        Width="340" SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner">
+  <StackPanel Margin="24" Spacing="16">
+
+    <StackPanel Spacing="4">
+      <TextBlock x:Name="NameText" FontSize="22" FontWeight="SemiBold" />
+      <TextBlock x:Name="VersionText" Opacity="0.7" />
+      <!-- Absent when the build had no git checkout to read. -->
+      <TextBlock x:Name="GitHashText" Opacity="0.5" FontSize="12"
+                 FontFamily="Consolas,Menlo,monospace" IsVisible="False" />
+    </StackPanel>
+
+    <Button Content="Close" Classes="accent" HorizontalAlignment="Right"
+            Click="OnClose" IsDefault="True" IsCancel="True" />
+  </StackPanel>
+</Window>

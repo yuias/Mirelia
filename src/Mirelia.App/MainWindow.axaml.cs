@@ -1212,6 +1212,11 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void OnAboutClick(object? sender, RoutedEventArgs e)
+    {
+        await new AboutDialog().ShowDialog(this);
+    }
+
     private async void OnNewFolderClick(object? sender, RoutedEventArgs e)
     {
         if (ViewModel is { } vm)
