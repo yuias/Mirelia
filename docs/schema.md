@@ -249,6 +249,17 @@ CREATE UNIQUE INDEX ix_sync_target_file_path
     ON sync_target_file(target_id, rel_path_lower);
 ```
 
+## Schema v5 additions
+
+```sql
+-- Reverse index on playlist membership. `playlist = "X"` compiles to a
+-- correlated EXISTS keyed on pe.track_id, but playlist_entry is indexed by
+-- (playlist_id, position) only, so that lookup scanned the whole entry table
+-- once per candidate track and once per reference. A smart playlist combining
+-- nine references never finished evaluating.
+CREATE INDEX ix_playlist_entry_track ON playlist_entry(track_id);
+```
+
 ## Migration log
 
 | Version | Date | Change |
@@ -257,3 +268,4 @@ CREATE UNIQUE INDEX ix_sync_target_file_path
 | 2 | 2026-08-08 | `view_settings` table for per-view columns/sort |
 | 3 | 2026-08-08 | `track.date_key` normalized date sort key, backfilled |
 | 4 | 2026-08-13 | `sync_target`, `sync_target_scope`, `sync_target_file` for M7 sync |
+| 5 | 2026-08-15 | `ix_playlist_entry_track`, so `playlist =` references stop scanning |

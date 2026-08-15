@@ -8,7 +8,18 @@ namespace Mirelia.Library.Database;
 internal static class Schema
 {
     /// <summary>Current schema version written to <c>meta['schema_version']</c>.</summary>
-    internal const int CurrentVersion = 4;
+    internal const int CurrentVersion = 5;
+
+    /// <summary>
+    /// Schema v5: reverse index on playlist membership. A <c>playlist = "X"</c>
+    /// condition compiles to a correlated
+    /// <c>EXISTS (… WHERE pe.track_id = t.id …)</c>, which without this index
+    /// scans the whole entry table once per candidate track — per reference.
+    /// A playlist combining nine references took a core hostage indefinitely.
+    /// </summary>
+    internal const string V5 = """
+        CREATE INDEX ix_playlist_entry_track ON playlist_entry(track_id);
+        """;
 
     /// <summary>
     /// Schema v4: sync targets, their playlist scope, and the record of what
