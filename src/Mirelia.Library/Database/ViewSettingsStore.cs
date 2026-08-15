@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Data.Sqlite;
 using Mirelia.Library.Querying;
 
 namespace Mirelia.Library.Database;
@@ -72,5 +73,28 @@ public sealed class ViewSettingsStore(LibraryDatabase db)
             """,
             ("$k", scopeKey),
             ("$j", JsonSerializer.Serialize(settings, Options)));
+    }
+
+    /// <summary>
+    /// Drops the saved column layout and widths of every scope, so all views
+    /// fall back to the defaults. Sort state is deliberately left alone:
+    /// this is a columns reset, not a view reset.
+    /// </summary>
+    public void ClearAllColumns()
+    {
+        var scopes = new List<string>();
+        using (SqliteCommand cmd = db.Command("SELECT scope_key FROM view_settings"))
+        using (SqliteDataReader reader = cmd.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                scopes.Add(reader.GetString(0));
+            }
+        }
+
+        foreach (string scope in scopes)
+        {
+            Set(scope, Get(scope) with { Columns = null, ColumnWidths = null });
+        }
     }
 }

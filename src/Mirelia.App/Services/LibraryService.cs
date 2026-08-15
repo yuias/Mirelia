@@ -90,6 +90,14 @@ public sealed class LibraryService : IDisposable
             return null;
         });
 
+    /// <summary>Clears the saved column layout and widths of every view.</summary>
+    public Task ClearAllViewColumnsAsync()
+        => RunAsync<object?>(() =>
+        {
+            _viewSettings.ClearAllColumns();
+            return null;
+        });
+
     /// <summary>Re-sorts an id array in SQL by a preset.</summary>
     public Task<long[]> SortIdsAsync(long[] ids, TrackSortOrder order)
         => RunAsync(() => TrackPager.SortIds(_db, ids, order).ToArray());

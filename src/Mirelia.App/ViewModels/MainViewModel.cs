@@ -863,9 +863,9 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Clears this view's saved column layout and widths so it falls back to
-    /// the default: the Music view's state, or the built-in registry for the
-    /// Music view itself.
+    /// Clears this view's saved column layout and widths — only this one —
+    /// so it falls back to the default: the Music view's state, or the
+    /// built-in registry for the Music view itself.
     /// </summary>
     public async Task ResetColumnsToDefaultAsync()
     {
@@ -876,6 +876,18 @@ public sealed partial class MainViewModel : ObservableObject
             ColumnWidths = null,
         });
         await ReloadAsync();
+    }
+
+    /// <summary>
+    /// Clears the saved column layout and widths of every view at once, the
+    /// Music view included, so all of them fall back to the registry
+    /// defaults. Sort state is left untouched.
+    /// </summary>
+    public async Task ResetAllColumnsToDefaultAsync()
+    {
+        await _library.ClearAllViewColumnsAsync();
+        await ReloadAsync();
+        StatusText = "Column layout reset in all views.";
     }
 
     partial void OnSearchTextChanged(string value)

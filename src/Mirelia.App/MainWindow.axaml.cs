@@ -712,18 +712,33 @@ public partial class MainWindow : Window
 
         // "Default" is the Music view's state (the built-in registry for
         // the Music view itself); resetting clears this view's saved
-        // columns and widths so it falls back to that.
+        // columns and widths so it falls back to that. Only this view —
+        // View ▸ Columns has the all-views reset.
         ColumnsMenu.Items.Add(new Separator());
-        var reset = new MenuItem { Header = "Reset to Default" };
+        var reset = new MenuItem { Header = "Reset This View to Default" };
         reset.Click += async (_, _) =>
         {
-            // A capture still pending from a just-made resize would be
-            // re-persisted right after the reset; the reset supersedes it.
-            _pendingWidths = null;
-            _columnWidthDebounce.Stop();
+            DiscardPendingWidths();
             await vm.ResetColumnsToDefaultAsync();
         };
         ColumnsMenu.Items.Add(reset);
+    }
+
+    private async void OnResetAllColumnsClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is { } vm)
+        {
+            DiscardPendingWidths();
+            await vm.ResetAllColumnsToDefaultAsync();
+        }
+    }
+
+    // A capture still pending from a just-made resize would be re-persisted
+    // right after a reset; the reset supersedes it.
+    private void DiscardPendingWidths()
+    {
+        _pendingWidths = null;
+        _columnWidthDebounce.Stop();
     }
 
     private MainViewModel? ViewModel => DataContext as MainViewModel;

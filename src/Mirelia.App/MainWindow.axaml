@@ -33,6 +33,13 @@
              so the toggle needs TwoWay to reach the view-model. -->
         <MenuItem Header="Queue" ToggleType="CheckBox"
                   IsChecked="{Binding Queue.IsOpen, Mode=TwoWay}" />
+        <Separator />
+        <MenuItem Header="Columns">
+          <!-- Per-view reset lives in the grid's own context menu; this one
+               is the "everywhere" hammer. -->
+          <MenuItem Header="Reset in All Views" Click="OnResetAllColumnsClick"
+                    ToolTip.Tip="Clears the saved column layout of every source and playlist" />
+        </MenuItem>
       </MenuItem>
       <MenuItem Header="_Help">
         <MenuItem Header="About Mirelia" Click="OnAboutClick" />
