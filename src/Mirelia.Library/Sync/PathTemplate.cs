@@ -80,7 +80,7 @@ public static class PathTemplate
     /// <exception cref="PathTemplateException">Malformed or unknown token.</exception>
     public static string Render(string template, TrackLayoutInfo info, ReservedCharMode mode)
     {
-        string extension = Path.GetExtension(info.SourcePath);
+        string extension = Extension(info.SourcePath);
 
         // {SourceRelative} is already a sanitized, real path — re-running the
         // component rules over it would rewrite names that demonstrably work.
@@ -181,7 +181,7 @@ public static class PathTemplate
             "AlbumArtist" => info.AlbumArtist ?? info.Artist ?? UnknownArtist,
             "Artist" => info.Artist ?? info.AlbumArtist ?? UnknownArtist,
             "Album" => info.Album ?? UnknownAlbum,
-            "Title" => info.Title ?? Path.GetFileNameWithoutExtension(info.SourcePath),
+            "Title" => info.Title ?? FileStem(info.SourcePath),
             "Genre" => info.Genre ?? string.Empty,
             "Year" => info.Year?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
             "Track" => Number(info.TrackNo, format ?? "0"),
@@ -193,8 +193,8 @@ public static class PathTemplate
                 ? d.ToString(CultureInfo.InvariantCulture) + "-"
                 : string.Empty,
 
-            "Ext" => Path.GetExtension(info.SourcePath).TrimStart('.'),
-            "SourceRelative" => (info.SourceRelative ?? Path.GetFileName(info.SourcePath))
+            "Ext" => Extension(info.SourcePath).TrimStart('.'),
+            "SourceRelative" => (info.SourceRelative ?? FileName(info.SourcePath))
                 .Replace('\\', '/'),
             _ => throw new PathTemplateException($"Unknown template token '{{{token}}}'."),
         };
@@ -202,4 +202,27 @@ public static class PathTemplate
 
     private static string Number(int? value, string format) =>
         value is { } v ? v.ToString(format, CultureInfo.InvariantCulture) : string.Empty;
+
+    // Source paths are whatever the scanning host wrote, and a MusicBee import
+    // stores Windows paths — so System.IO.Path would not split them on a
+    // non-Windows host. These treat both separators regardless of host.
+    private static string FileName(string path)
+    {
+        int cut = path.AsSpan().LastIndexOfAny('/', '\\');
+        return cut < 0 ? path : path[(cut + 1)..];
+    }
+
+    private static string FileStem(string path)
+    {
+        string name = FileName(path);
+        int dot = name.LastIndexOf('.');
+        return dot <= 0 ? name : name[..dot];
+    }
+
+    private static string Extension(string path)
+    {
+        string name = FileName(path);
+        int dot = name.LastIndexOf('.');
+        return dot <= 0 ? string.Empty : name[dot..];
+    }
 }

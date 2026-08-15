@@ -60,6 +60,28 @@ public sealed class SyncLayoutTests
     }
 
     [Fact]
+    public void SourcePathsAreSplitOnBothSeparatorsWhateverTheHost()
+    {
+        // A MusicBee import stores Windows paths, so the layout rules must not
+        // depend on the host's separator when deriving a name from the source.
+        Assert.Equal(
+            "Unknown Artist/Unknown Album/03 Song.flac",
+            PathTemplate.Render(
+                PathTemplate.Default,
+                Track(title: null, artist: null, albumArtist: null, album: null, trackNo: null,
+                      sourcePath: @"X:\Music\Album\03 Song.flac"),
+                ReservedCharMode.Underscore));
+
+        Assert.Equal(
+            "Unknown Artist/Unknown Album/03 Song.flac",
+            PathTemplate.Render(
+                PathTemplate.Default,
+                Track(title: null, artist: null, albumArtist: null, album: null, trackNo: null,
+                      sourcePath: "/music/Album/03 Song.flac"),
+                ReservedCharMode.Underscore));
+    }
+
+    [Fact]
     public void AlbumArtistFallsBackToTrackArtist()
     {
         string path = PathTemplate.Render(
