@@ -168,6 +168,13 @@ public static class Thumbnailer
 /// Behind the in-memory bound sits <see cref="ThumbnailStore"/>, so a cover
 /// survives a restart and is read from its file and re-encoded once ever.
 ///
+/// Only <em>group</em> covers are cached, keyed by the album (or artist) they
+/// illustrate. A track whose own artwork differs from its album's is read
+/// straight from its file by <see cref="ReadTrackArtworkAsync"/>: that happens
+/// once when the track starts playing, which is the only place per-track
+/// artwork is shown, and caching it per track would keep one copy of the album
+/// cover for every track of the album.
+///
 /// All members must be called on the UI thread; reading, scaling and encoding
 /// happen off it.
 /// </summary>
@@ -179,9 +186,9 @@ public sealed class ArtworkCache(LibraryService library) : IDisposable
     /// </summary>
     private const long MaxBytes = 24 * 1024 * 1024;
 
-    private readonly Dictionary<long, LinkedListNode<Entry>> _entries = [];
+    private readonly Dictionary<CoverKey, LinkedListNode<Entry>> _entries = [];
     private readonly LinkedList<Entry> _lru = [];
-    private readonly Dictionary<long, Task<byte[]?>> _inFlight = [];
+    private readonly Dictionary<CoverKey, Task<byte[]?>> _inFlight = [];
     private long _bytes;
     private ThumbnailStore? _store;
 
@@ -189,9 +196,10 @@ public sealed class ArtworkCache(LibraryService library) : IDisposable
     /// The cover of <paramref name="trackId"/> as encoded thumbnail bytes, or
     /// null when the track has none.
     /// </summary>
-    public Task<byte[]?> GetThumbnailAsync(long trackId)
+    public Task<byte[]?> GetThumbnailAsync(CoverScope scope, long id, long sourceTrackId)
     {
-        if (_entries.TryGetValue(trackId, out LinkedListNode<Entry>? node))
+        var key = new CoverKey(scope, id);
+        if (_entries.TryGetValue(key, out LinkedListNode<Entry>? node))
         {
             Touch(node);
             return Task.FromResult(node.Value.Thumbnail);
@@ -199,14 +207,30 @@ public sealed class ArtworkCache(LibraryService library) : IDisposable
 
         // A block scrolling in and out re-asks while the first read is still
         // running; both callers must share that one read.
-        if (_inFlight.TryGetValue(trackId, out Task<byte[]?>? pending))
+        if (_inFlight.TryGetValue(key, out Task<byte[]?>? pending))
         {
             return pending;
         }
 
-        Task<byte[]?> load = LoadAsync(trackId);
-        _inFlight[trackId] = load;
+        Task<byte[]?> load = LoadAsync(key, sourceTrackId);
+        _inFlight[key] = load;
         return load;
+    }
+
+    /// <summary>
+    /// A single track's own cover, read from its file and never cached. Tracks
+    /// really do carry artwork that differs from their album's, and the one
+    /// place that shows is the audible track — once every few minutes, off the
+    /// UI thread, so a read costs nothing worth caching for.
+    /// </summary>
+    public async Task<byte[]?> ReadTrackArtworkAsync(long trackId)
+    {
+        if (await library.GetPathAsync(trackId) is not { } path)
+        {
+            return null;
+        }
+
+        return await Task.Run(() => ArtworkReader.Read(path));
     }
 
     /// <summary>
@@ -252,7 +276,7 @@ public sealed class ArtworkCache(LibraryService library) : IDisposable
     /// <inheritdoc />
     public void Dispose() => _store?.Dispose();
 
-    private async Task<byte[]?> LoadAsync(long trackId)
+    private async Task<byte[]?> LoadAsync(CoverKey key, long sourceTrackId)
     {
         byte[]? thumbnail = null;
         try
@@ -261,7 +285,7 @@ public sealed class ArtworkCache(LibraryService library) : IDisposable
             if (store is not null)
             {
                 (bool stored, byte[]? cached) = await Task.Run(() =>
-                    (store.TryGet(trackId, out byte[]? found), found));
+                    (store.TryGet(key.Scope, key.Id, out byte[]? found), found));
                 if (stored)
                 {
                     thumbnail = cached;
@@ -272,7 +296,7 @@ public sealed class ArtworkCache(LibraryService library) : IDisposable
             // Only the path lookup goes through the library's gate; the file
             // read and the re-encode stay off it so a wall of covers cannot
             // stall row hydration behind them.
-            if (await library.GetPathAsync(trackId) is { } path)
+            if (await library.GetPathAsync(sourceTrackId) is { } path)
             {
                 thumbnail = await Task.Run(() =>
                     ArtworkReader.Read(path) is { } source
@@ -285,35 +309,35 @@ public sealed class ArtworkCache(LibraryService library) : IDisposable
             if (store is not null)
             {
                 byte[]? toStore = thumbnail;
-                await Task.Run(() => store.Put(trackId, toStore));
+                await Task.Run(() => store.Put(key.Scope, key.Id, toStore));
             }
         }
         finally
         {
-            _inFlight.Remove(trackId);
-            Store(trackId, thumbnail);
+            _inFlight.Remove(key);
+            Store(key, thumbnail);
         }
 
         return thumbnail;
     }
 
-    private void Store(long trackId, byte[]? thumbnail)
+    private void Store(CoverKey key, byte[]? thumbnail)
     {
-        if (_entries.ContainsKey(trackId))
+        if (_entries.ContainsKey(key))
         {
             return;
         }
 
         // Nulls are cached too: "this track has no cover" is an answer worth
         // remembering, and it is the expensive one to recompute.
-        LinkedListNode<Entry> node = _lru.AddFirst(new Entry(trackId, thumbnail));
-        _entries[trackId] = node;
+        LinkedListNode<Entry> node = _lru.AddFirst(new Entry(key, thumbnail));
+        _entries[key] = node;
         _bytes += thumbnail?.LongLength ?? 0;
 
         while (_bytes > MaxBytes && _lru.Last is { } oldest)
         {
             _lru.RemoveLast();
-            _entries.Remove(oldest.Value.TrackId);
+            _entries.Remove(oldest.Value.Key);
             _bytes -= oldest.Value.Thumbnail?.LongLength ?? 0;
         }
     }
@@ -327,5 +351,7 @@ public sealed class ArtworkCache(LibraryService library) : IDisposable
         }
     }
 
-    private sealed record Entry(long TrackId, byte[]? Thumbnail);
+    private readonly record struct CoverKey(CoverScope Scope, long Id);
+
+    private sealed record Entry(CoverKey Key, byte[]? Thumbnail);
 }

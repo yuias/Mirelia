@@ -1317,9 +1317,9 @@ public sealed partial class MainViewModel : ObservableObject
         });
     }
 
-    // Decode widths. The cache stores one 512 px thumbnail per cover; each
-    // consumer decodes it at the size it actually draws, so an album block
-    // holds a quarter of the pixels the Now Playing panel does.
+    // Decode widths. The cache stores one 512 px thumbnail per group cover;
+    // each consumer decodes it at the size it actually draws, so an album
+    // block holds a quarter of the pixels the Now Playing panel does.
     private const int NowPlayingArtworkWidth = 400;
     private const int BlockCoverWidth = 256;
 
@@ -1328,8 +1328,10 @@ public sealed partial class MainViewModel : ObservableObject
     {
         IReadOnlyList<TrackGroupBlock>? target = GroupedTracks;
         int token = block.CoverToken;
+        byte[]? thumbnail = await _artwork.GetThumbnailAsync(
+            block.CoverScope, block.CoverId, block.Run.CoverTrackId);
         Avalonia.Media.Imaging.Bitmap? cover =
-            await DecodeArtworkAsync(block.Run.CoverTrackId, BlockCoverWidth);
+            await DecodeAsync(thumbnail, BlockCoverWidth);
 
         // Ignore covers for a block list that was replaced meanwhile; the
         // block itself rejects (and frees) one it no longer wants.
@@ -1343,13 +1345,13 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
-    /// A track's cover decoded to <paramref name="width"/>. The caller owns
-    /// the bitmap; only the encoded thumbnail behind it is shared.
+    /// Decodes encoded artwork to <paramref name="width"/>. The caller owns
+    /// the bitmap; only the encoded bytes behind it are ever shared.
     /// </summary>
-    private async Task<Avalonia.Media.Imaging.Bitmap?> DecodeArtworkAsync(
-        long trackId, int width)
+    private static async Task<Avalonia.Media.Imaging.Bitmap?> DecodeAsync(
+        byte[]? encoded, int width)
     {
-        if (await _artwork.GetThumbnailAsync(trackId) is not { } thumbnail)
+        if (encoded is null)
         {
             return null;
         }
@@ -1358,12 +1360,12 @@ public sealed partial class MainViewModel : ObservableObject
         {
             try
             {
-                using var stream = new MemoryStream(thumbnail);
+                using var stream = new MemoryStream(encoded);
                 return Avalonia.Media.Imaging.Bitmap.DecodeToWidth(stream, width);
             }
             catch (Exception)
             {
-                // A thumbnail that will not decode is no different from none.
+                // Artwork that will not decode is no different from none.
                 return null;
             }
         });
@@ -1377,8 +1379,11 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
-        Avalonia.Media.Imaging.Bitmap? artwork =
-            await DecodeArtworkAsync(id, NowPlayingArtworkWidth);
+        // Read from the track's own file rather than the album cover cache:
+        // a track can carry artwork its album does not, and this panel is the
+        // one place that shows.
+        Avalonia.Media.Imaging.Bitmap? artwork = await DecodeAsync(
+            await _artwork.ReadTrackArtworkAsync(id), NowPlayingArtworkWidth);
         Transport.SetNowPlaying(row.Title, row.Artist, row.Album, artwork);
     }
 

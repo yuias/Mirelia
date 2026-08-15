@@ -1,5 +1,6 @@
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
+using Mirelia.App.Services;
 using Mirelia.Library.Querying;
 
 namespace Mirelia.App.Models;
@@ -52,13 +53,25 @@ public sealed partial class TrackGroupBlock : ObservableObject
     internal TrackGroupBlock(
         VirtualTrackList tracks,
         TrackGroupRun run,
-        string unknownLabel,
+        LayoutSpec layout,
         Action<TrackGroupBlock> requestCover)
     {
         _tracks = tracks;
         _requestCover = requestCover;
         Run = run;
-        Title = FormatTitle(run, unknownLabel);
+
+        // The cover belongs to the group, not to the track it happens to be
+        // read from — one album keeps one cached cover however many of its
+        // tracks are on screen. A run with no group of its own falls back to
+        // its cover track, which is the only identity it has.
+        (CoverScope, CoverId) = run.GroupId == TrackGrouper.NoGroup
+            ? (CoverScope.Track, run.CoverTrackId)
+            : (layout.GroupField switch
+            {
+                TrackGroupField.AlbumArtist => CoverScope.AlbumArtist,
+                _ => CoverScope.Album,
+            }, run.GroupId);
+        Title = FormatTitle(run, layout.UnknownLabel);
         Subtitle = FormatSubtitle(run);
         DurationText = FormatDuration(run.DurationMs);
         Discs =
@@ -71,6 +84,12 @@ public sealed partial class TrackGroupBlock : ObservableObject
 
     /// <summary>The run this block renders.</summary>
     public TrackGroupRun Run { get; }
+
+    /// <summary>What the block's cover is cached under.</summary>
+    public CoverScope CoverScope { get; }
+
+    /// <summary>Id of the group (or track) the cover is cached under.</summary>
+    public long CoverId { get; }
 
     /// <summary>Header line: "Album Artist - Album", or the group's own name.</summary>
     public string Title { get; }
@@ -213,7 +232,7 @@ public static class TrackGroupBlocks
         var blocks = new List<TrackGroupBlock>(runs.Count);
         foreach (TrackGroupRun run in runs)
         {
-            blocks.Add(new TrackGroupBlock(tracks, run, layout.UnknownLabel, requestCover));
+            blocks.Add(new TrackGroupBlock(tracks, run, layout, requestCover));
         }
 
         return blocks;

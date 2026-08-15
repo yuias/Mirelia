@@ -1,4 +1,5 @@
 using Mirelia.App.Models;
+using Mirelia.App.Services;
 using Mirelia.Library.Querying;
 using Xunit;
 
@@ -162,6 +163,35 @@ public sealed class TrackGroupBlockTests
         // Scrolling re-realizes a block constantly; each re-realization must
         // not start another file read.
         Assert.Equal([1L], requested);
+    }
+
+    [Fact]
+    public void ACoverIsCachedAgainstItsGroupNotItsTrack()
+    {
+        VirtualTrackList tracks = MakeList(2, out _);
+        TrackGroupBlock block = Blocks(tracks, Run(0, 2, [new DiscSpan(1, 0, 2)]))[0];
+
+        // One album keeps one cached cover however many of its tracks are on
+        // screen — keying by track would store a copy per track of it.
+        Assert.Equal(CoverScope.Album, block.CoverScope);
+        Assert.Equal(1, block.CoverId);
+    }
+
+    [Fact]
+    public void ARunWithNoGroupFallsBackToItsCoverTrack()
+    {
+        VirtualTrackList tracks = MakeList(1, out _);
+        TrackGroupRun run = Run(0, 1, [new DiscSpan(null, 0, 1)]) with
+        {
+            GroupId = TrackGrouper.NoGroup,
+            CoverTrackId = 42,
+        };
+
+        TrackGroupBlock block = Blocks(tracks, run)[0];
+
+        // A track with no album has no group identity to cache under.
+        Assert.Equal(CoverScope.Track, block.CoverScope);
+        Assert.Equal(42, block.CoverId);
     }
 
     private static List<TrackGroupBlock> Blocks(VirtualTrackList tracks, TrackGroupRun run)

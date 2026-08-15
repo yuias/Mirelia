@@ -2,16 +2,32 @@ using Microsoft.Data.Sqlite;
 
 namespace Mirelia.App.Services;
 
+/// <summary>What a cached cover belongs to.</summary>
+public enum CoverScope
+{
+    /// <summary>An album; its cover comes from the first track shown of it.</summary>
+    Album,
+
+    /// <summary>An album artist, for artist-grouped layouts.</summary>
+    AlbumArtist,
+
+    /// <summary>A single track, for tracks that belong to no group.</summary>
+    Track,
+}
+
 /// <summary>
 /// Cover thumbnails kept on disk beside the library, so a cover is read from
 /// its file and re-encoded once ever rather than once per launch.
 ///
-/// Entries are keyed by track id, which means two tracks of the same album can
-/// each hold a copy — album blocks only ever ask for one track per album, but
-/// Now Playing asks for whichever track is audible, so the row count grows
-/// with listening. The store is therefore capped and evicts its oldest entries;
-/// it is a cache, and deleting the file loses nothing but the work to rebuild
-/// it.
+/// Entries are keyed by the group they illustrate, not by track: a cover
+/// belongs to an album, and storing it per track would keep one copy per track
+/// of that album. Tracks whose artwork genuinely differs from their album's
+/// are read straight from the file when they play — see
+/// <see cref="ArtworkCache"/> — because that is the only place a per-track
+/// cover is shown.
+///
+/// The store is capped and evicts its oldest entries; it is a cache, and
+/// deleting the file loses nothing but the work to rebuild it.
 ///
 /// Nothing here validates against the source file. Re-tagged artwork keeps
 /// showing the old thumbnail until the cache is cleared — the price of never
@@ -50,10 +66,17 @@ public sealed class ThumbnailStore : IDisposable
         Execute("""
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous  = NORMAL;
-            CREATE TABLE IF NOT EXISTS thumbnail (
-                track_id     INTEGER PRIMARY KEY,
+
+            -- Superseded by 'cover', which keys by group rather than by track.
+            -- Dropping it outright is fine: this file is a cache.
+            DROP TABLE IF EXISTS thumbnail;
+
+            CREATE TABLE IF NOT EXISTS cover (
+                scope        INTEGER NOT NULL,
+                id           INTEGER NOT NULL,
                 webp         BLOB,
-                created_unix INTEGER NOT NULL
+                created_unix INTEGER NOT NULL,
+                PRIMARY KEY (scope, id)
             );
             """);
     }
@@ -63,16 +86,18 @@ public sealed class ThumbnailStore : IDisposable
         => Path.ChangeExtension(libraryPath, ".covers.db");
 
     /// <summary>
-    /// The stored thumbnail for a track. <paramref name="thumbnail"/> is null
-    /// both when nothing is stored and when the stored answer is "this track
+    /// The stored thumbnail for a group. <paramref name="thumbnail"/> is null
+    /// both when nothing is stored and when the stored answer is "this group
     /// has no cover" — the return value tells those apart.
     /// </summary>
-    public bool TryGet(long trackId, out byte[]? thumbnail)
+    public bool TryGet(CoverScope scope, long id, out byte[]? thumbnail)
     {
         lock (_lock)
         {
             using SqliteCommand cmd = Command(
-                "SELECT webp FROM thumbnail WHERE track_id = $id", ("$id", trackId));
+                "SELECT webp FROM cover WHERE scope = $s AND id = $id",
+                ("$s", (int)scope),
+                ("$id", id));
             using SqliteDataReader reader = cmd.ExecuteReader();
             if (!reader.Read())
             {
@@ -86,22 +111,23 @@ public sealed class ThumbnailStore : IDisposable
     }
 
     /// <summary>
-    /// Stores a thumbnail, or a null one to record that the track has no
+    /// Stores a thumbnail, or a null one to record that the group has no
     /// cover — that answer costs a file read to recompute, so it is worth
     /// keeping too.
     /// </summary>
-    public void Put(long trackId, byte[]? thumbnail)
+    public void Put(CoverScope scope, long id, byte[]? thumbnail)
     {
         lock (_lock)
         {
             Execute(
                 """
-                INSERT INTO thumbnail (track_id, webp, created_unix)
-                VALUES ($id, $b, $t)
-                ON CONFLICT(track_id) DO UPDATE SET
+                INSERT INTO cover (scope, id, webp, created_unix)
+                VALUES ($s, $id, $b, $t)
+                ON CONFLICT(scope, id) DO UPDATE SET
                     webp = excluded.webp, created_unix = excluded.created_unix
                 """,
-                ("$id", trackId),
+                ("$s", (int)scope),
+                ("$id", id),
                 ("$b", thumbnail),
                 ("$t", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
 
@@ -118,7 +144,7 @@ public sealed class ThumbnailStore : IDisposable
     {
         lock (_lock)
         {
-            Execute("DELETE FROM thumbnail");
+            Execute("DELETE FROM cover");
             _insertsSinceSweep = 0;
         }
     }
@@ -133,12 +159,12 @@ public sealed class ThumbnailStore : IDisposable
         // thumbnail cost nothing and are left alone.
         Execute(
             """
-            DELETE FROM thumbnail WHERE track_id IN (
-                SELECT track_id FROM (
-                    SELECT track_id,
+            DELETE FROM cover WHERE (scope, id) IN (
+                SELECT scope, id FROM (
+                    SELECT scope, id,
                            SUM(length(webp)) OVER (
-                               ORDER BY created_unix DESC, track_id DESC) AS running
-                    FROM thumbnail WHERE webp IS NOT NULL)
+                               ORDER BY created_unix DESC, scope DESC, id DESC) AS running
+                    FROM cover WHERE webp IS NOT NULL)
                 WHERE running > $cap)
             """,
             ("$cap", _maxBytes));

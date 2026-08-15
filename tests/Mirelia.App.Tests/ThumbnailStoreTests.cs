@@ -24,13 +24,13 @@ public sealed class ThumbnailStoreTests : IDisposable
         byte[] thumbnail = [1, 2, 3, 4];
         using (var store = new ThumbnailStore(_libraryPath))
         {
-            store.Put(7, thumbnail);
+            store.Put(CoverScope.Album, 7, thumbnail);
         }
 
         // The point of the store: a cover is read and re-encoded once ever,
         // not once per launch.
         using var reopened = new ThumbnailStore(_libraryPath);
-        Assert.True(reopened.TryGet(7, out byte[]? found));
+        Assert.True(reopened.TryGet(CoverScope.Album, 7, out byte[]? found));
         Assert.Equal(thumbnail, found);
     }
 
@@ -38,23 +38,23 @@ public sealed class ThumbnailStoreTests : IDisposable
     public void HavingNoCoverIsItselfWorthStoring()
     {
         using var store = new ThumbnailStore(_libraryPath);
-        store.Put(7, null);
+        store.Put(CoverScope.Album, 7, null);
 
         // "No cover" costs a file read to establish, so it must be
         // distinguishable from "not looked at yet".
-        Assert.True(store.TryGet(7, out byte[]? found));
+        Assert.True(store.TryGet(CoverScope.Album, 7, out byte[]? found));
         Assert.Null(found);
-        Assert.False(store.TryGet(8, out _));
+        Assert.False(store.TryGet(CoverScope.Album, 8, out _));
     }
 
     [Fact]
     public void RewritingATrackReplacesItsThumbnail()
     {
         using var store = new ThumbnailStore(_libraryPath);
-        store.Put(7, [1, 1, 1]);
-        store.Put(7, [2, 2]);
+        store.Put(CoverScope.Album, 7, [1, 1, 1]);
+        store.Put(CoverScope.Album, 7, [2, 2]);
 
-        Assert.True(store.TryGet(7, out byte[]? found));
+        Assert.True(store.TryGet(CoverScope.Album, 7, out byte[]? found));
         Assert.Equal([2, 2], found);
     }
 
@@ -62,13 +62,13 @@ public sealed class ThumbnailStoreTests : IDisposable
     public void ClearEmptiesTheStore()
     {
         using var store = new ThumbnailStore(_libraryPath);
-        store.Put(7, [1]);
-        store.Put(8, null);
+        store.Put(CoverScope.Album, 7, [1]);
+        store.Put(CoverScope.Album, 8, null);
 
         store.Clear();
 
-        Assert.False(store.TryGet(7, out _));
-        Assert.False(store.TryGet(8, out _));
+        Assert.False(store.TryGet(CoverScope.Album, 7, out _));
+        Assert.False(store.TryGet(CoverScope.Album, 8, out _));
     }
 
     [Fact]
@@ -82,11 +82,27 @@ public sealed class ThumbnailStoreTests : IDisposable
         // store has to stay bounded on its own.
         for (int i = 0; i < 100; i++)
         {
-            store.Put(i, thumbnail);
+            store.Put(CoverScope.Album, i, thumbnail);
         }
 
-        Assert.False(store.TryGet(0, out _));
-        Assert.True(store.TryGet(99, out _));
+        Assert.False(store.TryGet(CoverScope.Album, 0, out _));
+        Assert.True(store.TryGet(CoverScope.Album, 99, out _));
+    }
+
+    [Fact]
+    public void ScopesAreSeparateKeySpaces()
+    {
+        using var store = new ThumbnailStore(_libraryPath);
+        store.Put(CoverScope.Album, 1, [1]);
+        store.Put(CoverScope.Track, 1, [2]);
+
+        // Album ids and track ids are both small integers from different
+        // tables; one must never answer for the other.
+        Assert.True(store.TryGet(CoverScope.Album, 1, out byte[]? album));
+        Assert.True(store.TryGet(CoverScope.Track, 1, out byte[]? track));
+        Assert.Equal([1], album);
+        Assert.Equal([2], track);
+        Assert.False(store.TryGet(CoverScope.AlbumArtist, 1, out _));
     }
 
     [Fact]
