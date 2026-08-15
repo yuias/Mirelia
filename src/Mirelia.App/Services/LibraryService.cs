@@ -13,18 +13,35 @@ using Mirelia.Sync.Mtp;
 namespace Mirelia.App.Services;
 
 /// <summary>
-/// Async facade over the library database. One read connection, serialized
-/// by a gate so the UI thread never blocks on SQLite; scans run on their own
-/// connection (WAL allows a writer alongside readers).
+/// Async facade over the library database. Two connections, each serialized
+/// by its own gate so the UI thread never blocks on SQLite; scans run on their
+/// own connection again (WAL allows a writer alongside readers).
+///
+/// The split is between short reads and view queries. Everything the UI needs
+/// while a view is on screen — row hydration, cover paths, view settings,
+/// playlist lists, and every write — goes through <see cref="_db"/>. Building
+/// a view (evaluating a playlist, sorting an id array, browsing the library)
+/// goes through <see cref="_viewDb"/>, because those are the only reads that
+/// can run long. Sharing one connection meant a slow playlist also stalled
+/// scrolling and artwork, which is what turned "this view is slow" into "the
+/// app is dead".
 /// </summary>
 public sealed class LibraryService : IDisposable
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly SemaphoreSlim _viewGate = new(1, 1);
 
     private string _dbPath;
     private LibraryDatabase _db;
     private PlaylistStore _playlists;
     private ViewSettingsStore _viewSettings;
+
+    // The view connection and the playlist store bound to it. Statements are
+    // not safe to run concurrently on one connection, so anything the view
+    // queries reach — including the smart-playlist resolver — must be this
+    // store, never the one on _db.
+    private LibraryDatabase _viewDb;
+    private PlaylistStore _viewPlaylists;
 
     // Scans and syncs run off the gate on their own connections, so the gate
     // cannot tell whether one is still writing. A switch has to wait for
@@ -38,6 +55,8 @@ public sealed class LibraryService : IDisposable
         _db = LibraryDatabase.Open(dbPath);
         _playlists = new PlaylistStore(_db);
         _viewSettings = new ViewSettingsStore(_db);
+        _viewDb = LibraryDatabase.Open(dbPath);
+        _viewPlaylists = new PlaylistStore(_viewDb);
     }
 
     /// <summary>The library file currently open.</summary>
@@ -61,19 +80,40 @@ public sealed class LibraryService : IDisposable
                 "A scan or sync is still running against the current library.");
         }
 
+        // Both gates, always in this order — nothing else holds both, so the
+        // order is enough to keep it deadlock-free.
         await _gate.WaitAsync().ConfigureAwait(false);
+        await _viewGate.WaitAsync().ConfigureAwait(false);
         try
         {
+            // Both open before either closes, so a bad path leaves the current
+            // library untouched.
             LibraryDatabase opened = await Task.Run(() => LibraryDatabase.Open(dbPath))
                 .ConfigureAwait(false);
+            LibraryDatabase openedForViews;
+            try
+            {
+                openedForViews = await Task.Run(() => LibraryDatabase.Open(dbPath))
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                opened.Dispose();
+                throw;
+            }
+
             _db.Dispose();
+            _viewDb.Dispose();
             _db = opened;
+            _viewDb = openedForViews;
             _dbPath = dbPath;
             _playlists = new PlaylistStore(_db);
             _viewSettings = new ViewSettingsStore(_db);
+            _viewPlaylists = new PlaylistStore(_viewDb);
         }
         finally
         {
+            _viewGate.Release();
             _gate.Release();
         }
     }
@@ -102,38 +142,38 @@ public sealed class LibraryService : IDisposable
     /// <summary>Re-sorts an id array in SQL by a preset.</summary>
     public Task<long[]> SortIdsAsync(
         long[] ids, TrackSortOrder order, CancellationToken cancellationToken = default)
-        => RunAsync(() => TrackPager.SortIds(_db, ids, order).ToArray(), cancellationToken);
+        => RunViewAsync(() => TrackPager.SortIds(_viewDb, ids, order).ToArray(), cancellationToken);
 
     /// <summary>Re-sorts an id array in SQL by a header-click column sort.</summary>
     public Task<long[]> SortIdsAsync(
         long[] ids, ColumnSort sort, CancellationToken cancellationToken = default)
-        => RunAsync(() => TrackPager.SortIds(_db, ids, sort).ToArray(), cancellationToken);
+        => RunViewAsync(() => TrackPager.SortIds(_viewDb, ids, sort).ToArray(), cancellationToken);
 
     /// <summary>
     /// Contiguous group runs over an ordered id array, for a grouped layout.
     /// </summary>
     public Task<List<TrackGroupRun>> LoadGroupRunsAsync(
         long[] ids, TrackGroupField field, CancellationToken cancellationToken = default)
-        => RunAsync(() => TrackGrouper.LoadRuns(_db, ids, field), cancellationToken);
+        => RunViewAsync(() => TrackGrouper.LoadRuns(_viewDb, ids, field), cancellationToken);
 
     /// <summary>All track ids in a browse order.</summary>
     public Task<long[]> BrowseAllAsync(
         TrackSortOrder order, CancellationToken cancellationToken = default)
-        => RunAsync(() => TrackPager.BrowseAll(_db, order).ToArray(), cancellationToken);
+        => RunViewAsync(() => TrackPager.BrowseAll(_viewDb, order).ToArray(), cancellationToken);
 
     /// <summary>All track ids sorted by a header-click column sort.</summary>
     public Task<long[]> BrowseAllAsync(
         ColumnSort sort, CancellationToken cancellationToken = default)
-        => RunAsync(() => TrackPager.BrowseAll(_db, sort).ToArray(), cancellationToken);
+        => RunViewAsync(() => TrackPager.BrowseAll(_viewDb, sort).ToArray(), cancellationToken);
 
     /// <summary>Most recently added track ids.</summary>
     public Task<long[]> BrowseRecentlyAddedAsync(CancellationToken cancellationToken = default)
-        => RunAsync(() => TrackPager.BrowseRecentlyAdded(_db).ToArray(), cancellationToken);
+        => RunViewAsync(() => TrackPager.BrowseRecentlyAdded(_viewDb).ToArray(), cancellationToken);
 
     /// <summary>Free-text FTS search, artist-ordered.</summary>
     public Task<long[]> SearchAsync(string text, CancellationToken cancellationToken = default)
     {
-        return RunAsync(() =>
+        return RunViewAsync(() =>
         {
             // Built as an AST directly — no parsing, no injection surface.
             var query = new ParsedQuery(
@@ -141,7 +181,7 @@ public sealed class LibraryService : IDisposable
                 [new OrderTerm("artist", Descending: false)],
                 Limit: null);
             CompiledQuery compiled = SqlCompiler.Compile(query);
-            return TrackQueryRunner.Run(_db, compiled).ToArray();
+            return TrackQueryRunner.Run(_viewDb, compiled).ToArray();
         },
         cancellationToken);
     }
@@ -155,13 +195,13 @@ public sealed class LibraryService : IDisposable
     /// <exception cref="QueryCompileException">Unknown fields.</exception>
     public Task<(long[] Ids, bool Ordered)> QueryDslAsync(
         string dsl, CancellationToken cancellationToken = default)
-        => RunAsync(
+        => RunViewAsync(
             () =>
             {
                 ParsedQuery parsed = QueryParser.Parse(dsl);
                 CompiledQuery compiled = SqlCompiler.Compile(
-                    parsed, now: null, _playlists.SmartPlaylistResolver);
-                return (TrackQueryRunner.Run(_db, compiled).ToArray(), parsed.OrderBy.Count > 0);
+                    parsed, now: null, _viewPlaylists.SmartPlaylistResolver);
+                return (TrackQueryRunner.Run(_viewDb, compiled).ToArray(), parsed.OrderBy.Count > 0);
             },
             cancellationToken);
 
@@ -249,7 +289,7 @@ public sealed class LibraryService : IDisposable
     /// <summary>Membership (evaluated for smart) of one playlist.</summary>
     public Task<long[]> EvaluatePlaylistAsync(
         PlaylistInfo playlist, CancellationToken cancellationToken = default)
-        => RunAsync(() => _playlists.Evaluate(playlist), cancellationToken);
+        => RunViewAsync(() => _viewPlaylists.Evaluate(playlist), cancellationToken);
 
     /// <summary>Creates a static playlist.</summary>
     public Task<PlaylistInfo> CreateStaticPlaylistAsync(string name)
@@ -446,7 +486,9 @@ public sealed class LibraryService : IDisposable
     public void Dispose()
     {
         _gate.Dispose();
+        _viewGate.Dispose();
         _db.Dispose();
+        _viewDb.Dispose();
     }
 
     private async Task<T> RunJobAsync<T>(Func<T> job, CancellationToken ct = default)
@@ -462,14 +504,30 @@ public sealed class LibraryService : IDisposable
         }
     }
 
-    private async Task<T> RunAsync<T>(
+    /// <summary>
+    /// Runs a view query on the view connection. Same contract as
+    /// <see cref="RunAsync"/>; the separate connection is what keeps a long
+    /// one from blocking hydration, artwork and settings behind it.
+    /// </summary>
+    private Task<T> RunViewAsync<T>(
         Func<T> operation, CancellationToken cancellationToken = default)
-    {
-        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        => RunOnAsync(operation, _viewGate, () => _viewDb, cancellationToken);
 
-        // Captured: a library switch may replace _db while this runs, and the
-        // statement to abandon is the one on the connection we started on.
-        LibraryDatabase db = _db;
+    private Task<T> RunAsync<T>(
+        Func<T> operation, CancellationToken cancellationToken = default)
+        => RunOnAsync(operation, _gate, () => _db, cancellationToken);
+
+    private async Task<T> RunOnAsync<T>(
+        Func<T> operation,
+        SemaphoreSlim gate,
+        Func<LibraryDatabase> current,
+        CancellationToken cancellationToken)
+    {
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        // Read under the gate: a library switch holds it while swapping, and
+        // the statement to abandon is the one on the connection we started on.
+        LibraryDatabase db = current();
         try
         {
             // Cancelling the token alone would only abandon the wait — the
@@ -488,7 +546,7 @@ public sealed class LibraryService : IDisposable
         }
         finally
         {
-            _gate.Release();
+            gate.Release();
         }
     }
 }
