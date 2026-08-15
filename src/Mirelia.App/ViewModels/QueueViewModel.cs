@@ -1,61 +1,14 @@
-using System.Collections.ObjectModel;
-using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
+using Mirelia.App.Models;
 using Mirelia.App.Services;
 using Mirelia.Library.Querying;
 
 namespace Mirelia.App.ViewModels;
 
-/// <summary>One row in the queue pane: a queue entry plus hydrated display text.</summary>
-public sealed partial class QueueRowViewModel : ObservableObject
-{
-    // Matches MainWindow's grid banding brush — same 6% gray reads correctly
-    // on both themes; a stronger tint marks the audible row.
-    private static readonly IBrush BandingBrush =
-        new SolidColorBrush(Color.FromArgb(0x0F, 0x80, 0x80, 0x80));
-    private static readonly IBrush CurrentBrush =
-        new SolidColorBrush(Color.FromArgb(0x26, 0x80, 0x80, 0x80));
-
-    /// <summary>Stable identity of this queue slot (distinguishes duplicate track ids).</summary>
-    public long EntryId { get; }
-
-    /// <summary>The library track this slot plays.</summary>
-    public long TrackId { get; }
-
-    [ObservableProperty]
-    private string _title = string.Empty;
-
-    [ObservableProperty]
-    private string _artist = string.Empty;
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(RowBrush))]
-    [NotifyPropertyChangedFor(nameof(TitleWeight))]
-    private bool _isCurrent;
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(RowBrush))]
-    private bool _isAlternate;
-
-    /// <summary>Row background: a stronger tint for the audible entry, subtle banding otherwise.</summary>
-    public IBrush? RowBrush => IsCurrent ? CurrentBrush : IsAlternate ? BandingBrush : null;
-
-    /// <summary>Title weight: emphasized for the audible entry.</summary>
-    public FontWeight TitleWeight => IsCurrent ? FontWeight.SemiBold : FontWeight.Normal;
-
-    /// <summary>Creates a row for the given queue entry.</summary>
-    public QueueRowViewModel(long entryId, long trackId)
-    {
-        EntryId = entryId;
-        TrackId = trackId;
-    }
-}
-
 /// <summary>
 /// Queue pane state. The queue itself lives in <see cref="AudioPlayerService"/>
-/// (single source of truth); this view-model mirrors it into an
-/// <see cref="ObservableCollection{T}"/> the pane binds to, re-hydrating
-/// display text from the library on every change.
+/// (single source of truth); this view-model mirrors it into a virtualized
+/// row list the pane binds to.
 /// </summary>
 public sealed partial class QueueViewModel : ObservableObject
 {
@@ -63,8 +16,14 @@ public sealed partial class QueueViewModel : ObservableObject
     private readonly AudioPlayerService _player;
     private readonly SettingsService _settings;
 
-    /// <summary>Rows shown in the queue pane, in play order.</summary>
-    public ObservableCollection<QueueRowViewModel> Rows { get; } = [];
+    /// <summary>
+    /// Rows shown in the queue pane, in play order. Replaced wholesale on
+    /// every queue change rather than mutated: a queue can hold the whole
+    /// library, and an observable collection would raise one change
+    /// notification per entry.
+    /// </summary>
+    [ObservableProperty]
+    private VirtualQueueList? _rows;
 
     /// <summary>Whether the queue pane is shown; persisted across launches.</summary>
     [ObservableProperty]
@@ -113,37 +72,35 @@ public sealed partial class QueueViewModel : ObservableObject
         => _settings.Save(_settings.Current with { QueuePaneOpen = value });
 
     private void OnCurrentEntryChanged(long? entryId)
-    {
-        foreach (QueueRowViewModel row in Rows)
-        {
-            row.IsCurrent = row.EntryId == entryId;
-        }
+        => CurrentRow = Rows?.SetCurrent(entryId);
 
-        CurrentRow = Rows.FirstOrDefault(r => r.IsCurrent);
+    private Task RefreshAsync()
+    {
+        // No hydration here at all: rows arrive as placeholders and fill in as
+        // the pane realizes them. Queuing a 100k-track view used to run a
+        // 100k-row query and build 100k rows before the pane could paint.
+        var list = new VirtualQueueList(_player.QueueEntries, RequestPage);
+        Rows = list;
+        CurrentRow = list.SetCurrent(_player.CurrentEntryId);
+        return Task.CompletedTask;
     }
 
-    private async Task RefreshAsync()
+    private void RequestPage(int page, long[] trackIds)
     {
-        IReadOnlyList<QueueEntry> entries = _player.QueueEntries;
-        long? currentId = _player.CurrentEntryId;
+        VirtualQueueList? target = Rows;
+        _ = HydratePageAsync(page, trackIds, target);
+    }
 
-        long[] distinctTrackIds = [.. entries.Select(e => e.TrackId).Distinct()];
-        Dictionary<long, TrackPageRow> hydrated = await _library.HydrateAsync(distinctTrackIds);
+    private async Task HydratePageAsync(int page, long[] trackIds, VirtualQueueList? target)
+    {
+        // HydrateAsync already does its work off the UI thread; the
+        // continuation lands back on it, which is where ApplyPage belongs.
+        Dictionary<long, TrackPageRow> data = await _library.HydrateAsync(trackIds);
 
-        Rows.Clear();
-        for (int i = 0; i < entries.Count; i++)
+        // Ignore pages for a list that was replaced meanwhile.
+        if (target is not null && ReferenceEquals(target, Rows))
         {
-            QueueEntry entry = entries[i];
-            hydrated.TryGetValue(entry.TrackId, out TrackPageRow? row);
-            Rows.Add(new QueueRowViewModel(entry.EntryId, entry.TrackId)
-            {
-                Title = row?.Title ?? "(unknown)",
-                Artist = row?.Artist ?? string.Empty,
-                IsAlternate = i % 2 == 1,
-                IsCurrent = entry.EntryId == currentId,
-            });
+            target.ApplyPage(page, data);
         }
-
-        CurrentRow = Rows.FirstOrDefault(r => r.IsCurrent);
     }
 }

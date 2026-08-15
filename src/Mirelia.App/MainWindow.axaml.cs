@@ -964,6 +964,14 @@ public partial class MainWindow : Window
             DispatcherPriority.Background);
     }
 
+    /// <summary>
+    /// A queue row was realized: hydrate its page. The queue pane virtualizes
+    /// the same way the track grid does, because a queue is as long as the
+    /// view it was started from.
+    /// </summary>
+    private void OnQueueRowPrepared(object? sender, ContainerPreparedEventArgs e)
+        => ViewModel?.Queue.Rows?.NotifyVisible(e.Index);
+
     private async void OnQueueDoubleTapped(object? sender, TappedEventArgs e)
     {
         if (ViewModel is { } vm && QueueList.SelectedItem is QueueRowViewModel row)
@@ -1075,12 +1083,11 @@ public partial class MainWindow : Window
             .FirstOrDefault();
         if (item?.DataContext is not QueueRowViewModel row)
         {
-            return vm.Queue.Rows.Count - 1;
+            return (vm.Queue.Rows?.Count ?? 0) - 1;
         }
 
-        int index = vm.Queue.Rows.IndexOf(row);
         bool before = e.GetPosition(item).Y < item.Bounds.Height / 2;
-        return before ? index : index + 1;
+        return before ? row.Index : row.Index + 1;
     }
 
     // ---- library scan --------------------------------------------------

@@ -257,11 +257,12 @@
           <ListBox x:Name="QueueList"
                    ItemsSource="{Binding Queue.Rows}"
                    SelectionMode="Multiple"
+                   ContainerPrepared="OnQueueRowPrepared"
                    DoubleTapped="OnQueueDoubleTapped"
                    KeyDown="OnQueueKeyDown"
                    DragDrop.AllowDrop="True">
             <ListBox.ItemTemplate>
-              <DataTemplate x:DataType="vm:QueueRowViewModel">
+              <DataTemplate x:DataType="m:QueueRowViewModel">
                 <Border Background="{Binding RowBrush}" Padding="8,4">
                   <StackPanel Spacing="1">
                     <TextBlock Text="{Binding Title}" FontWeight="{Binding TitleWeight}"
