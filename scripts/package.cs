@@ -56,10 +56,19 @@ if (!skipNative)
 
 // Pinned to the host RID: a portable publish would ship Skia and HarfBuzz for
 // every runtime Avalonia supports, which is most of a 126 MB archive.
+//
+// ReadyToRun costs ~16 MB of archive and buys a third off startup (0.99s ->
+// 0.63s) and 27 MB off the idle working set (154 MB -> 128 MB), because the
+// framework and Avalonia no longer have to be JITted on the way up. It needs
+// the RID, which is why it lives here rather than in the project file.
+// Trimming is deliberately not enabled: Avalonia resolves plenty by
+// reflection, and the failures that causes surface at runtime as missing
+// controls, which a smoke run would not necessarily catch.
 foreach (string project in (string[])["src/Mirelia.App", "src/Mirelia.Cli"])
 {
     Run(root, "dotnet", "publish", project, "-c", "Release",
-        "-r", rid, "--self-contained", "false", "-o", staging);
+        "-r", rid, "--self-contained", "false",
+        "-p:PublishReadyToRun=true", "-o", staging);
 }
 
 // The resolver looks for the backend next to the executable; publish does not
