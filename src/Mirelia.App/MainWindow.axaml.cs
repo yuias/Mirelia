@@ -763,10 +763,19 @@ public partial class MainWindow : Window
 
     private MainViewModel? ViewModel => DataContext as MainViewModel;
 
+    // Both layouts answer "what is selected" through these two, so the
+    // context-menu handlers below work in either without knowing which is up.
     private long[] SelectedTrackIds()
-        => Grid.SelectedItems is { } items
-            ? [.. items.OfType<TrackRow>().OrderBy(r => r.Index).Select(r => r.Id)]
-            : [];
+        => ViewModel is { IsFlatLayout: false } grouped
+            ? grouped.BlockSelectedIds
+            : Grid.SelectedItems is { } items
+                ? [.. items.OfType<TrackRow>().OrderBy(r => r.Index).Select(r => r.Id)]
+                : [];
+
+    private int SelectedRowIndex()
+        => ViewModel is { IsFlatLayout: false } grouped
+            ? grouped.BlockSelectedIndex
+            : Grid.SelectedIndex;
 
     // ---- playback ------------------------------------------------------
 
@@ -823,9 +832,59 @@ public partial class MainWindow : Window
 
     private async void OnPlaySelectedClick(object? sender, RoutedEventArgs e)
     {
-        if (ViewModel is { } vm && Grid.SelectedIndex >= 0)
+        int index = SelectedRowIndex();
+        if (ViewModel is { } vm && index >= 0)
         {
-            await vm.PlayRowAsync(Grid.SelectedIndex);
+            await vm.PlayRowAsync(index);
+        }
+    }
+
+    // ---- grouped layout --------------------------------------------------
+
+    private void OnBlockRowPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (ViewModel is not { } vm || sender is not Control { DataContext: TrackRow row } control)
+        {
+            return;
+        }
+
+        // A right-click inside an existing selection opens the menu for all
+        // of it rather than collapsing it to the row under the pointer.
+        if (e.GetCurrentPoint(control).Properties.IsRightButtonPressed
+            && vm.IsBlockRowSelected(row.Index))
+        {
+            return;
+        }
+
+        vm.SelectBlockRow(
+            row.Index,
+            e.KeyModifiers.HasFlag(KeyModifiers.Control),
+            e.KeyModifiers.HasFlag(KeyModifiers.Shift));
+    }
+
+    private async void OnBlockRowDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (ViewModel is { } vm && sender is Control { DataContext: TrackRow row })
+        {
+            e.Handled = true;
+            await vm.PlayRowAsync(row.Index);
+        }
+    }
+
+    private void OnBlockHeaderPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (ViewModel is { } vm && sender is Control { DataContext: TrackGroupBlock block })
+        {
+            vm.SelectBlockRange(block.StartIndex, block.Count);
+        }
+    }
+
+    private async void OnBlockHeaderDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (ViewModel is { } vm && sender is Control { DataContext: TrackGroupBlock block })
+        {
+            e.Handled = true;
+            await vm.PlayRowAsync(block.StartIndex);
         }
     }
 

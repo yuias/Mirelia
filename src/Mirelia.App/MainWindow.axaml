@@ -23,6 +23,10 @@
     <Style Selector="Grid.trackrow:pointerover">
       <Setter Property="Background" Value="#1C808080" />
     </Style>
+    <!-- Last, so a selected row keeps reading as selected under the pointer. -->
+    <Style Selector="Grid.trackrow.selected">
+      <Setter Property="Background" Value="#38808080" />
+    </Style>
   </Window.Styles>
 
   <DockPanel>
@@ -321,6 +325,23 @@
                       ItemsSource="{Binding GroupedTracks}"
                       IsVisible="{Binding !IsFlatLayout}"
                       ContainerPrepared="OnBlockPrepared">
+          <ItemsControl.ContextMenu>
+            <ContextMenu>
+              <MenuItem Header="Play" Click="OnPlaySelectedClick" />
+              <MenuItem Header="Play Next" Click="OnPlayNextClick" />
+              <MenuItem Header="Add to Queue" Click="OnAddToQueueClick" />
+              <Separator />
+              <MenuItem Header="Add to Playlist"
+                        ItemsSource="{Binding StaticPlaylists}"
+                        Click="OnAddToPlaylistClick">
+                <MenuItem.ItemTemplate>
+                  <DataTemplate x:DataType="pl:PlaylistInfo">
+                    <TextBlock Text="{Binding Name}" />
+                  </DataTemplate>
+                </MenuItem.ItemTemplate>
+              </MenuItem>
+            </ContextMenu>
+          </ItemsControl.ContextMenu>
           <ItemsControl.Template>
             <ControlTemplate>
               <ScrollViewer>
@@ -348,7 +369,10 @@
                 </Border>
 
                 <StackPanel Grid.Column="1">
-                  <DockPanel>
+                  <DockPanel Background="Transparent"
+                             PointerPressed="OnBlockHeaderPressed"
+                             DoubleTapped="OnBlockHeaderDoubleTapped"
+                             ToolTip.Tip="Click to select the whole group, double-click to play it">
                     <TextBlock DockPanel.Dock="Right" Opacity="0.55" FontSize="12"
                                VerticalAlignment="Bottom" Margin="12,0,0,3"
                                Text="{Binding DurationText}" />
@@ -375,6 +399,9 @@
                               <DataTemplate x:DataType="m:TrackRow">
                                 <Grid Height="26" Classes="trackrow"
                                       Classes.alt="{Binding IsAlternate}"
+                                      Classes.selected="{Binding IsSelected}"
+                                      PointerPressed="OnBlockRowPressed"
+                                      DoubleTapped="OnBlockRowDoubleTapped"
                                       ColumnDefinitions="40,*,Auto,58">
                                   <TextBlock Grid.Column="0" Opacity="0.5" FontSize="12"
                                              VerticalAlignment="Center"

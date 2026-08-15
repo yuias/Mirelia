@@ -22,6 +22,14 @@ public sealed partial class TrackRow : ObservableObject
     /// </summary>
     public bool IsAlternate { get; set; }
 
+    /// <summary>
+    /// True while the row is selected in the grouped layout. Deliberately
+    /// outside <see cref="Reset"/>: LRU eviction clears a row's text, not the
+    /// user's selection.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isSelected;
+
     [ObservableProperty]
     private string _trackNo = string.Empty;
 

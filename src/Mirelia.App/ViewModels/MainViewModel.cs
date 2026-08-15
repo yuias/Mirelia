@@ -90,6 +90,9 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly ArtworkCache _artwork;
     private readonly DispatcherTimer _searchDebounce;
 
+    // Grouped-layout selection only; the flat grid keeps the DataGrid's own.
+    private readonly BlockSelection _blockSelection = new();
+
     // Ephemeral ("pin as temporary playlist") state: pure in-memory, never
     // written through _library. Ids count down from -1 so they can never
     // collide with a real (positive) playlist id.
@@ -253,6 +256,14 @@ public sealed partial class MainViewModel : ObservableObject
         {
             _searchDebounce.Stop();
             _ = ReloadAsync();
+        };
+
+        _blockSelection.Changed += (index, selected) =>
+        {
+            if (Tracks is { } tracks && index < tracks.Count)
+            {
+                tracks[index].IsSelected = selected;
+            }
         };
 
         _player.NowPlayingChanged += id => _ = ShowNowPlayingAsync(id);
@@ -694,6 +705,24 @@ public sealed partial class MainViewModel : ObservableObject
         return null;
     }
 
+    /// <summary>Track ids selected in the grouped layout, in view order.</summary>
+    public long[] BlockSelectedIds
+        => Tracks is { } tracks ? [.. _blockSelection.Indices.Select(tracks.IdAt)] : [];
+
+    /// <summary>Lowest selected row index in the grouped layout, or -1 for none.</summary>
+    public int BlockSelectedIndex => _blockSelection.FirstIndex;
+
+    /// <summary>Whether a grouped-layout row is currently selected.</summary>
+    public bool IsBlockRowSelected(int index) => _blockSelection.Contains(index);
+
+    /// <summary>Click on a grouped-layout row; Ctrl toggles, Shift extends.</summary>
+    public void SelectBlockRow(int index, bool toggle, bool extend)
+        => _blockSelection.Select(index, toggle, extend, Tracks?.Count ?? 0);
+
+    /// <summary>Selects a whole group block — its header was clicked.</summary>
+    public void SelectBlockRange(int start, int count)
+        => _blockSelection.SelectRange(start, count);
+
     /// <summary>Plays the grid row at <paramref name="rowIndex"/> with the current view as queue.</summary>
     public async Task PlayRowAsync(int rowIndex)
     {
@@ -1100,6 +1129,9 @@ public sealed partial class MainViewModel : ObservableObject
         {
             return; // a newer reload superseded this one
         }
+
+        // Selection indexes the list being replaced, so it cannot survive it.
+        _blockSelection.Reset();
 
         var list = new VirtualTrackList(ids, RequestPage);
         List<TrackGroupBlock>? blocks = null;
