@@ -19,6 +19,13 @@ public sealed class AudioPlayerService : IDisposable
     private AudioEngine? _engine;
     private bool _deviceOpen;
 
+    // Output settings the live device was opened for, and the ReplayGain
+    // mode the loaded slots were decoded under. A settings save that touches
+    // neither (pane visibility, window geometry, fonts…) must leave
+    // playback alone.
+    private (string? DeviceId, bool Exclusive) _deviceConfig;
+    private ReplayGainMode _replayGain;
+
     // Entry id currently loaded into the engine's Next slot, or null when
     // nothing is preloaded. The engine's user_token carries entry ids (not
     // track ids), so a duplicated track never resolves to the wrong slot.
@@ -48,26 +55,47 @@ public sealed class AudioPlayerService : IDisposable
         _timer = new DispatcherTimer(
             TimeSpan.FromMilliseconds(200), DispatcherPriority.Background, (_, _) => Poll());
 
+        AppSettings current = settings.Current;
+        _deviceConfig = (current.DeviceId, current.Exclusive);
+        _replayGain = current.ReplayGain;
+        _settings.Changed += OnSettingsChanged;
+    }
+
+    private void OnSettingsChanged(AppSettings settings)
+    {
+        if (_replayGain != settings.ReplayGain)
+        {
+            // The preloaded slot was decoded under the old mode; reload it so
+            // the next track is gained correctly. Whatever is already audible
+            // keeps its gain until it ends.
+            _replayGain = settings.ReplayGain;
+            _preloadedEntryId = null;
+            _ = ReconcilePreloadAsync();
+        }
+
+        if (_deviceConfig == (settings.DeviceId, settings.Exclusive))
+        {
+            return;
+        }
+
         // Device/mode changes take effect on the next play; live playback
         // stops so the old stream does not linger on the old device. The
         // queue itself is left intact — only the "what's audible" pointer
         // resets, mirroring the previous _index = -1 behavior.
-        _settings.Changed += _ =>
+        _deviceConfig = (settings.DeviceId, settings.Exclusive);
+        try
         {
-            try
-            {
-                _engine?.Stop();
-                _engine?.CloseDevice();
-            }
-            catch (AudioEngineException)
-            {
-                // Old device may already be gone; the reopen handles it.
-            }
+            _engine?.Stop();
+            _engine?.CloseDevice();
+        }
+        catch (AudioEngineException)
+        {
+            // Old device may already be gone; the reopen handles it.
+        }
 
-            _deviceOpen = false;
-            _preloadedEntryId = null;
-            ClearCurrentEntry();
-        };
+        _deviceOpen = false;
+        _preloadedEntryId = null;
+        ClearCurrentEntry();
     }
 
     /// <summary>True when a queue is loaded (playing or paused).</summary>
