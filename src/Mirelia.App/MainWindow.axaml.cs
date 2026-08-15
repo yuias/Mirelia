@@ -758,6 +758,14 @@ public partial class MainWindow : Window
         ColumnsMenu.Items.Add(reset);
     }
 
+    private async void OnClearCoverCacheClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is { } vm)
+        {
+            await vm.DiscardCoverCacheAsync();
+        }
+    }
+
     private async void OnResetAllColumnsClick(object? sender, RoutedEventArgs e)
     {
         if (ViewModel is { } vm)

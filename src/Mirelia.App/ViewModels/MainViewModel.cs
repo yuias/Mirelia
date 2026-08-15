@@ -246,6 +246,7 @@ public sealed partial class MainViewModel : ObservableObject
         _library = library;
         _player = player;
         _artwork = new ArtworkCache(library);
+        _artwork.UseCurrentLibrary();
         Transport = new TransportViewModel(player, settings);
         Queue = new QueueViewModel(library, player, settings);
         _searchDebounce = new DispatcherTimer
@@ -679,7 +680,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         _player.StopAndClear();
-        _artwork.Clear();
+        _artwork.UseCurrentLibrary();
         _ephemeralPlaylists.Clear();
         SelectedPlaylist = null;
         SelectedNode = null;
@@ -703,6 +704,18 @@ public sealed partial class MainViewModel : ObservableObject
         await ReloadAsync();
         await Queue.InitializeAsync();
         return null;
+    }
+
+    /// <summary>
+    /// Throws away every cached cover and reloads, so re-tagged artwork is
+    /// picked up. Nothing validates a stored thumbnail against its file, so
+    /// this is the way back from a stale one.
+    /// </summary>
+    public async Task DiscardCoverCacheAsync()
+    {
+        _artwork.Discard();
+        await ReloadAsync();
+        StatusText = "Cover cache cleared.";
     }
 
     /// <summary>Track ids selected in the grouped layout, in view order.</summary>

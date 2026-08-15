@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using SkiaSharp;
 
 namespace Mirelia.App.Services;
@@ -164,10 +165,13 @@ public static class Thumbnailer
 /// real. Callers decode their own bitmap at the size they draw and own its
 /// lifetime, which means no two owners ever share one bitmap.
 ///
+/// Behind the in-memory bound sits <see cref="ThumbnailStore"/>, so a cover
+/// survives a restart and is read from its file and re-encoded once ever.
+///
 /// All members must be called on the UI thread; reading, scaling and encoding
 /// happen off it.
 /// </summary>
-public sealed class ArtworkCache(LibraryService library)
+public sealed class ArtworkCache(LibraryService library) : IDisposable
 {
     /// <summary>
     /// Total encoded bytes held. Thumbnails run ~20-60 KB, so this keeps a few
@@ -179,6 +183,7 @@ public sealed class ArtworkCache(LibraryService library)
     private readonly LinkedList<Entry> _lru = [];
     private readonly Dictionary<long, Task<byte[]?>> _inFlight = [];
     private long _bytes;
+    private ThumbnailStore? _store;
 
     /// <summary>
     /// The cover of <paramref name="trackId"/> as encoded thumbnail bytes, or
@@ -205,23 +210,65 @@ public sealed class ArtworkCache(LibraryService library)
     }
 
     /// <summary>
-    /// Drops everything. Track ids do not survive a library switch, so the
-    /// entries would otherwise name tracks in a library that is no longer
-    /// open.
+    /// Points the cache at the library now open, dropping what it held for the
+    /// previous one. Track ids do not survive a library switch, so the entries
+    /// would otherwise name tracks in a library that is no longer open; the
+    /// on-disk store lives beside its own library and is simply reopened.
     /// </summary>
-    public void Clear()
+    public void UseCurrentLibrary()
     {
+        _entries.Clear();
+        _lru.Clear();
+        _inFlight.Clear();
+        _bytes = 0;
+
+        _store?.Dispose();
+        try
+        {
+            _store = new ThumbnailStore(library.DatabasePath);
+        }
+        catch (SqliteException)
+        {
+            // A read-only or otherwise unusable location costs the persistent
+            // half of the cache, not the feature: covers still load per session.
+            _store = null;
+        }
+    }
+
+    /// <summary>
+    /// Throws away every cached cover, in memory and on disk. Nothing
+    /// validates a stored thumbnail against its file, so this is how re-tagged
+    /// artwork gets picked up.
+    /// </summary>
+    public void Discard()
+    {
+        _store?.Clear();
         _entries.Clear();
         _lru.Clear();
         _inFlight.Clear();
         _bytes = 0;
     }
 
+    /// <inheritdoc />
+    public void Dispose() => _store?.Dispose();
+
     private async Task<byte[]?> LoadAsync(long trackId)
     {
         byte[]? thumbnail = null;
         try
         {
+            ThumbnailStore? store = _store;
+            if (store is not null)
+            {
+                (bool stored, byte[]? cached) = await Task.Run(() =>
+                    (store.TryGet(trackId, out byte[]? found), found));
+                if (stored)
+                {
+                    thumbnail = cached;
+                    return thumbnail;
+                }
+            }
+
             // Only the path lookup goes through the library's gate; the file
             // read and the re-encode stay off it so a wall of covers cannot
             // stall row hydration behind them.
@@ -231,6 +278,14 @@ public sealed class ArtworkCache(LibraryService library)
                     ArtworkReader.Read(path) is { } source
                         ? Thumbnailer.Encode(source)
                         : null);
+            }
+
+            // Recorded even when there is no cover: that answer costs a file
+            // read to reach, and a coverless album must not pay it every launch.
+            if (store is not null)
+            {
+                byte[]? toStore = thumbnail;
+                await Task.Run(() => store.Put(trackId, toStore));
             }
         }
         finally
