@@ -73,6 +73,13 @@ public sealed record TrackPageRow(
 /// </summary>
 public static class TrackPager
 {
+    /// <summary>
+    /// The ORDER BY for a preset. Internal so <see cref="TrackGrouper"/> can
+    /// order and group in the same statement instead of sorting first and
+    /// walking the result again.
+    /// </summary>
+    internal static string OrderClauseFor(TrackSortOrder order) => OrderClause(order);
+
     private static string OrderClause(TrackSortOrder order) => order switch
     {
         TrackSortOrder.Artist => "ar.name_sort, al.name_sort, t.disc_no, t.track_no, t.title_sort",

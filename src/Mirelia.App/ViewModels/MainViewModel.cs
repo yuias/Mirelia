@@ -1088,7 +1088,13 @@ public sealed partial class MainViewModel : ObservableObject
             ? new ColumnSort(sortKey, SortDescending)
             : null;
 
-        long[] ids;
+        // A grouped layout orders and groups in one query further down, so
+        // the acquisition step here must not sort as well — that second walk
+        // over the view was most of the cost of loading an album view.
+        bool deferSort = layout.GroupField is not null;
+        bool keepSourceOrder = false;
+
+        long[]? ids = null;
         if (!string.IsNullOrWhiteSpace(SearchText))
         {
             bool applyViewSort = true;
@@ -1113,7 +1119,8 @@ public sealed partial class MainViewModel : ObservableObject
                 ids = await _library.SearchAsync(SearchText.Trim(), cancellationToken);
             }
 
-            if (applyViewSort)
+            keepSourceOrder = !applyViewSort;
+            if (applyViewSort && !deferSort)
             {
                 ids = columnSort is not null
                     ? await _library.SortIdsAsync(ids, columnSort, cancellationToken)
@@ -1125,35 +1132,44 @@ public sealed partial class MainViewModel : ObservableObject
         else if (SelectedPlaylist is { } playlist)
         {
             ids = await _library.EvaluatePlaylistAsync(playlist, cancellationToken);
-            ids = columnSort is not null
-                ? await _library.SortIdsAsync(ids, columnSort, cancellationToken)
-                : sort != TrackSortOrder.PlaylistOrder
-                    ? await _library.SortIdsAsync(ids, sort, cancellationToken)
-                    : ids;
+            if (!deferSort)
+            {
+                ids = columnSort is not null
+                    ? await _library.SortIdsAsync(ids, columnSort, cancellationToken)
+                    : sort != TrackSortOrder.PlaylistOrder
+                        ? await _library.SortIdsAsync(ids, sort, cancellationToken)
+                        : ids;
+            }
         }
         else if (SelectedNode is { IsFolder: true } folderNode)
         {
             ids = await EvaluateFolderAsync(folderNode, cancellationToken);
-            ids = columnSort is not null
-                ? await _library.SortIdsAsync(ids, columnSort, cancellationToken)
-                : sort != TrackSortOrder.PlaylistOrder
-                    ? await _library.SortIdsAsync(ids, sort, cancellationToken)
-                    : ids;
+            if (!deferSort)
+            {
+                ids = columnSort is not null
+                    ? await _library.SortIdsAsync(ids, columnSort, cancellationToken)
+                    : sort != TrackSortOrder.PlaylistOrder
+                        ? await _library.SortIdsAsync(ids, sort, cancellationToken)
+                        : ids;
+            }
         }
         else if (isRecent)
         {
             ids = await _library.BrowseRecentlyAddedAsync(cancellationToken);
-            ids = columnSort is not null
-                ? await _library.SortIdsAsync(ids, columnSort, cancellationToken)
-                : sort != TrackSortOrder.RecentlyAdded
-                    ? await _library.SortIdsAsync(ids, sort, cancellationToken)
-                    : ids;
+            if (!deferSort)
+            {
+                ids = columnSort is not null
+                    ? await _library.SortIdsAsync(ids, columnSort, cancellationToken)
+                    : sort != TrackSortOrder.RecentlyAdded
+                        ? await _library.SortIdsAsync(ids, sort, cancellationToken)
+                        : ids;
+            }
         }
         else if (columnSort is not null)
         {
             ids = await _library.BrowseAllAsync(columnSort, cancellationToken);
         }
-        else
+        else if (!deferSort)
         {
             ids = await _library.BrowseAllAsync(
                 sort == TrackSortOrder.PlaylistOrder ? TrackSortOrder.Artist : sort,
@@ -1165,15 +1181,25 @@ public sealed partial class MainViewModel : ObservableObject
             return; // a newer reload superseded this one
         }
 
+        // ids is still null only when browsing the whole library grouped, and
+        // that is deliberate: the combined query reads the library directly,
+        // so no id array is built, shipped and re-parsed just to be handed
+        // straight back.
         List<TrackGroupRun>? runs = null;
         if (layout.GroupField is { } groupField)
         {
-            runs = await _library.LoadGroupRunsAsync(ids, groupField, cancellationToken);
+            (ids, runs) = await _library.LoadOrderedGroupRunsAsync(
+                ids,
+                keepSourceOrder ? TrackSortOrder.PlaylistOrder : sort,
+                groupField,
+                cancellationToken);
             if (generation != _loadGeneration)
             {
                 return;
             }
         }
+
+        long[] viewIds = ids ?? [];
 
         // A row object per id, and a block per group: O(view size) allocation
         // that has no business on the UI thread, where it would hold the
@@ -1182,7 +1208,7 @@ public sealed partial class MainViewModel : ObservableObject
         (VirtualTrackList list, List<TrackGroupBlock>? blocks) = await Task.Run(
             () =>
             {
-                var built = new VirtualTrackList(ids, RequestPage);
+                var built = new VirtualTrackList(viewIds, RequestPage);
                 return (
                     built,
                     runs is null
@@ -1212,10 +1238,10 @@ public sealed partial class MainViewModel : ObservableObject
 
         Tracks = list;
         GroupedTracks = blocks;
-        IsLibraryEmpty = ids.Length == 0 && string.IsNullOrWhiteSpace(SearchText);
+        IsLibraryEmpty = viewIds.Length == 0 && string.IsNullOrWhiteSpace(SearchText);
         StatusText = blocks is null
-            ? $"{ids.Length:N0} track(s)"
-            : $"{ids.Length:N0} track(s) / {blocks.Count:N0} {layout.Label.ToLowerInvariant()}";
+            ? $"{viewIds.Length:N0} track(s)"
+            : $"{viewIds.Length:N0} track(s) / {blocks.Count:N0} {layout.Label.ToLowerInvariant()}";
     }
 
     /// <summary>

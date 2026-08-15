@@ -78,7 +78,13 @@ public static class TrackGrouper
             return [];
         }
 
-        List<RunBuilder> runs = ReadRuns(db, ids, field);
+        return Materialize(db, ReadRuns(db, ids, field), field);
+    }
+
+    /// <summary>Resolves each run's names once the pass over the rows is done.</summary>
+    private static List<TrackGroupRun> Materialize(
+        LibraryDatabase db, List<RunBuilder> runs, TrackGroupField field)
+    {
         if (runs.Count == 0)
         {
             return [];
@@ -113,12 +119,46 @@ public static class TrackGrouper
     }
 
     /// <summary>
+    /// Orders a view and cuts it into runs in one statement, returning both
+    /// the ordered ids and their runs.
+    ///
+    /// The alternative — sort, then walk the sorted ids again to group them —
+    /// pays for two full passes over the view, and the second was measured at
+    /// nearly two thirds of the cost of loading an album-grouped view.
+    /// </summary>
+    /// <param name="ids">
+    /// The view's ids, or null for the whole library (which then needs no id
+    /// array to be built, shipped and re-parsed at all).
+    /// </param>
+    public static (long[] Ids, List<TrackGroupRun> Runs) LoadOrderedRuns(
+        LibraryDatabase db,
+        IReadOnlyList<long>? ids,
+        TrackSortOrder order,
+        TrackGroupField field)
+    {
+        if (ids is { Count: 0 })
+        {
+            return ([], []);
+        }
+
+        (long[] ordered, List<RunBuilder> runs) = ReadRuns(db, ids, field, order);
+        return (ordered, Materialize(db, runs, field));
+    }
+
+    /// <summary>
     /// Single pass over the ids reading only numeric columns — names are
     /// looked up per group afterwards, so a 100k-row view never materializes
     /// 100k album strings.
     /// </summary>
     private static List<RunBuilder> ReadRuns(
         LibraryDatabase db, IReadOnlyList<long> ids, TrackGroupField field)
+        => ReadRuns(db, ids, field, order: null).Runs;
+
+    private static (long[] Ids, List<RunBuilder> Runs) ReadRuns(
+        LibraryDatabase db,
+        IReadOnlyList<long>? ids,
+        TrackGroupField field,
+        TrackSortOrder? order)
     {
         string groupColumn = field switch
         {
@@ -128,26 +168,58 @@ public static class TrackGrouper
             _ => "t.album_id",
         };
 
-        // json_each keeps this a single statement regardless of id count, and
-        // the LEFT JOIN keeps one output row per input id even when a track
-        // vanished, which is what makes the run indices trustworthy.
-        string json = "[" + string.Join(',', ids) + "]";
-        using SqliteCommand cmd = db.Command($"""
-            SELECT t.id, COALESCE({groupColumn}, 0), t.disc_no, t.duration_ms,
+        // Ordering here means the caller does not sort first and walk the
+        // result again. "Playlist order" is the input's own order, which the
+        // preset clauses cannot express — only json_each's index can.
+        string orderBy =
+            order is null || (order is TrackSortOrder.PlaylistOrder && ids is not null)
+                ? "je.key"
+                : TrackPager.OrderClauseFor(order.Value);
+
+        // Only the preset clauses reach for the joined tables.
+        string joins = orderBy is "je.key" or "t.id"
+            ? string.Empty
+            : """
+
+              LEFT JOIN artist ar ON ar.id = t.artist_id
+              LEFT JOIN artist aa ON aa.id = t.album_artist_id
+              LEFT JOIN album al ON al.id = t.album_id
+              LEFT JOIN genre g ON g.id = t.genre_id
+              """;
+
+        // Column 0 names the row's id and column 1 is the track behind it, and
+        // they differ: a LEFT JOIN keeps one output row per input id even when
+        // the track vanished, and that row still has to name the id it stood
+        // for or every later index would shift.
+        string source = ids is null
+            ? "FROM track t"
+            : """
+              FROM json_each($ids) je
+              LEFT JOIN track t ON t.id = je.value
+              """;
+        string idColumn = ids is null ? "t.id" : "je.value";
+
+        string sql = $"""
+            SELECT {idColumn}, t.id, COALESCE({groupColumn}, 0), t.disc_no, t.duration_ms,
                    t.added_unix, t.date_key, t.year, t.genre_id, t.artist_id
-            FROM json_each($ids) je
-            LEFT JOIN track t ON t.id = je.value
-            ORDER BY je.key
-            """,
-            ("$ids", json));
+            {source}{joins}
+            ORDER BY {orderBy}
+            """;
+
+        // json_each keeps this a single statement regardless of id count.
+        using SqliteCommand cmd = ids is null
+            ? db.Command(sql)
+            : db.Command(sql, ("$ids", "[" + string.Join(',', ids) + "]"));
         using SqliteDataReader reader = cmd.ExecuteReader();
 
+        var ordered = new List<long>(ids?.Count ?? 0);
         var runs = new List<RunBuilder>();
         RunBuilder? current = null;
         int index = 0;
         while (reader.Read())
         {
-            long groupId = reader.GetInt64(1);
+            ordered.Add(reader.GetInt64(0));
+            long groupId = reader.GetInt64(2);
             if (current is null || current.GroupId != groupId)
             {
                 current = new RunBuilder(groupId, index);
@@ -155,15 +227,15 @@ public static class TrackGrouper
             }
 
             current.Add(
-                trackId: reader.IsDBNull(0) ? null : reader.GetInt64(0),
+                trackId: reader.IsDBNull(1) ? null : reader.GetInt64(1),
                 index: index,
-                discNo: reader.IsDBNull(2) ? null : reader.GetInt32(2),
-                durationMs: reader.IsDBNull(3) ? 0 : reader.GetInt64(3),
-                addedUnix: reader.IsDBNull(4) ? null : reader.GetInt64(4),
-                dateKey: reader.IsDBNull(5) ? null : reader.GetInt64(5),
-                year: reader.IsDBNull(6) ? null : reader.GetInt32(6),
-                genreId: reader.IsDBNull(7) ? null : reader.GetInt64(7),
-                artistId: reader.IsDBNull(8) ? null : reader.GetInt64(8));
+                discNo: reader.IsDBNull(3) ? null : reader.GetInt32(3),
+                durationMs: reader.IsDBNull(4) ? 0 : reader.GetInt64(4),
+                addedUnix: reader.IsDBNull(5) ? null : reader.GetInt64(5),
+                dateKey: reader.IsDBNull(6) ? null : reader.GetInt64(6),
+                year: reader.IsDBNull(7) ? null : reader.GetInt32(7),
+                genreId: reader.IsDBNull(8) ? null : reader.GetInt64(8),
+                artistId: reader.IsDBNull(9) ? null : reader.GetInt64(9));
             index++;
         }
 
@@ -172,7 +244,7 @@ public static class TrackGrouper
             run.Close();
         }
 
-        return runs;
+        return ([.. ordered], runs);
     }
 
     /// <summary>Group display names, looked up once per distinct group id.</summary>

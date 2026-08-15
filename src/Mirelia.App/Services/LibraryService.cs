@@ -156,6 +156,20 @@ public sealed class LibraryService : IDisposable
         long[] ids, TrackGroupField field, CancellationToken cancellationToken = default)
         => RunViewAsync(() => TrackGrouper.LoadRuns(_viewDb, ids, field), cancellationToken);
 
+    /// <summary>
+    /// Orders a view and cuts it into group runs in one query. Pass null ids
+    /// for the whole library. This replaces "sort, then group", which walked
+    /// the view twice for no gain.
+    /// </summary>
+    public Task<(long[] Ids, List<TrackGroupRun> Runs)> LoadOrderedGroupRunsAsync(
+        long[]? ids,
+        TrackSortOrder order,
+        TrackGroupField field,
+        CancellationToken cancellationToken = default)
+        => RunViewAsync(
+            () => TrackGrouper.LoadOrderedRuns(_viewDb, ids, order, field),
+            cancellationToken);
+
     /// <summary>All track ids in a browse order.</summary>
     public Task<long[]> BrowseAllAsync(
         TrackSortOrder order, CancellationToken cancellationToken = default)

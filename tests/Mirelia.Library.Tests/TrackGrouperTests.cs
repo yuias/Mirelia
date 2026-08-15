@@ -223,6 +223,76 @@ public sealed class TrackGrouperTests : IDisposable
     }
 
     [Fact]
+    public void OrderingAndGroupingInOnePassMatchesDoingItInTwo()
+    {
+        long older = InsertAlbum("Older");
+        long newer = InsertAlbum("Newer");
+        long o1 = InsertTrack("O1", older, trackNo: 1, dateKey: 19900101, durationMs: 5_000);
+        long o2 = InsertTrack("O2", older, trackNo: 2, dateKey: 19900101, durationMs: 3_000);
+        long n1 = InsertTrack("N1", newer, trackNo: 1, dateKey: 20240101, durationMs: 7_000);
+        long[] input = [n1, o2, o1];
+
+        List<long> sortedThenGrouped =
+            TrackPager.SortIds(_db, input, TrackSortOrder.AlbumByYear);
+        List<TrackGroupRun> twoPasses =
+            TrackGrouper.LoadRuns(_db, sortedThenGrouped, TrackGroupField.Album);
+
+        (long[] ids, List<TrackGroupRun> onePass) =
+            TrackGrouper.LoadOrderedRuns(_db, input, TrackSortOrder.AlbumByYear, TrackGroupField.Album);
+
+        Assert.Equal(sortedThenGrouped, ids);
+        Assert.Equal(twoPasses.Count, onePass.Count);
+        for (int i = 0; i < twoPasses.Count; i++)
+        {
+            // Field by field: TrackGroupRun is a record, but its Discs member
+            // is a list, so record equality compares that by reference.
+            TrackGroupRun expected = twoPasses[i];
+            TrackGroupRun actual = onePass[i];
+            Assert.Equal(expected.GroupId, actual.GroupId);
+            Assert.Equal(expected.Title, actual.Title);
+            Assert.Equal(expected.Subtitle, actual.Subtitle);
+            Assert.Equal(expected.Artist, actual.Artist);
+            Assert.Equal(expected.Genre, actual.Genre);
+            Assert.Equal(expected.Year, actual.Year);
+            Assert.Equal(expected.StartIndex, actual.StartIndex);
+            Assert.Equal(expected.Count, actual.Count);
+            Assert.Equal(expected.DurationMs, actual.DurationMs);
+            Assert.Equal(expected.MaxAddedUnix, actual.MaxAddedUnix);
+            Assert.Equal(expected.CoverTrackId, actual.CoverTrackId);
+            Assert.Equal(expected.Discs, actual.Discs);
+        }
+    }
+
+    [Fact]
+    public void TheWholeLibraryNeedsNoIdArrayAtAll()
+    {
+        long album = InsertAlbum("A");
+        long t1 = InsertTrack("T1", album, trackNo: 1);
+        long t2 = InsertTrack("T2", album, trackNo: 2);
+
+        // Browsing the library used to mean one query for the ids and another
+        // to group them; passing null skips building and shipping the array.
+        (long[] ids, List<TrackGroupRun> runs) =
+            TrackGrouper.LoadOrderedRuns(_db, null, TrackSortOrder.Album, TrackGroupField.Album);
+
+        Assert.Equal([t1, t2], ids);
+        Assert.Equal(2, Assert.Single(runs).Count);
+    }
+
+    [Fact]
+    public void OnePassKeepsTheInputOrderForPlaylistOrder()
+    {
+        long album = InsertAlbum("A");
+        long t1 = InsertTrack("T1", album, trackNo: 1);
+        long t2 = InsertTrack("T2", album, trackNo: 2);
+
+        (long[] ids, _) = TrackGrouper.LoadOrderedRuns(
+            _db, [t2, t1], TrackSortOrder.PlaylistOrder, TrackGroupField.Album);
+
+        Assert.Equal([t2, t1], ids);
+    }
+
+    [Fact]
     public void TheMostCommonArtistLabelsTheRun()
     {
         long composer = InsertArtist("HOYO-MiX");
