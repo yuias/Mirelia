@@ -379,6 +379,10 @@ public partial class MainWindow : Window
     // repaints through TrackRow's own INPC rather than needing a rebuild.
     private static readonly IDataTemplate RatingCellTemplate = BuildRatingCellTemplate();
 
+    // Unrated cells render as empty text, so the glyphs carry a fixed width
+    // to keep both the hover target and the column alignment.
+    private const double RatingStarWidth = 14;
+
     private static IDataTemplate BuildRatingCellTemplate()
     {
         return new FuncDataTemplate<TrackRow>((_, _) =>
@@ -387,20 +391,35 @@ public partial class MainWindow : Window
             {
                 Orientation = Orientation.Horizontal,
                 VerticalAlignment = VerticalAlignment.Center,
+
+                // A panel without a background is not hit-testable, and the
+                // cell's hover state is what reveals an unrated row's stars.
+                Background = Avalonia.Media.Brushes.Transparent,
             };
             for (int star = 1; star <= 5; star++)
             {
                 var glyph = new TextBlock
                 {
                     FontSize = 13,
+                    Width = RatingStarWidth,
+                    TextAlignment = Avalonia.Media.TextAlignment.Center,
                     Tag = star,
                     Cursor = new Cursor(StandardCursorType.Hand),
                 };
-                glyph.Bind(TextBlock.TextProperty, new Binding(nameof(TrackRow.Rating))
+
+                // The cell's own hover state is a second input: it is what
+                // reveals the stars of an unrated row (see the converter).
+                var text = new MultiBinding
                 {
                     Converter = RatingStarConverter.Instance,
                     ConverterParameter = star,
-                });
+                    Bindings =
+                    {
+                        new Binding(nameof(TrackRow.Rating)),
+                        new Binding(nameof(InputElement.IsPointerOver)) { Source = panel },
+                    },
+                };
+                glyph.Bind(TextBlock.TextProperty, text);
                 glyph.PointerPressed += OnRatingStarPressed;
                 panel.Children.Add(glyph);
             }
