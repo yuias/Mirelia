@@ -67,6 +67,12 @@ public sealed record AppSettings
     /// <summary>Whether the playing-queue pane is shown.</summary>
     public bool QueuePaneOpen { get; init; } = true;
 
+    /// <summary>Width (DIPs) of the sources/playlists pane.</summary>
+    public double LeftPaneWidth { get; init; } = 220;
+
+    /// <summary>Width (DIPs) of the playing-queue pane while it is shown.</summary>
+    public double QueuePaneWidth { get; init; } = 240;
+
     /// <summary>
     /// The library file to reopen at startup, or null for the default one.
     /// Set by "Open Library…"; falls back to the default when the file has

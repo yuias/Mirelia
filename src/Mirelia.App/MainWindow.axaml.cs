@@ -12,6 +12,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using Mirelia.App.Dialogs;
 using Mirelia.App.Models;
+using Mirelia.App.Services;
 using Mirelia.App.ViewModels;
 using Mirelia.Library;
 using Mirelia.Library.Playlists;
@@ -72,6 +73,11 @@ public partial class MainWindow : Window
     private IReadOnlyDictionary<string, double> _gridStoredWidths = new Dictionary<string, double>();
     private Dictionary<string, double>? _pendingWidths;
 
+    // The queue pane's column collapses to zero width while the pane is
+    // hidden, so the width the user dragged it to is remembered here to be
+    // restored on reopen and persisted at exit.
+    private double _queuePaneWidth;
+
     // RowHeight is not an inherited property, unlike FontFamily/FontSize, so
     // it needs to be recomputed and pushed explicitly whenever the font size
     // setting changes.
@@ -83,6 +89,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         RestoreWindowPlacement();
+        RestorePaneWidths();
 
         ApplyFontScaledRowHeight(App.Settings?.Current.FontSize ?? BaseFontSize);
         if (App.Settings is { } settings)
@@ -174,15 +181,21 @@ public partial class MainWindow : Window
             {
                 RebuildColumns();
                 vm.ViewSettingsApplied += OnViewSettingsApplied;
+                ApplyQueuePaneWidth();
                 vm.Queue.PropertyChanged += (_, args) =>
                 {
                     if (args.PropertyName == nameof(QueueViewModel.CurrentRow))
                     {
                         ScrollQueueToCurrent(onlyIfNewEntry: true);
                     }
-                    else if (args.PropertyName == nameof(QueueViewModel.IsOpen) && vm.Queue.IsOpen)
+                    else if (args.PropertyName == nameof(QueueViewModel.IsOpen))
                     {
-                        ScrollQueueToCurrent(onlyIfNewEntry: false);
+                        CaptureQueuePaneWidth();
+                        ApplyQueuePaneWidth();
+                        if (vm.Queue.IsOpen)
+                        {
+                            ScrollQueueToCurrent(onlyIfNewEntry: false);
+                        }
                     }
                 };
                 vm.PropertyChanged += (_, args) =>
@@ -208,6 +221,46 @@ public partial class MainWindow : Window
     /// </summary>
     private void ApplyFontScaledRowHeight(double fontSize)
         => Grid.RowHeight = Math.Max(BaseRowHeight, Math.Round(BaseRowHeight * fontSize / BaseFontSize));
+
+    // ---- pane widths -----------------------------------------------------
+
+    private const double MinPaneWidth = 150;
+
+    // x:Name on a ColumnDefinition generates no field, so the two resizable
+    // pane columns are reached by index (see the note in MainWindow.axaml).
+    private ColumnDefinition LeftPaneColumn => PanesGrid.ColumnDefinitions[0];
+
+    private ColumnDefinition QueuePaneColumn => PanesGrid.ColumnDefinitions[4];
+
+    /// <summary>Applies the saved pane widths over the XAML defaults.</summary>
+    private void RestorePaneWidths()
+    {
+        AppSettings settings = App.Settings?.Current ?? new AppSettings();
+        LeftPaneColumn.Width = new GridLength(Math.Max(settings.LeftPaneWidth, MinPaneWidth));
+        _queuePaneWidth = Math.Max(settings.QueuePaneWidth, MinPaneWidth);
+    }
+
+    /// <summary>
+    /// Gives the queue column its width while the pane is shown and collapses
+    /// it to nothing while it is hidden — a hidden pane must not leave a gap.
+    /// The minimum goes with it, since a floored column cannot collapse.
+    /// </summary>
+    private void ApplyQueuePaneWidth()
+    {
+        bool open = ViewModel?.Queue.IsOpen ?? false;
+        QueuePaneColumn.MinWidth = open ? MinPaneWidth : 0;
+        QueuePaneColumn.Width = new GridLength(open ? _queuePaneWidth : 0);
+    }
+
+    // Remembers the current queue-pane width, unless the pane is collapsed
+    // (its column is zero then, which is not a width worth keeping).
+    private void CaptureQueuePaneWidth()
+    {
+        if (QueuePaneColumn.Width is { IsAbsolute: true, Value: > 0 } width)
+        {
+            _queuePaneWidth = width.Value;
+        }
+    }
 
     // ---- window placement persistence -----------------------------------
 
@@ -283,6 +336,7 @@ public partial class MainWindow : Window
         // A volume change still inside its debounce window would otherwise be
         // overwritten by the geometry save below with the stale level.
         ViewModel?.Transport.FlushVolume();
+        CaptureQueuePaneWidth();
 
         // Fall back to the current bounds if the window never reported a
         // Normal-state PositionChanged/Resized (e.g. it launched maximized).
@@ -296,6 +350,10 @@ public partial class MainWindow : Window
             WindowWidth = size.Width,
             WindowHeight = size.Height,
             WindowMaximized = WindowState == WindowState.Maximized,
+            LeftPaneWidth = LeftPaneColumn.Width.IsAbsolute
+                ? LeftPaneColumn.Width.Value
+                : settings.Current.LeftPaneWidth,
+            QueuePaneWidth = _queuePaneWidth,
         });
     }
 
