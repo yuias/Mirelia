@@ -1165,21 +1165,39 @@ public sealed partial class MainViewModel : ObservableObject
             return; // a newer reload superseded this one
         }
 
-        // Selection indexes the list being replaced, so it cannot survive it.
-        _blockSelection.Reset();
-
-        var list = new VirtualTrackList(ids, RequestPage);
-        List<TrackGroupBlock>? blocks = null;
+        List<TrackGroupRun>? runs = null;
         if (layout.GroupField is { } groupField)
         {
-            List<TrackGroupRun> runs = await _library.LoadGroupRunsAsync(ids, groupField, cancellationToken);
+            runs = await _library.LoadGroupRunsAsync(ids, groupField, cancellationToken);
             if (generation != _loadGeneration)
             {
                 return;
             }
-
-            blocks = TrackGroupBlocks.Build(list, runs, layout, RequestCover);
         }
+
+        // A row object per id, and a block per group: O(view size) allocation
+        // that has no business on the UI thread, where it would hold the
+        // repaint until the whole list exists. Nothing built here is bound
+        // yet, so it is safe to build off-thread and hand over below.
+        (VirtualTrackList list, List<TrackGroupBlock>? blocks) = await Task.Run(
+            () =>
+            {
+                var built = new VirtualTrackList(ids, RequestPage);
+                return (
+                    built,
+                    runs is null
+                        ? null
+                        : TrackGroupBlocks.Build(built, runs, layout, RequestCover));
+            },
+            cancellationToken);
+
+        if (generation != _loadGeneration)
+        {
+            return;
+        }
+
+        // Selection indexes the list being replaced, so it cannot survive it.
+        _blockSelection.Reset();
 
         // Container recycling frees a block's cover when it scrolls away, but
         // replacing the whole list bypasses that; free them here rather than
