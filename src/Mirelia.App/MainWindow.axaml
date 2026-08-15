@@ -1,6 +1,8 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:Mirelia.App.ViewModels"
+        xmlns:m="using:Mirelia.App.Models"
+        xmlns:local="using:Mirelia.App"
         xmlns:pl="using:Mirelia.Library.Playlists"
         x:Class="Mirelia.App.MainWindow"
         x:DataType="vm:MainViewModel"
@@ -53,6 +55,10 @@
         <ComboBox DockPanel.Dock="Right" Width="170" Margin="8,0,0,0"
                   ItemsSource="{Binding AvailableSorts}"
                   SelectedItem="{Binding SelectedSort}" />
+        <ComboBox DockPanel.Dock="Right" Width="110" Margin="8,0,0,0"
+                  ItemsSource="{Binding AvailableLayouts}"
+                  SelectedItem="{Binding SelectedLayout}"
+                  ToolTip.Tip="Layout style — grouped layouts sort by group and have no column headers" />
         <Button DockPanel.Dock="Right" Margin="8,0,0,0" Padding="7,4"
                 IsVisible="{Binding CanPromoteSearch}"
                 Click="OnSaveSearchAsPlaylistClick"
@@ -261,6 +267,7 @@
       <Panel Grid.Column="2">
         <DataGrid x:Name="Grid"
                   ItemsSource="{Binding Tracks}"
+                  IsVisible="{Binding IsFlatLayout}"
                   IsReadOnly="True"
                   CanUserSortColumns="True"
                   Sorting="OnGridSorting"
@@ -292,6 +299,90 @@
             </ContextMenu>
           </DataGrid.ContextMenu>
         </DataGrid>
+        <!-- Grouped layout: one block per album/artist, cover on the left.
+             Its own ScrollViewer template is what lets the panel virtualize;
+             an ItemsControl has none of its own. -->
+        <ItemsControl x:Name="BlockList"
+                      ItemsSource="{Binding GroupedTracks}"
+                      IsVisible="{Binding !IsFlatLayout}"
+                      ContainerPrepared="OnBlockPrepared">
+          <ItemsControl.Template>
+            <ControlTemplate>
+              <ScrollViewer>
+                <ItemsPresenter />
+              </ScrollViewer>
+            </ControlTemplate>
+          </ItemsControl.Template>
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <VirtualizingStackPanel />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="m:TrackGroupBlock">
+              <Grid ColumnDefinitions="Auto,*" Margin="14,12,14,20">
+                <Border Grid.Column="0" Width="210" Height="210" Margin="0,0,18,0"
+                        VerticalAlignment="Top" CornerRadius="3"
+                        ClipToBounds="True" Background="#14808080">
+                  <PathIcon Width="56" Height="56" Opacity="0.22"
+                            HorizontalAlignment="Center" VerticalAlignment="Center"
+                            Data="M9,3 H20 V15.5 A3.5,3.5 0 1 1 17.5,12.1 V7 L11.5,8.2 V17.5 A3.5,3.5 0 1 1 9,14.1 Z" />
+                </Border>
+
+                <StackPanel Grid.Column="1">
+                  <DockPanel>
+                    <TextBlock DockPanel.Dock="Right" Opacity="0.55" FontSize="12"
+                               VerticalAlignment="Bottom" Margin="12,0,0,3"
+                               Text="{Binding DurationText}" />
+                    <StackPanel Spacing="2">
+                      <TextBlock FontSize="16" FontWeight="SemiBold"
+                                 TextTrimming="CharacterEllipsis"
+                                 Text="{Binding Title}" />
+                      <TextBlock Opacity="0.55" FontSize="12"
+                                 TextTrimming="CharacterEllipsis"
+                                 Text="{Binding Subtitle}" />
+                    </StackPanel>
+                  </DockPanel>
+
+                  <ItemsControl ItemsSource="{Binding Discs}" Margin="0,10,0,0">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="m:DiscSection">
+                        <StackPanel>
+                          <TextBlock Margin="10,6,0,4" Opacity="0.5" FontSize="11"
+                                     FontStyle="Italic"
+                                     IsVisible="{Binding HasCaption}"
+                                     Text="{Binding Caption}" />
+                          <ItemsControl ItemsSource="{Binding Rows}">
+                            <ItemsControl.ItemTemplate>
+                              <DataTemplate x:DataType="m:TrackRow">
+                                <Grid Height="26" ColumnDefinitions="40,*,Auto,58">
+                                  <TextBlock Grid.Column="0" Opacity="0.5" FontSize="12"
+                                             VerticalAlignment="Center"
+                                             TextAlignment="Right" Margin="0,0,10,0"
+                                             Text="{Binding TrackNo}" />
+                                  <TextBlock Grid.Column="1" VerticalAlignment="Center"
+                                             TextTrimming="CharacterEllipsis"
+                                             Text="{Binding Title}" />
+                                  <ContentControl Grid.Column="2" Content="{Binding}"
+                                                  ContentTemplate="{x:Static local:MainWindow.RatingCell}" />
+                                  <TextBlock Grid.Column="3" Opacity="0.6" FontSize="12"
+                                             VerticalAlignment="Center"
+                                             TextAlignment="Right"
+                                             Text="{Binding Duration}" />
+                                </Grid>
+                              </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                          </ItemsControl>
+                        </StackPanel>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </Grid>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
                     Spacing="8"
                     IsVisible="{Binding IsLibraryEmpty}">

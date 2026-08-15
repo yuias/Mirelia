@@ -65,15 +65,6 @@ public sealed class PlaylistNode
     public string? Tooltip => IsEphemeral ? "Temporary playlist — cleared when Mirelia exits" : null;
 }
 
-/// <summary>A sort preset with a display label.</summary>
-/// <param name="Order">The preset.</param>
-/// <param name="Label">Shown in the sort selector.</param>
-public sealed record SortChoice(TrackSortOrder Order, string Label)
-{
-    /// <inheritdoc />
-    public override string ToString() => Label;
-}
-
 /// <summary>Main window state: sources, search, the virtualized track grid.</summary>
 public sealed partial class MainViewModel : ObservableObject
 {
@@ -134,6 +125,25 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>True when the current DSL query can be saved as a smart playlist.</summary>
     public bool CanPromoteSearch
         => IsDslSearch && !string.IsNullOrWhiteSpace(SearchText);
+
+    /// <summary>Layout styles offered for the current view.</summary>
+    [ObservableProperty]
+    private IReadOnlyList<LayoutSpec> _availableLayouts = TrackLayouts.All;
+
+    /// <summary>The active layout style.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsFlatLayout))]
+    private LayoutSpec _selectedLayout = TrackLayouts.Tracks;
+
+    /// <summary>
+    /// The grouped layout's blocks over <see cref="Tracks"/>, or null while a
+    /// flat layout is active.
+    /// </summary>
+    [ObservableProperty]
+    private IReadOnlyList<TrackGroupBlock>? _groupedTracks;
+
+    /// <summary>True while the flat track grid is the active layout.</summary>
+    public bool IsFlatLayout => !SelectedLayout.IsGrouped;
 
     [ObservableProperty]
     private IReadOnlyList<SortChoice> _availableSorts = BrowseSorts;
@@ -750,6 +760,17 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
+    partial void OnSelectedLayoutChanged(LayoutSpec value)
+    {
+        if (!_applyingViewSettings)
+        {
+            // The new layout dictates its own sort list, so let the reload
+            // re-derive the sort instead of carrying an incompatible one over.
+            _ = PersistViewSettingsAsync();
+            _ = ReloadAsync();
+        }
+    }
+
     partial void OnSelectedSortChanged(SortChoice? value)
     {
         if (!_applyingViewSettings && value is not null)
@@ -816,6 +837,9 @@ public sealed partial class MainViewModel : ObservableObject
         return _library.SetViewSettingsAsync(CurrentScopeKey, new Library.Database.ViewSettings
         {
             Columns = _columnsInherited ? null : [.. CurrentColumns],
+            // Null is "the flat grid", so an unset view and one explicitly
+            // switched back to it read the same.
+            Layout = SelectedLayout.IsGrouped ? SelectedLayout.Key : null,
             Sort = SelectedSort?.Order,
             SortColumn = SortColumnKey,
             SortDescending = SortDescending,
@@ -950,18 +974,31 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
-        IReadOnlyList<SortChoice> available = isPlaylist || isFolder ? PlaylistSorts : BrowseSorts;
-        TrackSortOrder defaultSort = isPlaylist || isFolder
-            ? TrackSortOrder.PlaylistOrder
-            : isRecent ? TrackSortOrder.RecentlyAdded : TrackSortOrder.Artist;
+        // A grouped layout brings its own sort list; only a group-contiguous
+        // order can be rendered as blocks.
+        LayoutSpec layout = TrackLayouts.Find(viewSettings.Layout);
+        IReadOnlyList<SortChoice> available = layout.Sorts
+            ?? (isPlaylist || isFolder ? PlaylistSorts : BrowseSorts);
+        TrackSortOrder defaultSort = layout.IsGrouped
+            ? layout.DefaultSort
+            : isPlaylist || isFolder
+                ? TrackSortOrder.PlaylistOrder
+                : isRecent ? TrackSortOrder.RecentlyAdded : TrackSortOrder.Artist;
         TrackSortOrder sort = viewSettings.Sort ?? defaultSort;
 
         _applyingViewSettings = true;
         try
         {
+            SelectedLayout = layout;
             AvailableSorts = available;
-            SelectedSort = available.FirstOrDefault(c => c.Order == sort) ?? available[0];
-            SortColumnKey = viewSettings.SortColumn is { } column
+            // A sort the layout does not offer falls back to the layout's own
+            // default rather than to whatever happens to head its list.
+            SelectedSort = available.FirstOrDefault(c => c.Order == sort)
+                ?? available.FirstOrDefault(c => c.Order == defaultSort)
+                ?? available[0];
+            // Header-click sorts belong to the grid; a grouped layout has no
+            // headers to click and could not stay group-contiguous under one.
+            SortColumnKey = !layout.IsGrouped && viewSettings.SortColumn is { } column
                 && TrackPager.IsSortableColumn(column) ? column : null;
             SortDescending = SortColumnKey is not null && viewSettings.SortDescending;
             CurrentColumns = viewSettings.Columns is { Count: > 0 }
@@ -1061,9 +1098,25 @@ public sealed partial class MainViewModel : ObservableObject
             return; // a newer reload superseded this one
         }
 
-        Tracks = new VirtualTrackList(ids, RequestPage);
+        var list = new VirtualTrackList(ids, RequestPage);
+        List<TrackGroupBlock>? blocks = null;
+        if (layout.GroupField is { } groupField)
+        {
+            List<TrackGroupRun> runs = await _library.LoadGroupRunsAsync(ids, groupField);
+            if (generation != _loadGeneration)
+            {
+                return;
+            }
+
+            blocks = TrackGroupBlocks.Build(list, runs, layout);
+        }
+
+        Tracks = list;
+        GroupedTracks = blocks;
         IsLibraryEmpty = ids.Length == 0 && string.IsNullOrWhiteSpace(SearchText);
-        StatusText = $"{ids.Length:N0} track(s)";
+        StatusText = blocks is null
+            ? $"{ids.Length:N0} track(s)"
+            : $"{ids.Length:N0} track(s) / {blocks.Count:N0} {layout.Label.ToLowerInvariant()}";
     }
 
     /// <summary>

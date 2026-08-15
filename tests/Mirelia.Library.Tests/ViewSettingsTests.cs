@@ -100,6 +100,29 @@ public sealed class ViewSettingsTests : IDisposable
     }
 
     [Fact]
+    public void ResettingColumnsLeavesTheLayoutStyleAlone()
+    {
+        var store = new ViewSettingsStore(_db);
+        store.Set("playlist:7", new ViewSettings
+        {
+            Columns = ["title"],
+            Layout = "albums",
+            Sort = TrackSortOrder.AlbumByYear,
+        });
+
+        store.ClearAllColumns();
+
+        // "Reset columns" is about columns; it must not drop a view back to
+        // the flat grid.
+        ViewSettings after = store.Get("playlist:7");
+        Assert.Null(after.Columns);
+        Assert.Equal("albums", after.Layout);
+        Assert.Equal(TrackSortOrder.AlbumByYear, after.Sort);
+        // Rows written before layout styles existed read as "the flat grid".
+        Assert.Null(store.Get("source:music").Layout);
+    }
+
+    [Fact]
     public void SettingsRoundTripColumnSort()
     {
         var store = new ViewSettingsStore(_db);

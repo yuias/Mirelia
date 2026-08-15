@@ -106,6 +106,12 @@ public sealed class LibraryService : IDisposable
     public Task<long[]> SortIdsAsync(long[] ids, ColumnSort sort)
         => RunAsync(() => TrackPager.SortIds(_db, ids, sort).ToArray());
 
+    /// <summary>
+    /// Contiguous group runs over an ordered id array, for a grouped layout.
+    /// </summary>
+    public Task<List<TrackGroupRun>> LoadGroupRunsAsync(long[] ids, TrackGroupField field)
+        => RunAsync(() => TrackGrouper.LoadRuns(_db, ids, field));
+
     /// <summary>All track ids in a browse order.</summary>
     public Task<long[]> BrowseAllAsync(TrackSortOrder order)
         => RunAsync(() => TrackPager.BrowseAll(_db, order).ToArray());

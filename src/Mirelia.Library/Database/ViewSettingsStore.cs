@@ -14,6 +14,13 @@ public sealed record ViewSettings
     /// <summary>Column keys in display order, or null for the default set.</summary>
     public List<string>? Columns { get; init; }
 
+    /// <summary>
+    /// Layout-style key (the app's layout registry owns the vocabulary), or
+    /// null for the flat track list. Unknown keys — a style this build does
+    /// not have — read as null rather than breaking the view.
+    /// </summary>
+    public string? Layout { get; init; }
+
     /// <summary>Sort preset, or null for the view's default.</summary>
     public TrackSortOrder? Sort { get; init; }
 

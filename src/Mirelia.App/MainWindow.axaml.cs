@@ -437,6 +437,13 @@ public partial class MainWindow : Window
     // repaints through TrackRow's own INPC rather than needing a rebuild.
     private static readonly IDataTemplate RatingCellTemplate = BuildRatingCellTemplate();
 
+    /// <summary>
+    /// The rating cell template, exposed so the grouped layout's row template
+    /// can reuse it instead of growing a second star cell that drifts from
+    /// this one.
+    /// </summary>
+    public static IDataTemplate RatingCell => RatingCellTemplate;
+
     // Unrated cells render as empty text, so the glyphs carry a fixed width
     // to keep both the hover target and the column alignment.
     private const double RatingStarWidth = 14;
@@ -511,6 +518,19 @@ public partial class MainWindow : Window
         // waiting on the write or reloading the page.
         row.Rating = newStars;
         await library.SetTrackRatingAsync(row.Id, newStars == 0 ? null : newStars * 20);
+    }
+
+    /// <summary>
+    /// A group block was realized: hydrate its rows. This is the grouped
+    /// layout's counterpart to the grid's LoadingRow hook — recycled
+    /// containers get a fresh block here, which an attach event would miss.
+    /// </summary>
+    private void OnBlockPrepared(object? sender, ContainerPreparedEventArgs e)
+    {
+        if (ViewModel?.GroupedTracks is { } blocks && e.Index < blocks.Count)
+        {
+            blocks[e.Index].NotifyVisible();
+        }
     }
 
     /// <summary>

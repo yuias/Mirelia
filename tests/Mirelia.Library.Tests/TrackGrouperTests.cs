@@ -223,6 +223,26 @@ public sealed class TrackGrouperTests : IDisposable
     }
 
     [Fact]
+    public void TheMostCommonArtistLabelsTheRun()
+    {
+        long composer = InsertArtist("HOYO-MiX");
+        long guest = InsertArtist("Guest");
+        long series = InsertArtist("Genshin");
+        long album = InsertAlbum("OST", albumArtistId: series);
+        long t1 = InsertTrack("T1", album, trackNo: 1, artistId: guest);
+        long t2 = InsertTrack("T2", album, trackNo: 2, artistId: composer);
+        long t3 = InsertTrack("T3", album, trackNo: 3, artistId: composer);
+
+        TrackGroupRun run = Assert.Single(
+            TrackGrouper.LoadRuns(_db, [t1, t2, t3], TrackGroupField.Album));
+
+        // The album header names the album artist and the performer
+        // separately; a lone guest track must not take over the second line.
+        Assert.Equal("Genshin", run.Subtitle);
+        Assert.Equal("HOYO-MiX", run.Artist);
+    }
+
+    [Fact]
     public void UndatedTracksLeaveTheRunYearFromTheirBareYearTag()
     {
         long album = InsertAlbum("A");

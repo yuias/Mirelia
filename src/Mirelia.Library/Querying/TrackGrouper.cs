@@ -27,6 +27,7 @@ public sealed record DiscSpan(int? DiscNo, int StartIndex, int Count);
 /// <param name="GroupId">Album or artist id; 0 when the group field is null.</param>
 /// <param name="Title">Album or artist name, or null when unset.</param>
 /// <param name="Subtitle">Album artist name for album groups; null otherwise.</param>
+/// <param name="Artist">Most common track artist in the run, or null when none is tagged.</param>
 /// <param name="Genre">Most common genre in the run, or null when none is tagged.</param>
 /// <param name="Year">Year of the run's latest release date, or null when undated.</param>
 /// <param name="StartIndex">Index into the id array the run was built from.</param>
@@ -39,6 +40,7 @@ public sealed record TrackGroupRun(
     long GroupId,
     string? Title,
     string? Subtitle,
+    string? Artist,
     string? Genre,
     int? Year,
     int StartIndex,
@@ -84,6 +86,8 @@ public static class TrackGrouper
 
         Dictionary<long, (string? Title, string? Subtitle)> names =
             LoadGroupNames(db, runs.Select(r => r.GroupId), field);
+        Dictionary<long, string> artists =
+            LoadArtistNames(db, runs.Select(r => r.TopArtistId));
         Dictionary<long, string> genres = LoadGenreNames(db);
 
         var result = new List<TrackGroupRun>(runs.Count);
@@ -94,6 +98,7 @@ public static class TrackGrouper
                 run.GroupId,
                 title,
                 subtitle,
+                run.TopArtistId is { } artistId ? artists.GetValueOrDefault(artistId) : null,
                 run.TopGenreId is { } genreId ? genres.GetValueOrDefault(genreId) : null,
                 run.Year,
                 run.StartIndex,
@@ -129,7 +134,7 @@ public static class TrackGrouper
         string json = "[" + string.Join(',', ids) + "]";
         using SqliteCommand cmd = db.Command($"""
             SELECT t.id, COALESCE({groupColumn}, 0), t.disc_no, t.duration_ms,
-                   t.added_unix, t.date_key, t.year, t.genre_id
+                   t.added_unix, t.date_key, t.year, t.genre_id, t.artist_id
             FROM json_each($ids) je
             LEFT JOIN track t ON t.id = je.value
             ORDER BY je.key
@@ -157,7 +162,8 @@ public static class TrackGrouper
                 addedUnix: reader.IsDBNull(4) ? null : reader.GetInt64(4),
                 dateKey: reader.IsDBNull(5) ? null : reader.GetInt64(5),
                 year: reader.IsDBNull(6) ? null : reader.GetInt32(6),
-                genreId: reader.IsDBNull(7) ? null : reader.GetInt64(7));
+                genreId: reader.IsDBNull(7) ? null : reader.GetInt64(7),
+                artistId: reader.IsDBNull(8) ? null : reader.GetInt64(8));
             index++;
         }
 
@@ -207,6 +213,32 @@ public static class TrackGrouper
         return result;
     }
 
+    /// <summary>Names of the runs' representative artists, one lookup for all of them.</summary>
+    private static Dictionary<long, string> LoadArtistNames(
+        LibraryDatabase db, IEnumerable<long?> artistIds)
+    {
+        long[] distinct = [.. artistIds.OfType<long>().Distinct()];
+        var result = new Dictionary<long, string>(distinct.Length);
+        foreach (long[] chunk in distinct.Chunk(512))
+        {
+            string placeholders = string.Join(", ", chunk.Select((_, i) => $"$id{i}"));
+            using SqliteCommand cmd = db.Command(
+                $"SELECT id, name FROM artist WHERE id IN ({placeholders})");
+            for (int i = 0; i < chunk.Length; i++)
+            {
+                cmd.Parameters.AddWithValue($"$id{i}", chunk[i]);
+            }
+
+            using SqliteDataReader reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                result[reader.GetInt64(0)] = reader.GetString(1);
+            }
+        }
+
+        return result;
+    }
+
     /// <summary>
     /// The whole genre table. It holds tens of rows, not thousands, so one
     /// unfiltered read beats chunking the ids we happened to see.
@@ -224,10 +256,38 @@ public static class TrackGrouper
         return result;
     }
 
+    /// <summary>
+    /// Remembers the most common id fed to it. Ties go to the id seen first,
+    /// so a header label does not flip between equally common values.
+    /// </summary>
+    private sealed class TopCounter
+    {
+        private readonly Dictionary<long, int> _counts = [];
+        private int _best;
+
+        public long? TopId { get; private set; }
+
+        public void Add(long? id)
+        {
+            if (id is not { } value)
+            {
+                return;
+            }
+
+            int count = _counts[value] = _counts.GetValueOrDefault(value) + 1;
+            if (count > _best)
+            {
+                _best = count;
+                TopId = value;
+            }
+        }
+    }
+
     /// <summary>Accumulates one run's aggregates while the reader walks it.</summary>
     private sealed class RunBuilder(long groupId, int startIndex)
     {
-        private readonly Dictionary<long, int> _genreCounts = [];
+        private readonly TopCounter _genres = new();
+        private readonly TopCounter _artists = new();
         private readonly List<DiscSpan> _discs = [];
         private int _discStart = startIndex;
         private int _discCount;
@@ -235,7 +295,6 @@ public static class TrackGrouper
         private bool _discOpen;
         private long? _maxDateKey;
         private int? _maxYear;
-        private int _topGenreCount;
 
         public long GroupId { get; } = groupId;
 
@@ -249,7 +308,9 @@ public static class TrackGrouper
 
         public long CoverTrackId { get; private set; }
 
-        public long? TopGenreId { get; private set; }
+        public long? TopGenreId => _genres.TopId;
+
+        public long? TopArtistId => _artists.TopId;
 
         public IReadOnlyList<DiscSpan> Discs => _discs;
 
@@ -258,7 +319,7 @@ public static class TrackGrouper
 
         public void Add(
             long? trackId, int index, int? discNo, long durationMs,
-            long? addedUnix, long? dateKey, int? year, long? genreId)
+            long? addedUnix, long? dateKey, int? year, long? genreId, long? artistId)
         {
             if (!_discOpen || discNo != _discNo)
             {
@@ -293,17 +354,8 @@ public static class TrackGrouper
                 _maxYear = y;
             }
 
-            if (genreId is { } genre)
-            {
-                // Most common genre wins; ">" (not ">=") makes the first one
-                // seen win a tie, so the header stays stable.
-                int count = _genreCounts[genre] = _genreCounts.GetValueOrDefault(genre) + 1;
-                if (count > _topGenreCount)
-                {
-                    _topGenreCount = count;
-                    TopGenreId = genre;
-                }
-            }
+            _genres.Add(genreId);
+            _artists.Add(artistId);
         }
 
         /// <summary>Seals the last open disc span once the run's rows are in.</summary>
