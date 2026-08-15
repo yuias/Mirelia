@@ -15,6 +15,13 @@ public sealed partial class TrackRow : ObservableObject
     /// <summary>Position within the owning list; stable for the list's lifetime.</summary>
     public required int Index { get; init; }
 
+    /// <summary>
+    /// True for every second row of the group block holding it, which is what
+    /// draws the grouped layout's banding. Assigned when blocks are built,
+    /// before the rows are shown; the flat grid ignores it.
+    /// </summary>
+    public bool IsAlternate { get; set; }
+
     [ObservableProperty]
     private string _trackNo = string.Empty;
 

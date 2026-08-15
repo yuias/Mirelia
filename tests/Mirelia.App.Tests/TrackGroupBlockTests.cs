@@ -17,7 +17,7 @@ public sealed class TrackGroupBlockTests
         ]);
 
         TrackGroupBlock block = Assert.Single(
-            TrackGroupBlocks.Build(tracks, [run], TrackLayouts.Albums));
+            Blocks(tracks, run));
 
         Assert.Equal(1, block.StartIndex);
         Assert.Equal(3, block.Count);
@@ -38,7 +38,7 @@ public sealed class TrackGroupBlockTests
         TrackGroupRun run = Run(0, 2, [new DiscSpan(null, 0, 2)]);
 
         DiscSection disc = Assert.Single(
-            TrackGroupBlocks.Build(tracks, [run], TrackLayouts.Albums)[0].Discs);
+            Blocks(tracks, run)[0].Discs);
 
         Assert.False(disc.HasCaption);
         Assert.Equal(string.Empty, disc.Caption);
@@ -51,7 +51,7 @@ public sealed class TrackGroupBlockTests
         VirtualTrackList tracks = MakeList(size, out List<int> requested);
         TrackGroupRun run = Run(0, size, [new DiscSpan(1, 0, size)]);
 
-        TrackGroupBlocks.Build(tracks, [run], TrackLayouts.Albums)[0].NotifyVisible();
+        Blocks(tracks, run)[0].NotifyVisible();
 
         // An album longer than one hydration page must not leave its tail as
         // placeholders, so every page it spans is announced.
@@ -64,7 +64,7 @@ public sealed class TrackGroupBlockTests
         VirtualTrackList tracks = MakeList(1, out List<int> requested);
         TrackGroupRun run = Run(0, 1, [new DiscSpan(null, 0, 1)]);
 
-        TrackGroupBlocks.Build(tracks, [run], TrackLayouts.Albums)[0].NotifyVisible();
+        Blocks(tracks, run)[0].NotifyVisible();
 
         Assert.Equal([0], requested);
     }
@@ -86,7 +86,7 @@ public sealed class TrackGroupBlockTests
 
         Assert.Equal(
             expected,
-            TrackGroupBlocks.Build(tracks, [run], TrackLayouts.Albums)[0].Title);
+            Blocks(tracks, run)[0].Title);
     }
 
     [Fact]
@@ -104,13 +104,13 @@ public sealed class TrackGroupBlockTests
 
         Assert.Equal(
             "2026 · Game · HOYO-MiX",
-            TrackGroupBlocks.Build(tracks, [full], TrackLayouts.Albums)[0].Subtitle);
+            Blocks(tracks, full)[0].Subtitle);
         Assert.Equal(
             "2026",
-            TrackGroupBlocks.Build(tracks, [sparse], TrackLayouts.Albums)[0].Subtitle);
+            Blocks(tracks, sparse)[0].Subtitle);
         Assert.Equal(
             string.Empty,
-            TrackGroupBlocks.Build(tracks, [bare], TrackLayouts.Albums)[0].Subtitle);
+            Blocks(tracks, bare)[0].Subtitle);
     }
 
     [Theory]
@@ -127,8 +127,45 @@ public sealed class TrackGroupBlockTests
 
         Assert.Equal(
             expected,
-            TrackGroupBlocks.Build(tracks, [run], TrackLayouts.Albums)[0].DurationText);
+            Blocks(tracks, run)[0].DurationText);
     }
+
+    [Fact]
+    public void BandingAlternatesThroughTheWholeBlock()
+    {
+        VirtualTrackList tracks = MakeList(5, out _);
+        TrackGroupRun run = Run(0, 5, [new DiscSpan(1, 0, 3), new DiscSpan(2, 3, 2)]);
+
+        Blocks(tracks, run);
+
+        // Banding is continuous across the disc boundary: restarting it there
+        // would put two shaded rows next to each other.
+        Assert.Equal(
+            [false, true, false, true, false],
+            Enumerable.Range(0, 5).Select(i => tracks[i].IsAlternate));
+    }
+
+    [Fact]
+    public void ACoverIsRequestedOnceHoweverOftenTheBlockIsRealized()
+    {
+        VirtualTrackList tracks = MakeList(1, out _);
+        var requested = new List<long>();
+        TrackGroupBlock block = TrackGroupBlocks.Build(
+            tracks,
+            [Run(0, 1, [new DiscSpan(null, 0, 1)])],
+            TrackLayouts.Albums,
+            b => requested.Add(b.Run.CoverTrackId))[0];
+
+        block.NotifyVisible();
+        block.NotifyVisible();
+
+        // Scrolling re-realizes a block constantly; each re-realization must
+        // not start another file read.
+        Assert.Equal([1L], requested);
+    }
+
+    private static List<TrackGroupBlock> Blocks(VirtualTrackList tracks, TrackGroupRun run)
+        => TrackGroupBlocks.Build(tracks, [run], TrackLayouts.Albums, _ => { });
 
     private static VirtualTrackList MakeList(int count, out List<int> requestedPages)
     {

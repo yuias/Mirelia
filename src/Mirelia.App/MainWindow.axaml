@@ -10,6 +10,21 @@
         Width="1280" Height="760"
         DragDrop.AllowDrop="True">
 
+  <Window.Styles>
+    <!-- Grouped-layout track rows. The flat grid gets banding and a hover
+         cue from the DataGrid's own row template; these rows are plain
+         panels, so they carry their own. -->
+    <Style Selector="Grid.trackrow">
+      <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style Selector="Grid.trackrow.alt">
+      <Setter Property="Background" Value="#0C808080" />
+    </Style>
+    <Style Selector="Grid.trackrow:pointerover">
+      <Setter Property="Background" Value="#1C808080" />
+    </Style>
+  </Window.Styles>
+
   <DockPanel>
 
     <!-- Menu bar -->
@@ -324,9 +339,12 @@
                 <Border Grid.Column="0" Width="210" Height="210" Margin="0,0,18,0"
                         VerticalAlignment="Top" CornerRadius="3"
                         ClipToBounds="True" Background="#14808080">
-                  <PathIcon Width="56" Height="56" Opacity="0.22"
-                            HorizontalAlignment="Center" VerticalAlignment="Center"
-                            Data="M9,3 H20 V15.5 A3.5,3.5 0 1 1 17.5,12.1 V7 L11.5,8.2 V17.5 A3.5,3.5 0 1 1 9,14.1 Z" />
+                  <Panel>
+                    <PathIcon Width="56" Height="56" Opacity="0.22"
+                              HorizontalAlignment="Center" VerticalAlignment="Center"
+                              Data="M9,3 H20 V15.5 A3.5,3.5 0 1 1 17.5,12.1 V7 L11.5,8.2 V17.5 A3.5,3.5 0 1 1 9,14.1 Z" />
+                    <Image Source="{Binding Cover}" Stretch="UniformToFill" />
+                  </Panel>
                 </Border>
 
                 <StackPanel Grid.Column="1">
@@ -355,7 +373,9 @@
                           <ItemsControl ItemsSource="{Binding Rows}">
                             <ItemsControl.ItemTemplate>
                               <DataTemplate x:DataType="m:TrackRow">
-                                <Grid Height="26" ColumnDefinitions="40,*,Auto,58">
+                                <Grid Height="26" Classes="trackrow"
+                                      Classes.alt="{Binding IsAlternate}"
+                                      ColumnDefinitions="40,*,Auto,58">
                                   <TextBlock Grid.Column="0" Opacity="0.5" FontSize="12"
                                              VerticalAlignment="Center"
                                              TextAlignment="Right" Margin="0,0,10,0"

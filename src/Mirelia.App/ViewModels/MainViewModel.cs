@@ -87,6 +87,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private readonly LibraryService _library;
     private readonly AudioPlayerService _player;
+    private readonly ArtworkCache _artwork;
     private readonly DispatcherTimer _searchDebounce;
 
     // Ephemeral ("pin as temporary playlist") state: pure in-memory, never
@@ -241,6 +242,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         _library = library;
         _player = player;
+        _artwork = new ArtworkCache(library);
         Transport = new TransportViewModel(player, settings);
         Queue = new QueueViewModel(library, player, settings);
         _searchDebounce = new DispatcherTimer
@@ -666,6 +668,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         _player.StopAndClear();
+        _artwork.Clear();
         _ephemeralPlaylists.Clear();
         SelectedPlaylist = null;
         SelectedNode = null;
@@ -1108,7 +1111,7 @@ public sealed partial class MainViewModel : ObservableObject
                 return;
             }
 
-            blocks = TrackGroupBlocks.Build(list, runs, layout);
+            blocks = TrackGroupBlocks.Build(list, runs, layout, RequestCover);
         }
 
         Tracks = list;
@@ -1178,6 +1181,25 @@ public sealed partial class MainViewModel : ObservableObject
         });
     }
 
+    // Decode widths: the Now Playing panel is ~180 logical px, an album block
+    // 210. Both decode small so memory tracks the viewport, not the library.
+    private const int NowPlayingArtworkWidth = 400;
+    private const int BlockCoverWidth = 420;
+
+    /// <summary>Loads a block's cover once it has scrolled into view.</summary>
+    private async void RequestCover(TrackGroupBlock block)
+    {
+        IReadOnlyList<TrackGroupBlock>? target = GroupedTracks;
+        Avalonia.Media.Imaging.Bitmap? cover =
+            await _artwork.GetAsync(block.Run.CoverTrackId, BlockCoverWidth);
+
+        // Ignore covers for a block list that was replaced meanwhile.
+        if (ReferenceEquals(target, GroupedTracks))
+        {
+            block.Cover = cover;
+        }
+    }
+
     private async Task ShowNowPlayingAsync(long id)
     {
         Dictionary<long, TrackPageRow> rows = await _library.HydrateAsync([id]);
@@ -1186,22 +1208,8 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
-        Avalonia.Media.Imaging.Bitmap? artwork = null;
-        byte[]? bytes = await _library.GetArtworkAsync(id);
-        if (bytes is not null)
-        {
-            try
-            {
-                using var stream = new MemoryStream(bytes);
-                // Panel width is ~180 logical px; decode small to keep memory flat.
-                artwork = Avalonia.Media.Imaging.Bitmap.DecodeToWidth(stream, 400);
-            }
-            catch (Exception)
-            {
-                // Broken embedded images are not worth surfacing.
-            }
-        }
-
+        Avalonia.Media.Imaging.Bitmap? artwork =
+            await _artwork.GetAsync(id, NowPlayingArtworkWidth);
         Transport.SetNowPlaying(row.Title, row.Artist, row.Album, artwork);
     }
 
