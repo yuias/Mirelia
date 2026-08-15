@@ -21,10 +21,14 @@ public sealed class AudioPlayerService : IDisposable
 
     // Output settings the live device was opened for, and the ReplayGain
     // mode the loaded slots were decoded under. A settings save that touches
-    // neither (pane visibility, window geometry, fonts…) must leave
+    // neither (volume, pane visibility, window geometry, fonts…) must leave
     // playback alone.
     private (string? DeviceId, bool Exclusive) _deviceConfig;
     private ReplayGainMode _replayGain;
+
+    // Volume lives here, not on the engine, because the engine is created
+    // lazily and reopened on device loss — both need the level re-applied.
+    private float _volume;
 
     // Entry id currently loaded into the engine's Next slot, or null when
     // nothing is preloaded. The engine's user_token carries entry ids (not
@@ -58,6 +62,7 @@ public sealed class AudioPlayerService : IDisposable
         AppSettings current = settings.Current;
         _deviceConfig = (current.DeviceId, current.Exclusive);
         _replayGain = current.ReplayGain;
+        _volume = ClampVolume(current.Volume);
         _settings.Changed += OnSettingsChanged;
     }
 
@@ -299,13 +304,30 @@ public sealed class AudioPlayerService : IDisposable
     /// <summary>Sets linear volume, 0..1.</summary>
     public void SetVolume(double volume)
     {
+        _volume = ClampVolume(volume);
         try
         {
-            _engine?.SetVolume((float)Math.Clamp(volume, 0.0, 1.0));
+            _engine?.SetVolume(_volume);
         }
         catch (AudioEngineException ex)
         {
             PlaybackError?.Invoke(ex.Message);
+        }
+    }
+
+    private static float ClampVolume(double volume) => (float)Math.Clamp(volume, 0.0, 1.0);
+
+    // A freshly opened device starts at unity gain, so the remembered level
+    // has to be pushed back after every open (first play, device recovery).
+    private void ApplyVolume()
+    {
+        try
+        {
+            _engine?.SetVolume(_volume);
+        }
+        catch (AudioEngineException)
+        {
+            // A device that cannot take a volume is still worth playing on.
         }
     }
 
@@ -582,6 +604,7 @@ public sealed class AudioPlayerService : IDisposable
         {
             _engine!.OpenDevice(deviceId, exclusive);
             _deviceOpen = true;
+            ApplyVolume();
             return true;
         }
         catch (AudioEngineException)
@@ -613,6 +636,7 @@ public sealed class AudioPlayerService : IDisposable
         }
 
         _deviceOpen = true;
+        ApplyVolume();
     }
 
     private void StopForQueueEnded()

@@ -1,3 +1,4 @@
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Mirelia.App.Services;
@@ -9,6 +10,12 @@ namespace Mirelia.App.ViewModels;
 public sealed partial class TransportViewModel : ObservableObject
 {
     private readonly AudioPlayerService _player;
+    private readonly SettingsService _settings;
+
+    // Dragging the slider fires a change per pixel; only the settled level
+    // is written to disk.
+    private readonly DispatcherTimer _volumeSaveDebounce;
+
     private bool _updatingFromPlayback;
 
     [ObservableProperty]
@@ -42,10 +49,32 @@ public sealed partial class TransportViewModel : ObservableObject
     private double _volume = 1.0;
 
     /// <summary>Creates the view-model and subscribes to player updates.</summary>
-    public TransportViewModel(AudioPlayerService player)
+    public TransportViewModel(AudioPlayerService player, SettingsService settings)
     {
         _player = player;
+        _settings = settings;
+
+        // Direct field assignment: the restored level must not immediately
+        // write itself back out through OnVolumeChanged.
+        _volume = Math.Clamp(settings.Current.Volume, 0.0, 1.0);
+
+        _volumeSaveDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+        _volumeSaveDebounce.Tick += (_, _) => FlushVolume();
+
         _player.PositionChanged += OnPosition;
+    }
+
+    /// <summary>
+    /// Writes a volume change still inside the debounce window, so closing
+    /// the app right after moving the slider does not lose the new level.
+    /// </summary>
+    public void FlushVolume()
+    {
+        _volumeSaveDebounce.Stop();
+        if (Math.Abs(_settings.Current.Volume - Volume) > 0.0001)
+        {
+            _settings.Save(_settings.Current with { Volume = Volume });
+        }
     }
 
     /// <summary>Shows the audible track's metadata and artwork.</summary>
@@ -78,7 +107,12 @@ public sealed partial class TransportViewModel : ObservableObject
         }
     }
 
-    partial void OnVolumeChanged(double value) => _player.SetVolume(value);
+    partial void OnVolumeChanged(double value)
+    {
+        _player.SetVolume(value);
+        _volumeSaveDebounce.Stop();
+        _volumeSaveDebounce.Start();
+    }
 
     private void OnPosition(PlaybackPosition pos)
     {

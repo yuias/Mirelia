@@ -231,7 +231,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         _library = library;
         _player = player;
-        Transport = new TransportViewModel(player);
+        Transport = new TransportViewModel(player, settings);
         Queue = new QueueViewModel(library, player, settings);
         _searchDebounce = new DispatcherTimer
         {

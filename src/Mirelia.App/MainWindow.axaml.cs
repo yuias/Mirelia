@@ -280,6 +280,10 @@ public partial class MainWindow : Window
             return;
         }
 
+        // A volume change still inside its debounce window would otherwise be
+        // overwritten by the geometry save below with the stale level.
+        ViewModel?.Transport.FlushVolume();
+
         // Fall back to the current bounds if the window never reported a
         // Normal-state PositionChanged/Resized (e.g. it launched maximized).
         PixelPoint position = _normalPosition ?? Position;
