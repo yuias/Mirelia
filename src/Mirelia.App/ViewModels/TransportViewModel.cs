@@ -85,9 +85,11 @@ public sealed partial class TransportViewModel : ObservableObject
         NowPlayingArtist = artist ?? string.Empty;
         NowPlayingAlbum = album ?? string.Empty;
 
-        // Not disposed on replacement: the artwork cache owns these bitmaps
-        // and may still be handing the same one to an album block.
+        // The panel owns its bitmap — the cache hands out encoded thumbnails,
+        // not decoded ones — so the replaced bitmap must be freed here.
+        Avalonia.Media.Imaging.Bitmap? previous = Artwork;
         Artwork = artwork;
+        previous?.Dispose();
     }
 
     [RelayCommand]

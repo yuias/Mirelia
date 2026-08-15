@@ -534,6 +534,20 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// A block scrolled out and its container is being recycled: free the
+    /// cover. Skia's pixel buffers are native memory the GC cannot size, so
+    /// without this every block ever shown keeps its pixels for the life of
+    /// the view.
+    /// </summary>
+    private void OnBlockClearing(object? sender, ContainerClearingEventArgs e)
+    {
+        if (e.Container.DataContext is TrackGroupBlock block)
+        {
+            block.ReleaseCover();
+        }
+    }
+
+    /// <summary>
     /// Header click: sorting is routed through SQL (§7.2), never the
     /// grid's collection view — Handled suppresses the in-memory sort.
     /// </summary>

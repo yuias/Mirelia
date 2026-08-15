@@ -13,6 +13,10 @@
          DataGrid replaces it (ADR 0007). -->
     <PackageVersion Include="Avalonia.Controls.DataGrid" Version="12.1.1" />
     <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <!-- Already in the tree through Avalonia.Skia; referenced directly to
+         encode cover thumbnails as WebP. Keep the version pinned to whatever
+         Avalonia.Skia resolves, so there is only ever one Skia in the app. -->
+    <PackageVersion Include="SkiaSharp" Version="3.119.4" />
   </ItemGroup>
 
   <ItemGroup>

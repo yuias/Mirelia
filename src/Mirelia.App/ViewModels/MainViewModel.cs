@@ -1146,6 +1146,17 @@ public sealed partial class MainViewModel : ObservableObject
             blocks = TrackGroupBlocks.Build(list, runs, layout, RequestCover);
         }
 
+        // Container recycling frees a block's cover when it scrolls away, but
+        // replacing the whole list bypasses that; free them here rather than
+        // waiting on a finalizer for native pixels.
+        if (GroupedTracks is { } replaced)
+        {
+            foreach (TrackGroupBlock block in replaced)
+            {
+                block.ReleaseCover();
+            }
+        }
+
         Tracks = list;
         GroupedTracks = blocks;
         IsLibraryEmpty = ids.Length == 0 && string.IsNullOrWhiteSpace(SearchText);
@@ -1213,23 +1224,56 @@ public sealed partial class MainViewModel : ObservableObject
         });
     }
 
-    // Decode widths: the Now Playing panel is ~180 logical px, an album block
-    // 210. Both decode small so memory tracks the viewport, not the library.
+    // Decode widths. The cache stores one 512 px thumbnail per cover; each
+    // consumer decodes it at the size it actually draws, so an album block
+    // holds a quarter of the pixels the Now Playing panel does.
     private const int NowPlayingArtworkWidth = 400;
-    private const int BlockCoverWidth = 420;
+    private const int BlockCoverWidth = 256;
 
     /// <summary>Loads a block's cover once it has scrolled into view.</summary>
     private async void RequestCover(TrackGroupBlock block)
     {
         IReadOnlyList<TrackGroupBlock>? target = GroupedTracks;
+        int token = block.CoverToken;
         Avalonia.Media.Imaging.Bitmap? cover =
-            await _artwork.GetAsync(block.Run.CoverTrackId, BlockCoverWidth);
+            await DecodeArtworkAsync(block.Run.CoverTrackId, BlockCoverWidth);
 
-        // Ignore covers for a block list that was replaced meanwhile.
-        if (ReferenceEquals(target, GroupedTracks))
+        // Ignore covers for a block list that was replaced meanwhile; the
+        // block itself rejects (and frees) one it no longer wants.
+        if (!ReferenceEquals(target, GroupedTracks))
         {
-            block.Cover = cover;
+            cover?.Dispose();
+            return;
         }
+
+        block.TrySetCover(cover, token);
+    }
+
+    /// <summary>
+    /// A track's cover decoded to <paramref name="width"/>. The caller owns
+    /// the bitmap; only the encoded thumbnail behind it is shared.
+    /// </summary>
+    private async Task<Avalonia.Media.Imaging.Bitmap?> DecodeArtworkAsync(
+        long trackId, int width)
+    {
+        if (await _artwork.GetThumbnailAsync(trackId) is not { } thumbnail)
+        {
+            return null;
+        }
+
+        return await Task.Run(() =>
+        {
+            try
+            {
+                using var stream = new MemoryStream(thumbnail);
+                return Avalonia.Media.Imaging.Bitmap.DecodeToWidth(stream, width);
+            }
+            catch (Exception)
+            {
+                // A thumbnail that will not decode is no different from none.
+                return null;
+            }
+        });
     }
 
     private async Task ShowNowPlayingAsync(long id)
@@ -1241,7 +1285,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         Avalonia.Media.Imaging.Bitmap? artwork =
-            await _artwork.GetAsync(id, NowPlayingArtworkWidth);
+            await DecodeArtworkAsync(id, NowPlayingArtworkWidth);
         Transport.SetNowPlaying(row.Title, row.Artist, row.Album, artwork);
     }
 

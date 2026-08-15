@@ -1,4 +1,4 @@
-using Avalonia.Media.Imaging;
+using SkiaSharp;
 
 namespace Mirelia.App.Services;
 
@@ -72,45 +72,135 @@ internal static class ArtworkReader
 }
 
 /// <summary>
-/// Decoded cover art, keyed by the track it is read from and the width it is
-/// decoded at. Bounded LRU with in-flight de-duplication and negative caching,
-/// because a grouped layout asks for dozens of covers per scroll and a
-/// coverless album must not be re-read from disk every time it scrolls by.
+/// Scales cover art down to a cached thumbnail. Album art in tags is often
+/// 1500 px square or larger; nothing in the UI shows it above ~400 px, and
+/// keeping full-size art in memory is what made the previous cache enormous.
+/// </summary>
+public static class Thumbnailer
+{
+    /// <summary>
+    /// Longest edge of a stored thumbnail. Large enough for any cover the UI
+    /// draws (210 px album blocks, the ~180 px Now Playing panel) at high DPI,
+    /// while decoding to a fraction of the source.
+    /// </summary>
+    public const int MaxEdge = 512;
+
+    private const int Quality = 80;
+
+    /// <summary>
+    /// Re-encodes <paramref name="source"/> as a WebP thumbnail, or returns
+    /// null when it does not decode. Images already within
+    /// <see cref="MaxEdge"/> are re-encoded anyway: a consistent small format
+    /// is what makes the cache's size predictable.
+    /// </summary>
+    public static byte[]? Encode(byte[] source)
+    {
+        try
+        {
+            using SKData sourceData = SKData.CreateCopy(source);
+            using SKCodec? codec = SKCodec.Create(sourceData);
+            if (codec is null)
+            {
+                return null;
+            }
+
+            SKImageInfo info = codec.Info;
+            int longest = Math.Max(info.Width, info.Height);
+            if (longest <= 0)
+            {
+                return null;
+            }
+
+            float scale = longest > MaxEdge ? (float)MaxEdge / longest : 1f;
+
+            // Codecs only decode at the reduced sizes they support (JPEG
+            // halves, most others not at all), so ask for the nearest one
+            // first: a 4000 px JPEG then never materializes at full
+            // resolution just to be thrown away.
+            SKSizeI sampled = codec.GetScaledDimensions(scale);
+            using SKBitmap? decoded = SKBitmap.Decode(
+                codec, info.WithSize(sampled.Width, sampled.Height));
+            if (decoded is null)
+            {
+                return null;
+            }
+
+            int width = Math.Max(1, (int)Math.Round(info.Width * scale));
+            int height = Math.Max(1, (int)Math.Round(info.Height * scale));
+            SKBitmap? exact = decoded.Width == width && decoded.Height == height
+                ? null
+                : decoded.Resize(
+                    new SKSizeI(width, height),
+                    new SKSamplingOptions(SKCubicResampler.Mitchell));
+
+            try
+            {
+                using SKImage image = SKImage.FromBitmap(exact ?? decoded);
+                using SKData? encoded = image.Encode(SKEncodedImageFormat.Webp, Quality);
+                return encoded?.ToArray();
+            }
+            finally
+            {
+                exact?.Dispose();
+            }
+        }
+        catch (Exception)
+        {
+            // Broken or exotic images are not worth surfacing; the caller
+            // shows the placeholder glyph instead.
+            return null;
+        }
+    }
+}
+
+/// <summary>
+/// Cover thumbnails, keyed by the track they are read from and held as
+/// <em>encoded</em> WebP bytes — never as decoded bitmaps.
 ///
-/// The cache owns the bitmaps it hands out: callers must not dispose them.
-/// All members must be called on the UI thread; the file read and decode
+/// That distinction is the whole point. Skia's pixel buffers are native memory
+/// behind a plain handle: the GC cannot see their size, so a cache of decoded
+/// bitmaps neither respects its own bound nor gets reclaimed promptly when it
+/// evicts. Encoded bytes are ordinary managed arrays, so the bound below is
+/// real. Callers decode their own bitmap at the size they draw and own its
+/// lifetime, which means no two owners ever share one bitmap.
+///
+/// All members must be called on the UI thread; reading, scaling and encoding
 /// happen off it.
 /// </summary>
 public sealed class ArtworkCache(LibraryService library)
 {
-    private const int MaxEntries = 128;
+    /// <summary>
+    /// Total encoded bytes held. Thumbnails run ~20-60 KB, so this keeps a few
+    /// hundred covers — far more than any view shows at once.
+    /// </summary>
+    private const long MaxBytes = 24 * 1024 * 1024;
 
-    private readonly Dictionary<ArtworkKey, LinkedListNode<Entry>> _entries = [];
+    private readonly Dictionary<long, LinkedListNode<Entry>> _entries = [];
     private readonly LinkedList<Entry> _lru = [];
-    private readonly Dictionary<ArtworkKey, Task<Bitmap?>> _inFlight = [];
+    private readonly Dictionary<long, Task<byte[]?>> _inFlight = [];
+    private long _bytes;
 
     /// <summary>
-    /// The cover of <paramref name="trackId"/> decoded to
-    /// <paramref name="decodeWidth"/>, or null when the track has none.
+    /// The cover of <paramref name="trackId"/> as encoded thumbnail bytes, or
+    /// null when the track has none.
     /// </summary>
-    public Task<Bitmap?> GetAsync(long trackId, int decodeWidth)
+    public Task<byte[]?> GetThumbnailAsync(long trackId)
     {
-        var key = new ArtworkKey(trackId, decodeWidth);
-        if (_entries.TryGetValue(key, out LinkedListNode<Entry>? node))
+        if (_entries.TryGetValue(trackId, out LinkedListNode<Entry>? node))
         {
             Touch(node);
-            return Task.FromResult(node.Value.Bitmap);
+            return Task.FromResult(node.Value.Thumbnail);
         }
 
         // A block scrolling in and out re-asks while the first read is still
         // running; both callers must share that one read.
-        if (_inFlight.TryGetValue(key, out Task<Bitmap?>? pending))
+        if (_inFlight.TryGetValue(trackId, out Task<byte[]?>? pending))
         {
             return pending;
         }
 
-        Task<Bitmap?> load = LoadAsync(key);
-        _inFlight[key] = load;
+        Task<byte[]?> load = LoadAsync(trackId);
+        _inFlight[trackId] = load;
         return load;
     }
 
@@ -124,68 +214,52 @@ public sealed class ArtworkCache(LibraryService library)
         _entries.Clear();
         _lru.Clear();
         _inFlight.Clear();
+        _bytes = 0;
     }
 
-    private async Task<Bitmap?> LoadAsync(ArtworkKey key)
+    private async Task<byte[]?> LoadAsync(long trackId)
     {
-        Bitmap? bitmap = null;
+        byte[]? thumbnail = null;
         try
         {
             // Only the path lookup goes through the library's gate; the file
-            // read stays off it so a wall of covers cannot stall row
-            // hydration behind it.
-            if (await library.GetPathAsync(key.TrackId) is { } path)
+            // read and the re-encode stay off it so a wall of covers cannot
+            // stall row hydration behind them.
+            if (await library.GetPathAsync(trackId) is { } path)
             {
-                byte[]? bytes = await Task.Run(() => ArtworkReader.Read(path));
-                if (bytes is not null)
-                {
-                    bitmap = await Task.Run(() => Decode(bytes, key.DecodeWidth));
-                }
+                thumbnail = await Task.Run(() =>
+                    ArtworkReader.Read(path) is { } source
+                        ? Thumbnailer.Encode(source)
+                        : null);
             }
         }
         finally
         {
-            _inFlight.Remove(key);
-            Store(key, bitmap);
+            _inFlight.Remove(trackId);
+            Store(trackId, thumbnail);
         }
 
-        return bitmap;
+        return thumbnail;
     }
 
-    private static Bitmap? Decode(byte[] bytes, int width)
+    private void Store(long trackId, byte[]? thumbnail)
     {
-        try
-        {
-            using var stream = new MemoryStream(bytes);
-            return Bitmap.DecodeToWidth(stream, width);
-        }
-        catch (Exception)
-        {
-            // Broken embedded images are not worth surfacing.
-            return null;
-        }
-    }
-
-    private void Store(ArtworkKey key, Bitmap? bitmap)
-    {
-        if (_entries.ContainsKey(key))
+        if (_entries.ContainsKey(trackId))
         {
             return;
         }
 
         // Nulls are cached too: "this track has no cover" is an answer worth
         // remembering, and it is the expensive one to recompute.
-        LinkedListNode<Entry> node = _lru.AddFirst(new Entry(key, bitmap));
-        _entries[key] = node;
+        LinkedListNode<Entry> node = _lru.AddFirst(new Entry(trackId, thumbnail));
+        _entries[trackId] = node;
+        _bytes += thumbnail?.LongLength ?? 0;
 
-        while (_entries.Count > MaxEntries && _lru.Last is { } oldest)
+        while (_bytes > MaxBytes && _lru.Last is { } oldest)
         {
             _lru.RemoveLast();
-            _entries.Remove(oldest.Value.Key);
-
-            // Evicted bitmaps are not disposed: one may still be bound to a
-            // visible Image, and disposing it would fault the renderer.
-            // Dropping the reference is enough — the GC reclaims the pixels.
+            _entries.Remove(oldest.Value.TrackId);
+            _bytes -= oldest.Value.Thumbnail?.LongLength ?? 0;
         }
     }
 
@@ -198,7 +272,5 @@ public sealed class ArtworkCache(LibraryService library)
         }
     }
 
-    private readonly record struct ArtworkKey(long TrackId, int DecodeWidth);
-
-    private sealed record Entry(ArtworkKey Key, Bitmap? Bitmap);
+    private sealed record Entry(long TrackId, byte[]? Thumbnail);
 }

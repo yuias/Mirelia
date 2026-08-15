@@ -39,6 +39,12 @@ public sealed partial class TrackGroupBlock : ObservableObject
     /// The block's cover once it has been loaded. Null both before the load
     /// and when the group has no artwork at all; the placeholder glyph behind
     /// it covers either case.
+    ///
+    /// The block owns this bitmap outright — nothing else holds it, and
+    /// <see cref="ReleaseCover"/> disposes it. Sharing decoded bitmaps through
+    /// a cache is what made cover memory unbounded before: Skia's pixel
+    /// buffers are native and invisible to the GC, so an owner has to free
+    /// them explicitly, which is only safe when there is exactly one owner.
     /// </summary>
     [ObservableProperty]
     private Bitmap? _cover;
@@ -85,14 +91,21 @@ public sealed partial class TrackGroupBlock : ObservableObject
     public int Count => Run.Count;
 
     /// <summary>
+    /// Identifies the current realization. Bumped by
+    /// <see cref="ReleaseCover"/> so a decode still in flight when the block
+    /// scrolls away cannot hand its bitmap to a block nobody is showing.
+    /// </summary>
+    public int CoverToken { get; private set; }
+
+    /// <summary>
     /// Reports that the block was realized on screen, so its rows hydrate and
     /// its cover loads. A block can span more than one hydration page, so
     /// every page it touches is announced, not just its first row.
     /// </summary>
     public void NotifyVisible()
     {
-        // Scrolling re-realizes the same block repeatedly; the cover is asked
-        // for once, and the answer — artwork or none — is kept.
+        // One request per realization: scrolling within a realized block must
+        // not re-decode, and scrolling back to it must.
         if (!_coverRequested)
         {
             _coverRequested = true;
@@ -106,6 +119,36 @@ public sealed partial class TrackGroupBlock : ObservableObject
         }
 
         _tracks.NotifyVisible(end);
+    }
+
+    /// <summary>
+    /// Takes a freshly decoded cover, unless the block has been recycled since
+    /// it was asked for — in which case the bitmap is disposed here rather
+    /// than being attached to a block nobody is showing.
+    /// </summary>
+    public void TrySetCover(Bitmap? cover, int token)
+    {
+        if (token != CoverToken || Cover is not null)
+        {
+            cover?.Dispose();
+            return;
+        }
+
+        Cover = cover;
+    }
+
+    /// <summary>
+    /// Frees the cover when the block scrolls out of view. Called from the
+    /// list's container-recycling hook: without it, every block ever shown
+    /// would keep its pixels for the lifetime of the view.
+    /// </summary>
+    public void ReleaseCover()
+    {
+        CoverToken++;
+        _coverRequested = false;
+        Bitmap? cover = Cover;
+        Cover = null;
+        cover?.Dispose();
     }
 
     private static TrackRow[] Slice(
