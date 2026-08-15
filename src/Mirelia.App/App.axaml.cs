@@ -75,24 +75,60 @@ public class App : Application
             _ = viewModel.InitializeAsync();
 
             // Headless-ish smoke run for CI and scripted checks: open, render,
-            // pump the virtualized grid briefly, then exit cleanly.
+            // pump each layout's virtualization briefly, then exit cleanly.
             if (desktop.Args?.Contains("--smoke") == true)
             {
-                DispatcherTimer.RunOnce(
-                    () =>
-                    {
-                        // Virtualization health check: a full-list enumeration
-                        // would have hydrated every page, not a handful.
-                        Console.WriteLine(
-                            $"smoke: tracks={viewModel.Tracks?.Count ?? 0}, " +
-                            $"pages_hydrated={viewModel.Tracks?.PagesRequested ?? 0}");
-                        desktop.Shutdown();
-                    },
-                    TimeSpan.FromSeconds(2));
+                _ = SmokeAsync(desktop, viewModel);
             }
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    /// <summary>
+    /// Exercises every layout's virtualization and reports how much of the
+    /// view each one realized. Both layouts are checked because they realize
+    /// through entirely different container plumbing: the album layout once
+    /// realized every block, and nothing caught it because the smoke run only
+    /// ever opened the flat grid.
+    /// </summary>
+    private static async Task SmokeAsync(
+        IClassicDesktopStyleApplicationLifetime desktop, MainViewModel viewModel)
+    {
+        // Long enough for the view to load and the containers to realize.
+        await Task.Delay(TimeSpan.FromSeconds(2));
+        bool healthy = Report(viewModel, Models.TrackLayouts.Tracks);
+
+        await Dispatcher.UIThread.InvokeAsync(
+            () => viewModel.SelectedLayout = Models.TrackLayouts.Albums);
+        await Task.Delay(TimeSpan.FromSeconds(2));
+        healthy &= Report(viewModel, Models.TrackLayouts.Albums);
+
+        // The layout is persisted per view, so put it back rather than leaving
+        // the library this ran against switched over.
+        await Dispatcher.UIThread.InvokeAsync(
+            () => viewModel.SelectedLayout = Models.TrackLayouts.Tracks);
+        await Task.Delay(TimeSpan.FromSeconds(1));
+
+        await Dispatcher.UIThread.InvokeAsync(() => desktop.Shutdown(healthy ? 0 : 1));
+    }
+
+    // A view is virtualized when it hydrates a handful of pages whatever its
+    // size; realizing the whole thing shows up here as one page per 256 rows.
+    private const int SmokeMaxPages = 4;
+
+    private static bool Report(MainViewModel viewModel, Models.LayoutSpec layout)
+    {
+        int tracks = viewModel.Tracks?.Count ?? 0;
+        int pages = viewModel.Tracks?.PagesRequested ?? 0;
+        bool bigEnoughToJudge = tracks > Models.VirtualTrackList.PageSize * SmokeMaxPages;
+        bool healthy = !bigEnoughToJudge || pages <= SmokeMaxPages;
+
+        Console.WriteLine(
+            $"smoke: layout={layout.Key} tracks={tracks} pages_hydrated={pages} "
+            + $"blocks={viewModel.GroupedTracks?.Count ?? 0} "
+            + (healthy ? "ok" : "NOT VIRTUALIZED"));
+        return healthy;
     }
 
     private static ThemeVariant ThemeVariantFor(AppTheme theme) => theme switch
