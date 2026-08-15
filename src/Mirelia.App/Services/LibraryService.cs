@@ -79,8 +79,9 @@ public sealed class LibraryService : IDisposable
     }
 
     /// <summary>Per-view UI settings for a scope key.</summary>
-    public Task<ViewSettings> GetViewSettingsAsync(string scopeKey)
-        => RunAsync(() => _viewSettings.Get(scopeKey));
+    public Task<ViewSettings> GetViewSettingsAsync(
+        string scopeKey, CancellationToken cancellationToken = default)
+        => RunAsync(() => _viewSettings.Get(scopeKey), cancellationToken);
 
     /// <summary>Stores per-view UI settings.</summary>
     public Task SetViewSettingsAsync(string scopeKey, ViewSettings settings)
@@ -99,33 +100,38 @@ public sealed class LibraryService : IDisposable
         });
 
     /// <summary>Re-sorts an id array in SQL by a preset.</summary>
-    public Task<long[]> SortIdsAsync(long[] ids, TrackSortOrder order)
-        => RunAsync(() => TrackPager.SortIds(_db, ids, order).ToArray());
+    public Task<long[]> SortIdsAsync(
+        long[] ids, TrackSortOrder order, CancellationToken cancellationToken = default)
+        => RunAsync(() => TrackPager.SortIds(_db, ids, order).ToArray(), cancellationToken);
 
     /// <summary>Re-sorts an id array in SQL by a header-click column sort.</summary>
-    public Task<long[]> SortIdsAsync(long[] ids, ColumnSort sort)
-        => RunAsync(() => TrackPager.SortIds(_db, ids, sort).ToArray());
+    public Task<long[]> SortIdsAsync(
+        long[] ids, ColumnSort sort, CancellationToken cancellationToken = default)
+        => RunAsync(() => TrackPager.SortIds(_db, ids, sort).ToArray(), cancellationToken);
 
     /// <summary>
     /// Contiguous group runs over an ordered id array, for a grouped layout.
     /// </summary>
-    public Task<List<TrackGroupRun>> LoadGroupRunsAsync(long[] ids, TrackGroupField field)
-        => RunAsync(() => TrackGrouper.LoadRuns(_db, ids, field));
+    public Task<List<TrackGroupRun>> LoadGroupRunsAsync(
+        long[] ids, TrackGroupField field, CancellationToken cancellationToken = default)
+        => RunAsync(() => TrackGrouper.LoadRuns(_db, ids, field), cancellationToken);
 
     /// <summary>All track ids in a browse order.</summary>
-    public Task<long[]> BrowseAllAsync(TrackSortOrder order)
-        => RunAsync(() => TrackPager.BrowseAll(_db, order).ToArray());
+    public Task<long[]> BrowseAllAsync(
+        TrackSortOrder order, CancellationToken cancellationToken = default)
+        => RunAsync(() => TrackPager.BrowseAll(_db, order).ToArray(), cancellationToken);
 
     /// <summary>All track ids sorted by a header-click column sort.</summary>
-    public Task<long[]> BrowseAllAsync(ColumnSort sort)
-        => RunAsync(() => TrackPager.BrowseAll(_db, sort).ToArray());
+    public Task<long[]> BrowseAllAsync(
+        ColumnSort sort, CancellationToken cancellationToken = default)
+        => RunAsync(() => TrackPager.BrowseAll(_db, sort).ToArray(), cancellationToken);
 
     /// <summary>Most recently added track ids.</summary>
-    public Task<long[]> BrowseRecentlyAddedAsync()
-        => RunAsync(() => TrackPager.BrowseRecentlyAdded(_db).ToArray());
+    public Task<long[]> BrowseRecentlyAddedAsync(CancellationToken cancellationToken = default)
+        => RunAsync(() => TrackPager.BrowseRecentlyAdded(_db).ToArray(), cancellationToken);
 
     /// <summary>Free-text FTS search, artist-ordered.</summary>
-    public Task<long[]> SearchAsync(string text)
+    public Task<long[]> SearchAsync(string text, CancellationToken cancellationToken = default)
     {
         return RunAsync(() =>
         {
@@ -136,7 +142,8 @@ public sealed class LibraryService : IDisposable
                 Limit: null);
             CompiledQuery compiled = SqlCompiler.Compile(query);
             return TrackQueryRunner.Run(_db, compiled).ToArray();
-        });
+        },
+        cancellationToken);
     }
 
     /// <summary>
@@ -146,14 +153,17 @@ public sealed class LibraryService : IDisposable
     /// </summary>
     /// <exception cref="QueryParseException">Malformed DSL.</exception>
     /// <exception cref="QueryCompileException">Unknown fields.</exception>
-    public Task<(long[] Ids, bool Ordered)> QueryDslAsync(string dsl)
-        => RunAsync(() =>
-        {
-            ParsedQuery parsed = QueryParser.Parse(dsl);
-            CompiledQuery compiled = SqlCompiler.Compile(
-                parsed, now: null, _playlists.SmartPlaylistResolver);
-            return (TrackQueryRunner.Run(_db, compiled).ToArray(), parsed.OrderBy.Count > 0);
-        });
+    public Task<(long[] Ids, bool Ordered)> QueryDslAsync(
+        string dsl, CancellationToken cancellationToken = default)
+        => RunAsync(
+            () =>
+            {
+                ParsedQuery parsed = QueryParser.Parse(dsl);
+                CompiledQuery compiled = SqlCompiler.Compile(
+                    parsed, now: null, _playlists.SmartPlaylistResolver);
+                return (TrackQueryRunner.Run(_db, compiled).ToArray(), parsed.OrderBy.Count > 0);
+            },
+            cancellationToken);
 
     /// <summary>Hydrates one page of grid rows.</summary>
     public Task<Dictionary<long, TrackPageRow>> HydrateAsync(long[] ids)
@@ -237,8 +247,9 @@ public sealed class LibraryService : IDisposable
         => RunAsync(_playlists.List);
 
     /// <summary>Membership (evaluated for smart) of one playlist.</summary>
-    public Task<long[]> EvaluatePlaylistAsync(PlaylistInfo playlist)
-        => RunAsync(() => _playlists.Evaluate(playlist));
+    public Task<long[]> EvaluatePlaylistAsync(
+        PlaylistInfo playlist, CancellationToken cancellationToken = default)
+        => RunAsync(() => _playlists.Evaluate(playlist), cancellationToken);
 
     /// <summary>Creates a static playlist.</summary>
     public Task<PlaylistInfo> CreateStaticPlaylistAsync(string name)
@@ -451,12 +462,29 @@ public sealed class LibraryService : IDisposable
         }
     }
 
-    private async Task<T> RunAsync<T>(Func<T> operation)
+    private async Task<T> RunAsync<T>(
+        Func<T> operation, CancellationToken cancellationToken = default)
     {
-        await _gate.WaitAsync().ConfigureAwait(false);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        // Captured: a library switch may replace _db while this runs, and the
+        // statement to abandon is the one on the connection we started on.
+        LibraryDatabase db = _db;
         try
         {
-            return await Task.Run(operation).ConfigureAwait(false);
+            // Cancelling the token alone would only abandon the wait — the
+            // statement already executing keeps a core busy until it finishes.
+            // sqlite3_interrupt is what actually stops it, and disposing the
+            // registration below waits for that callback, so a late interrupt
+            // cannot reach the next operation through the gate.
+            using CancellationTokenRegistration registration =
+                cancellationToken.Register(db.Interrupt);
+            return await Task.Run(operation, cancellationToken).ConfigureAwait(false);
+        }
+        catch (SqliteException ex)
+            when (LibraryDatabase.IsInterrupted(ex) && cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(cancellationToken);
         }
         finally
         {

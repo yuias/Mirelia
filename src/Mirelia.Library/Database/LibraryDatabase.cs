@@ -179,6 +179,25 @@ public sealed class LibraryDatabase : IDisposable
         return cmd.ExecuteScalar();
     }
 
+    /// <summary>
+    /// Asks SQLite to abandon whatever statement is running on this
+    /// connection; it fails with <c>SQLITE_INTERRUPT</c> instead of running to
+    /// completion. Safe to call when nothing is running, and safe from another
+    /// thread — that is the point, since the caller wanting to cancel is never
+    /// the thread stuck in the query.
+    /// </summary>
+    public void Interrupt()
+    {
+        if (Connection.Handle is { } handle)
+        {
+            SQLitePCL.raw.sqlite3_interrupt(handle);
+        }
+    }
+
+    /// <summary>Whether an exception is SQLite reporting an interrupted statement.</summary>
+    public static bool IsInterrupted(SqliteException exception)
+        => exception.SqliteErrorCode == SQLitePCL.raw.SQLITE_INTERRUPT;
+
     /// <summary>Creates a command with optional $-parameters.</summary>
     public SqliteCommand Command(string sql, params (string Name, object? Value)[] parameters)
     {

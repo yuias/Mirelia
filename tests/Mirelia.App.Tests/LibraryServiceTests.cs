@@ -45,6 +45,24 @@ public sealed class LibraryServiceTests : IDisposable
     }
 
     /// <summary>A library carrying one playlist named after itself.</summary>
+    [Fact]
+    public async Task ACancelledReadIsAbandonedAndLeavesTheGateFree()
+    {
+        using var service = new LibraryService(MakeLibrary("alpha"));
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => service.BrowseAllAsync(
+                Mirelia.Library.Querying.TrackSortOrder.Artist, cts.Token));
+
+        // Every database call shares one gate, so a cancelled read that failed
+        // to release it would wedge the whole app — which is the failure this
+        // cancellation exists to prevent in the first place.
+        Assert.Empty(await service.BrowseAllAsync(
+            Mirelia.Library.Querying.TrackSortOrder.Artist));
+    }
+
     private string MakeLibrary(string name)
     {
         string path = Path.Combine(_root, $"{name}.db");

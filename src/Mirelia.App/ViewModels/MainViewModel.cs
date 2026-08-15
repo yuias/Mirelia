@@ -925,7 +925,8 @@ public sealed partial class MainViewModel : ObservableObject
     /// </summary>
     public async Task ResetColumnsToDefaultAsync()
     {
-        Library.Database.ViewSettings stored = await _library.GetViewSettingsAsync(CurrentScopeKey);
+        Library.Database.ViewSettings stored =
+            await _library.GetViewSettingsAsync(CurrentScopeKey);
         await _library.SetViewSettingsAsync(CurrentScopeKey, stored with
         {
             Columns = null,
@@ -961,7 +962,40 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
+    // The reload in flight, so a newer one can abandon it. Superseding is not
+    // enough on its own: without cancellation the abandoned query keeps a core
+    // busy to completion, and every later reload queues behind it on the
+    // library's gate.
+    private CancellationTokenSource? _reloadCts;
+
     private async Task ReloadAsync()
+    {
+        var cts = new CancellationTokenSource();
+        CancellationTokenSource? superseded = Interlocked.Exchange(ref _reloadCts, cts);
+        if (superseded is not null)
+        {
+            superseded.Cancel();
+            superseded.Dispose();
+        }
+
+        try
+        {
+            await ReloadAsync(cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // A newer reload took over; its result is the one that matters.
+        }
+        finally
+        {
+            if (Interlocked.CompareExchange(ref _reloadCts, null, cts) == cts)
+            {
+                cts.Dispose();
+            }
+        }
+    }
+
+    private async Task ReloadAsync(CancellationToken cancellationToken)
     {
         int generation = ++_loadGeneration;
         bool isPlaylist = SelectedPlaylist is not null;
@@ -970,7 +1004,7 @@ public sealed partial class MainViewModel : ObservableObject
 
         // Per-view settings decide sort and columns before the query runs.
         Library.Database.ViewSettings viewSettings =
-            await _library.GetViewSettingsAsync(CurrentScopeKey);
+            await _library.GetViewSettingsAsync(CurrentScopeKey, cancellationToken);
 
         // Views with no saved column state follow the Music view: "default"
         // means whatever Music currently looks like, until the user
@@ -984,7 +1018,7 @@ public sealed partial class MainViewModel : ObservableObject
             if (noColumns || noWidths)
             {
                 Library.Database.ViewSettings music =
-                    await _library.GetViewSettingsAsync(MusicScopeKey);
+                    await _library.GetViewSettingsAsync(MusicScopeKey, cancellationToken);
                 if (noColumns)
                 {
                     viewSettings = viewSettings with { Columns = music.Columns };
@@ -1062,7 +1096,7 @@ public sealed partial class MainViewModel : ObservableObject
             {
                 try
                 {
-                    (ids, bool ordered) = await _library.QueryDslAsync(SearchText.Trim());
+                    (ids, bool ordered) = await _library.QueryDslAsync(SearchText.Trim(), cancellationToken);
                     // A query carrying its own ORDER BY keeps it (§7.3).
                     applyViewSort = !ordered;
                 }
@@ -1076,53 +1110,54 @@ public sealed partial class MainViewModel : ObservableObject
             }
             else
             {
-                ids = await _library.SearchAsync(SearchText.Trim());
+                ids = await _library.SearchAsync(SearchText.Trim(), cancellationToken);
             }
 
             if (applyViewSort)
             {
                 ids = columnSort is not null
-                    ? await _library.SortIdsAsync(ids, columnSort)
+                    ? await _library.SortIdsAsync(ids, columnSort, cancellationToken)
                     : sort != TrackSortOrder.PlaylistOrder
-                        ? await _library.SortIdsAsync(ids, sort)
+                        ? await _library.SortIdsAsync(ids, sort, cancellationToken)
                         : ids;
             }
         }
         else if (SelectedPlaylist is { } playlist)
         {
-            ids = await _library.EvaluatePlaylistAsync(playlist);
+            ids = await _library.EvaluatePlaylistAsync(playlist, cancellationToken);
             ids = columnSort is not null
-                ? await _library.SortIdsAsync(ids, columnSort)
+                ? await _library.SortIdsAsync(ids, columnSort, cancellationToken)
                 : sort != TrackSortOrder.PlaylistOrder
-                    ? await _library.SortIdsAsync(ids, sort)
+                    ? await _library.SortIdsAsync(ids, sort, cancellationToken)
                     : ids;
         }
         else if (SelectedNode is { IsFolder: true } folderNode)
         {
-            ids = await EvaluateFolderAsync(folderNode);
+            ids = await EvaluateFolderAsync(folderNode, cancellationToken);
             ids = columnSort is not null
-                ? await _library.SortIdsAsync(ids, columnSort)
+                ? await _library.SortIdsAsync(ids, columnSort, cancellationToken)
                 : sort != TrackSortOrder.PlaylistOrder
-                    ? await _library.SortIdsAsync(ids, sort)
+                    ? await _library.SortIdsAsync(ids, sort, cancellationToken)
                     : ids;
         }
         else if (isRecent)
         {
-            ids = await _library.BrowseRecentlyAddedAsync();
+            ids = await _library.BrowseRecentlyAddedAsync(cancellationToken);
             ids = columnSort is not null
-                ? await _library.SortIdsAsync(ids, columnSort)
+                ? await _library.SortIdsAsync(ids, columnSort, cancellationToken)
                 : sort != TrackSortOrder.RecentlyAdded
-                    ? await _library.SortIdsAsync(ids, sort)
+                    ? await _library.SortIdsAsync(ids, sort, cancellationToken)
                     : ids;
         }
         else if (columnSort is not null)
         {
-            ids = await _library.BrowseAllAsync(columnSort);
+            ids = await _library.BrowseAllAsync(columnSort, cancellationToken);
         }
         else
         {
             ids = await _library.BrowseAllAsync(
-                sort == TrackSortOrder.PlaylistOrder ? TrackSortOrder.Artist : sort);
+                sort == TrackSortOrder.PlaylistOrder ? TrackSortOrder.Artist : sort,
+                cancellationToken);
         }
 
         if (generation != _loadGeneration)
@@ -1137,7 +1172,7 @@ public sealed partial class MainViewModel : ObservableObject
         List<TrackGroupBlock>? blocks = null;
         if (layout.GroupField is { } groupField)
         {
-            List<TrackGroupRun> runs = await _library.LoadGroupRunsAsync(ids, groupField);
+            List<TrackGroupRun> runs = await _library.LoadGroupRunsAsync(ids, groupField, cancellationToken);
             if (generation != _loadGeneration)
             {
                 return;
@@ -1169,13 +1204,14 @@ public sealed partial class MainViewModel : ObservableObject
     /// Union of every descendant playlist's tracks under a folder, deduped
     /// keeping each id's first occurrence in tree order.
     /// </summary>
-    private async Task<long[]> EvaluateFolderAsync(PlaylistNode folder)
+    private async Task<long[]> EvaluateFolderAsync(
+        PlaylistNode folder, CancellationToken cancellationToken)
     {
         var seen = new HashSet<long>();
         var union = new List<long>();
         foreach (PlaylistInfo playlist in DescendantPlaylists(folder))
         {
-            long[] ids = await _library.EvaluatePlaylistAsync(playlist);
+            long[] ids = await _library.EvaluatePlaylistAsync(playlist, cancellationToken);
             foreach (long id in ids)
             {
                 if (seen.Add(id))
