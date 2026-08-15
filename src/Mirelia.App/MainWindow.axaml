@@ -27,6 +27,20 @@
     <Style Selector="Grid.trackrow.selected">
       <Setter Property="Background" Value="#38808080" />
     </Style>
+
+    <!-- Group blocks are hosted in a ListBox purely for its virtualization;
+         selection is per track row, so the item container draws nothing. -->
+    <Style Selector="ListBox.blocks > ListBoxItem">
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="Margin" Value="0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Template">
+        <ControlTemplate>
+          <ContentPresenter Content="{TemplateBinding Content}"
+                            ContentTemplate="{TemplateBinding ContentTemplate}" />
+        </ControlTemplate>
+      </Setter>
+    </Style>
   </Window.Styles>
 
   <DockPanel>
@@ -320,14 +334,22 @@
           </DataGrid.ContextMenu>
         </DataGrid>
         <!-- Grouped layout: one block per album/artist, cover on the left.
-             Its own ScrollViewer template is what lets the panel virtualize;
-             an ItemsControl has none of its own. -->
-        <ItemsControl x:Name="BlockList"
-                      ItemsSource="{Binding GroupedTracks}"
-                      IsVisible="{Binding !IsFlatLayout}"
-                      ContainerPrepared="OnBlockPrepared"
-                      ContainerClearing="OnBlockClearing">
-          <ItemsControl.ContextMenu>
+             A ListBox, not an ItemsControl: a hand-written template putting
+             an ItemsPresenter inside a ScrollViewer does not wire up
+             Avalonia's virtualization contract, and every block was being
+             realized — which then hydrated every row and asked for every
+             cover. ListBox brings the working plumbing; the style above
+             strips its per-item selection chrome, since selection here is
+             per track row, not per block. -->
+        <ListBox x:Name="BlockList"
+                 Classes="blocks"
+                 ItemsSource="{Binding GroupedTracks}"
+                 IsVisible="{Binding !IsFlatLayout}"
+                 SelectionMode="Single"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 ContainerPrepared="OnBlockPrepared"
+                 ContainerClearing="OnBlockClearing">
+          <ListBox.ContextMenu>
             <ContextMenu>
               <MenuItem Header="Play" Click="OnPlaySelectedClick" />
               <MenuItem Header="Play Next" Click="OnPlayNextClick" />
@@ -343,20 +365,8 @@
                 </MenuItem.ItemTemplate>
               </MenuItem>
             </ContextMenu>
-          </ItemsControl.ContextMenu>
-          <ItemsControl.Template>
-            <ControlTemplate>
-              <ScrollViewer>
-                <ItemsPresenter />
-              </ScrollViewer>
-            </ControlTemplate>
-          </ItemsControl.Template>
-          <ItemsControl.ItemsPanel>
-            <ItemsPanelTemplate>
-              <VirtualizingStackPanel />
-            </ItemsPanelTemplate>
-          </ItemsControl.ItemsPanel>
-          <ItemsControl.ItemTemplate>
+          </ListBox.ContextMenu>
+          <ListBox.ItemTemplate>
             <DataTemplate x:DataType="m:TrackGroupBlock">
               <Grid ColumnDefinitions="Auto,*" Margin="14,12,14,20">
                 <Border Grid.Column="0" Width="210" Height="210" Margin="0,0,18,0"
@@ -429,8 +439,8 @@
                 </StackPanel>
               </Grid>
             </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
+          </ListBox.ItemTemplate>
+        </ListBox>
 
         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
                     Spacing="8"
