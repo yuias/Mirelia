@@ -1,0 +1,55 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:models="clr-namespace:Mirelia.App.Models"
+        x:Class="Mirelia.App.Dialogs.SortOrderEditorDialog"
+        Title="Sort Orders"
+        Width="680" Height="440"
+        WindowStartupLocation="CenterOwner">
+  <Grid Margin="16" RowDefinitions="*,Auto,Auto" ColumnDefinitions="200,12,*">
+
+    <DockPanel Grid.Row="0" Grid.Column="0">
+      <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
+                  Spacing="6" Margin="0,6,0,0">
+        <Button Content="New" Click="OnNew" />
+        <Button Content="Delete" Click="OnDelete" />
+        <Button Content="Up" Click="OnMoveUp" />
+        <Button Content="Down" Click="OnMoveDown" />
+      </StackPanel>
+      <ListBox x:Name="OrderList" SelectionChanged="OnOrderSelected">
+        <ListBox.ItemTemplate>
+          <DataTemplate x:DataType="models:SortOrderDraft">
+            <TextBlock Text="{Binding Name}" />
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+    </DockPanel>
+
+    <DockPanel Grid.Row="0" Grid.Column="2" x:Name="EditorPanel" IsVisible="False">
+      <TextBlock DockPanel.Dock="Top" Text="Name" />
+      <TextBox DockPanel.Dock="Top" x:Name="NameBox" Margin="0,4,0,12"
+               TextChanged="OnNameChanged" />
+      <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+        <Button DockPanel.Dock="Right" Padding="7,3"
+                Content="Add Term" Click="OnAddTerm" />
+        <TextBlock VerticalAlignment="Center" Text="Sort by, in order" />
+      </DockPanel>
+      <ScrollViewer>
+        <StackPanel x:Name="TermsPanel" Spacing="6" />
+      </ScrollViewer>
+    </DockPanel>
+
+    <TextBlock Grid.Row="0" Grid.Column="2" x:Name="EmptyHint"
+               Opacity="0.6" TextWrapping="Wrap" VerticalAlignment="Center"
+               Text="No sort order selected. “New” adds one; the built-in orders cannot be edited." />
+
+    <TextBlock Grid.Row="1" Grid.ColumnSpan="3" x:Name="ErrorText"
+               Foreground="#D0554A" TextWrapping="Wrap"
+               Margin="0,10,0,0" IsVisible="False" />
+
+    <StackPanel Grid.Row="2" Grid.ColumnSpan="3" Orientation="Horizontal"
+                HorizontalAlignment="Right" Spacing="8" Margin="0,10,0,0">
+      <Button Content="Cancel" Click="OnCancel" />
+      <Button Content="Save" Classes="accent" Click="OnSave" IsDefault="True" />
+    </StackPanel>
+  </Grid>
+</Window>

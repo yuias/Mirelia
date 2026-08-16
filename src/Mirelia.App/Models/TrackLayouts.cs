@@ -1,12 +1,31 @@
+using Mirelia.Library.Database;
 using Mirelia.Library.Querying;
 
 namespace Mirelia.App.Models;
 
-/// <summary>A sort preset with a display label.</summary>
-/// <param name="Order">The preset.</param>
+/// <summary>
+/// One entry of the sort selector: a built-in preset or a user-defined order.
+/// </summary>
 /// <param name="Label">Shown in the sort selector.</param>
-public sealed record SortChoice(TrackSortOrder Order, string Label)
+/// <param name="Preset">The built-in preset, or null for a user-defined order.</param>
+/// <param name="CustomId">The user-defined order's id, or null for a preset.</param>
+/// <param name="Spec">
+/// How it orders, or null to keep the view's own order (Playlist Order).
+/// </param>
+public sealed record SortChoice(
+    string Label, TrackSortOrder? Preset, long? CustomId, SortSpec? Spec)
 {
+    /// <summary>Builds the choice for a built-in preset.</summary>
+    public static SortChoice Of(TrackSortOrder preset, string label)
+        => new(label, preset, null, SortPresets.SpecFor(preset));
+
+    /// <summary>Builds the choice for a user-defined order.</summary>
+    public static SortChoice Of(SortOrderInfo custom)
+        => new(custom.Name, null, custom.Id, custom.Spec);
+
+    /// <summary>True when this keeps the view's own order instead of imposing one.</summary>
+    public bool IsSourceOrder => Spec is null;
+
     /// <inheritdoc />
     public override string ToString() => Label;
 }
@@ -20,8 +39,10 @@ public sealed record SortChoice(TrackSortOrder Order, string Label)
 /// What the layout groups by, or null for the flat track grid.
 /// </param>
 /// <param name="Sorts">
-/// The sorts this layout allows, or null to let the view keep its own list.
-/// A grouped layout names its own so the order stays group-contiguous.
+/// The presets this layout offers, or null to let the view keep its own list.
+/// A grouped layout names its own because only some presets say anything
+/// about a block; contiguity itself is the compiler's job, not this list's,
+/// so user-defined orders are appended whatever a layout names here.
 /// </param>
 /// <param name="DefaultSort">Sort applied when the view's stored one does not fit.</param>
 /// <param name="UnknownLabel">Header text for a group whose field is untagged.</param>
@@ -58,9 +79,9 @@ public static class TrackLayouts
         "Albums",
         TrackGroupField.Album,
         [
-            new(TrackSortOrder.Album, "Album Title"),
-            new(TrackSortOrder.AlbumByYear, "Release"),
-            new(TrackSortOrder.AlbumByRecentlyAdded, "Added"),
+            SortChoice.Of(TrackSortOrder.Album, "Album Title"),
+            SortChoice.Of(TrackSortOrder.AlbumByYear, "Release"),
+            SortChoice.Of(TrackSortOrder.AlbumByRecentlyAdded, "Added"),
         ],
         TrackSortOrder.AlbumByYear,
         "Unknown Album");

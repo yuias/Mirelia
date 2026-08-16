@@ -1425,6 +1425,14 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void OnSortOrdersClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is { } vm)
+        {
+            await new SortOrderEditorDialog(vm).ShowDialog<bool>(this);
+        }
+    }
+
     private async void OnAboutClick(object? sender, RoutedEventArgs e)
     {
         await new AboutDialog().ShowDialog(this);

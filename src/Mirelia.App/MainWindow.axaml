@@ -80,6 +80,9 @@
           <MenuItem Header="Apply Music Columns Everywhere" Click="OnApplyMusicColumnsClick"
                     ToolTip.Tip="Drops every other view's own columns so they follow the Music view" />
         </MenuItem>
+        <Separator />
+        <MenuItem Header="Sort Orders…" Click="OnSortOrdersClick"
+                  ToolTip.Tip="Adds and edits your own sort orders; the built-in ones are fixed" />
       </MenuItem>
       <MenuItem Header="_Help">
         <MenuItem Header="About Mirelia" Click="OnAboutClick" />

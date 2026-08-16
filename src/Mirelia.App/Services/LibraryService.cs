@@ -35,6 +35,7 @@ public sealed class LibraryService : IDisposable
     private LibraryDatabase _db;
     private PlaylistStore _playlists;
     private ViewSettingsStore _viewSettings;
+    private SortOrderStore _sortOrders;
 
     // The view connection and the playlist store bound to it. Statements are
     // not safe to run concurrently on one connection, so anything the view
@@ -55,6 +56,7 @@ public sealed class LibraryService : IDisposable
         _db = LibraryDatabase.Open(dbPath);
         _playlists = new PlaylistStore(_db);
         _viewSettings = new ViewSettingsStore(_db);
+        _sortOrders = new SortOrderStore(_db);
         _viewDb = LibraryDatabase.Open(dbPath);
         _viewPlaylists = new PlaylistStore(_viewDb);
     }
@@ -109,6 +111,7 @@ public sealed class LibraryService : IDisposable
             _dbPath = dbPath;
             _playlists = new PlaylistStore(_db);
             _viewSettings = new ViewSettingsStore(_db);
+        _sortOrders = new SortOrderStore(_db);
             _viewPlaylists = new PlaylistStore(_viewDb);
         }
         finally
@@ -160,6 +163,11 @@ public sealed class LibraryService : IDisposable
         long[] ids, ColumnSort sort, CancellationToken cancellationToken = default)
         => RunViewAsync(() => TrackPager.SortIds(_viewDb, ids, sort).ToArray(), cancellationToken);
 
+    /// <summary>Re-sorts an id array in SQL by an arbitrary sort order.</summary>
+    public Task<long[]> SortIdsAsync(
+        long[] ids, SortSpec spec, CancellationToken cancellationToken = default)
+        => RunViewAsync(() => TrackPager.SortIds(_viewDb, ids, spec).ToArray(), cancellationToken);
+
     /// <summary>
     /// Contiguous group runs over an ordered id array, for a grouped layout.
     /// </summary>
@@ -174,11 +182,11 @@ public sealed class LibraryService : IDisposable
     /// </summary>
     public Task<(long[] Ids, List<TrackGroupRun> Runs)> LoadOrderedGroupRunsAsync(
         long[]? ids,
-        TrackSortOrder order,
+        SortSpec? spec,
         TrackGroupField field,
         CancellationToken cancellationToken = default)
         => RunViewAsync(
-            () => TrackGrouper.LoadOrderedRuns(_viewDb, ids, order, field),
+            () => TrackGrouper.LoadOrderedRuns(_viewDb, ids, spec, field),
             cancellationToken);
 
     /// <summary>All track ids in a browse order.</summary>
@@ -190,6 +198,44 @@ public sealed class LibraryService : IDisposable
     public Task<long[]> BrowseAllAsync(
         ColumnSort sort, CancellationToken cancellationToken = default)
         => RunViewAsync(() => TrackPager.BrowseAll(_viewDb, sort).ToArray(), cancellationToken);
+
+    /// <summary>All track ids in an arbitrary sort order.</summary>
+    public Task<long[]> BrowseAllAsync(
+        SortSpec spec, CancellationToken cancellationToken = default)
+        => RunViewAsync(() => TrackPager.BrowseAll(_viewDb, spec).ToArray(), cancellationToken);
+
+    /// <summary>The library's user-defined sort orders, in display order.</summary>
+    public Task<List<SortOrderInfo>> GetSortOrdersAsync(
+        CancellationToken cancellationToken = default)
+        => RunAsync(() => _sortOrders.List(), cancellationToken);
+
+    /// <summary>Creates a user-defined sort order and returns its id.</summary>
+    public Task<long> CreateSortOrderAsync(string name, SortSpec spec)
+        => RunAsync(() => _sortOrders.Create(name, spec));
+
+    /// <summary>Renames a user-defined sort order and replaces its terms.</summary>
+    public Task UpdateSortOrderAsync(long id, string name, SortSpec spec)
+        => RunAsync<object?>(() =>
+        {
+            _sortOrders.Update(id, name, spec);
+            return null;
+        });
+
+    /// <summary>Deletes a user-defined sort order.</summary>
+    public Task DeleteSortOrderAsync(long id)
+        => RunAsync<object?>(() =>
+        {
+            _sortOrders.Delete(id);
+            return null;
+        });
+
+    /// <summary>Stores a new display order for the user-defined sort orders.</summary>
+    public Task ReorderSortOrdersAsync(IReadOnlyList<long> idsInOrder)
+        => RunAsync<object?>(() =>
+        {
+            _sortOrders.Reorder(idsInOrder);
+            return null;
+        });
 
     /// <summary>Most recently added track ids.</summary>
     public Task<long[]> BrowseRecentlyAddedAsync(CancellationToken cancellationToken = default)

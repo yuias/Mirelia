@@ -68,20 +68,21 @@ public sealed class PlaylistNode
 /// <summary>Main window state: sources, search, the virtualized track grid.</summary>
 public sealed partial class MainViewModel : ObservableObject
 {
+    // The built-in orders. These are the ones the sort-order editor may not
+    // touch, so the user's own orders are appended to them rather than mixed in.
     private static readonly SortChoice[] BrowseSorts =
     [
-        new(TrackSortOrder.Artist, "Artist"),
-        new(TrackSortOrder.Album, "Album"),
-        new(TrackSortOrder.Title, "Title"),
-        new(TrackSortOrder.Year, "Year"),
-        new(TrackSortOrder.AlbumByYear, "Album (by Year)"),
-        new(TrackSortOrder.AlbumByRecentlyAdded, "Album (by Added)"),
-        new(TrackSortOrder.RecentlyAdded, "Recently Added"),
+        SortChoice.Of(TrackSortOrder.Artist, "Artist"),
+        SortChoice.Of(TrackSortOrder.Album, "Album"),
+        SortChoice.Of(TrackSortOrder.Title, "Title"),
+        SortChoice.Of(TrackSortOrder.Year, "Year"),
+        SortChoice.Of(TrackSortOrder.AlbumByYear, "Album Year"),
+        SortChoice.Of(TrackSortOrder.RecentlyAdded, "Recently Added"),
     ];
 
     private static readonly SortChoice[] PlaylistSorts =
     [
-        new(TrackSortOrder.PlaylistOrder, "Playlist Order"),
+        SortChoice.Of(TrackSortOrder.PlaylistOrder, "Playlist Order"),
         .. BrowseSorts,
     ];
 
@@ -154,6 +155,15 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private SortChoice? _selectedSort = BrowseSorts[0];
+
+    // The library's user-defined orders, cached so building the sort list on
+    // every reload does not hit the database.
+    private IReadOnlyList<SortOrderInfo> _customSorts = [];
+
+    // The preset this view falls back to while a user-defined order is
+    // selected, so deleting that order lands the view somewhere sensible
+    // instead of on whatever heads the list.
+    private TrackSortOrder? _fallbackPreset;
 
     /// <summary>Column key of the active header-click sort, or null.</summary>
     [ObservableProperty]
@@ -233,7 +243,7 @@ public sealed partial class MainViewModel : ObservableObject
     public bool CanReorderStaticPlaylist
         => SelectedPlaylist is { Kind: PlaylistKind.Static }
             && SortColumnKey is null
-            && SelectedSort?.Order == TrackSortOrder.PlaylistOrder
+            && SelectedSort?.IsSourceOrder == true
             && string.IsNullOrWhiteSpace(SearchText);
 
 
@@ -275,9 +285,56 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>Loads the initial view.</summary>
     public async Task InitializeAsync()
     {
+        await RefreshSortOrdersAsync();
         await RefreshPlaylistsAsync();
         await ReloadAsync();
         await Queue.InitializeAsync();
+    }
+
+    /// <summary>The library's user-defined sort orders, in display order.</summary>
+    public IReadOnlyList<SortOrderInfo> CustomSortOrders => _customSorts;
+
+    /// <summary>
+    /// Re-reads the library's user-defined sort orders. They live per library,
+    /// so this runs on open and after the sort-order editor closes.
+    /// </summary>
+    public async Task RefreshSortOrdersAsync()
+        => _customSorts = await _library.GetSortOrdersAsync();
+
+    /// <summary>
+    /// Writes the sort-order editor's result — updates, creations, deletions
+    /// and the new display order — then reloads, so a view sitting on a
+    /// renamed or deleted order lands somewhere valid straight away.
+    /// </summary>
+    /// <param name="drafts">The orders to keep, in the order they should appear.</param>
+    /// <param name="deletedIds">Ids of stored orders the editor removed.</param>
+    public async Task ApplySortOrderEditsAsync(
+        IReadOnlyList<SortOrderDraft> drafts, IReadOnlyList<long> deletedIds)
+    {
+        var idsInOrder = new List<long>(drafts.Count);
+        foreach (SortOrderDraft draft in drafts)
+        {
+            string name = draft.Name.Trim();
+            var spec = new SortSpec([.. draft.Terms]);
+            if (draft.Id is { } id)
+            {
+                await _library.UpdateSortOrderAsync(id, name, spec);
+                idsInOrder.Add(id);
+            }
+            else
+            {
+                idsInOrder.Add(await _library.CreateSortOrderAsync(name, spec));
+            }
+        }
+
+        foreach (long id in deletedIds)
+        {
+            await _library.DeleteSortOrderAsync(id);
+        }
+
+        await _library.ReorderSortOrdersAsync(idsInOrder);
+        await RefreshSortOrdersAsync();
+        await ReloadAsync();
     }
 
     /// <summary>Re-reads playlists from the store and rebuilds the tree.</summary>
@@ -700,6 +757,7 @@ public sealed partial class MainViewModel : ObservableObject
             return ex.Message;
         }
 
+        await RefreshSortOrdersAsync();
         await RefreshPlaylistsAsync();
         await ReloadAsync();
         await Queue.InitializeAsync();
@@ -885,7 +943,10 @@ public sealed partial class MainViewModel : ObservableObject
             // Null is "the flat grid", so an unset view and one explicitly
             // switched back to it read the same.
             Layout = SelectedLayout.IsGrouped ? SelectedLayout.Key : null,
-            Sort = SelectedSort?.Order,
+            // A user-defined order stores its id; the preset alongside it is
+            // what the view falls back to if that order is later deleted.
+            Sort = SelectedSort?.Preset ?? _fallbackPreset,
+            CustomSort = SelectedSort?.CustomId,
             SortColumn = SortColumnKey,
             SortDescending = SortDescending,
             ColumnWidths = !_widthsInherited && CurrentColumnWidths.Count > 0
@@ -1021,6 +1082,21 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Re-sorts a view's ids: a header-click sort if one is active, otherwise
+    /// the chosen order — and a spec-less order leaves the ids as they came.
+    /// </summary>
+    private async Task<long[]> ApplyViewSortAsync(
+        long[] ids, ColumnSort? columnSort, SortSpec? spec, CancellationToken cancellationToken)
+    {
+        if (columnSort is not null)
+        {
+            return await _library.SortIdsAsync(ids, columnSort, cancellationToken);
+        }
+
+        return spec is null ? ids : await _library.SortIdsAsync(ids, spec, cancellationToken);
+    }
+
     private async Task ReloadAsync(CancellationToken cancellationToken)
     {
         int generation = ++_loadGeneration;
@@ -1066,27 +1142,36 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
-        // A grouped layout brings its own sort list; only a group-contiguous
-        // order can be rendered as blocks.
+        // A grouped layout brings its own preset list; only a group-contiguous
+        // order can be rendered as blocks. User-defined orders are appended to
+        // whichever list applies — the compiler aggregates their terms over the
+        // group, so any of them is safe in a grouped layout.
         LayoutSpec layout = TrackLayouts.Find(viewSettings.Layout);
-        IReadOnlyList<SortChoice> available = layout.Sorts
-            ?? (isPlaylist || isFolder ? PlaylistSorts : BrowseSorts);
+        IReadOnlyList<SortChoice> available =
+        [
+            .. layout.Sorts ?? (isPlaylist || isFolder ? PlaylistSorts : BrowseSorts),
+            .. _customSorts.Select(SortChoice.Of),
+        ];
         TrackSortOrder defaultSort = layout.IsGrouped
             ? layout.DefaultSort
             : isPlaylist || isFolder
                 ? TrackSortOrder.PlaylistOrder
                 : isRecent ? TrackSortOrder.RecentlyAdded : TrackSortOrder.Artist;
         TrackSortOrder sort = viewSettings.Sort ?? defaultSort;
+        _fallbackPreset = sort;
 
         _applyingViewSettings = true;
         try
         {
             SelectedLayout = layout;
             AvailableSorts = available;
-            // A sort the layout does not offer falls back to the layout's own
-            // default rather than to whatever happens to head its list.
-            SelectedSort = available.FirstOrDefault(c => c.Order == sort)
-                ?? available.FirstOrDefault(c => c.Order == defaultSort)
+            // A user-defined order wins when it still exists; otherwise the
+            // stored preset, and failing that the layout's own default rather
+            // than whatever happens to head the list.
+            SelectedSort = available.FirstOrDefault(c => c.CustomId == viewSettings.CustomSort
+                    && viewSettings.CustomSort is not null)
+                ?? available.FirstOrDefault(c => c.Preset == sort)
+                ?? available.FirstOrDefault(c => c.Preset == defaultSort)
                 ?? available[0];
             // Header-click sorts belong to the grid; a grouped layout has no
             // headers to click and could not stay group-contiguous under one.
@@ -1107,9 +1192,11 @@ public sealed partial class MainViewModel : ObservableObject
 
         ViewSettingsApplied?.Invoke();
 
-        sort = SelectedSort?.Order ?? defaultSort;
+        // Null is "keep the view's own order" — Playlist Order, and the only
+        // order no ORDER BY over fields can express.
+        SortSpec? sortSpec = SelectedSort?.Spec;
 
-        // A header-click sort overrides the preset for any id source.
+        // A header-click sort overrides the chosen order for any id source.
         ColumnSort? columnSort = SortColumnKey is { } sortKey
             ? new ColumnSort(sortKey, SortDescending)
             : null;
@@ -1148,11 +1235,7 @@ public sealed partial class MainViewModel : ObservableObject
             keepSourceOrder = !applyViewSort;
             if (applyViewSort && !deferSort)
             {
-                ids = columnSort is not null
-                    ? await _library.SortIdsAsync(ids, columnSort, cancellationToken)
-                    : sort != TrackSortOrder.PlaylistOrder
-                        ? await _library.SortIdsAsync(ids, sort, cancellationToken)
-                        : ids;
+                ids = await ApplyViewSortAsync(ids, columnSort, sortSpec, cancellationToken);
             }
         }
         else if (SelectedPlaylist is { } playlist)
@@ -1160,11 +1243,7 @@ public sealed partial class MainViewModel : ObservableObject
             ids = await _library.EvaluatePlaylistAsync(playlist, cancellationToken);
             if (!deferSort)
             {
-                ids = columnSort is not null
-                    ? await _library.SortIdsAsync(ids, columnSort, cancellationToken)
-                    : sort != TrackSortOrder.PlaylistOrder
-                        ? await _library.SortIdsAsync(ids, sort, cancellationToken)
-                        : ids;
+                ids = await ApplyViewSortAsync(ids, columnSort, sortSpec, cancellationToken);
             }
         }
         else if (SelectedNode is { IsFolder: true } folderNode)
@@ -1172,11 +1251,7 @@ public sealed partial class MainViewModel : ObservableObject
             ids = await EvaluateFolderAsync(folderNode, cancellationToken);
             if (!deferSort)
             {
-                ids = columnSort is not null
-                    ? await _library.SortIdsAsync(ids, columnSort, cancellationToken)
-                    : sort != TrackSortOrder.PlaylistOrder
-                        ? await _library.SortIdsAsync(ids, sort, cancellationToken)
-                        : ids;
+                ids = await ApplyViewSortAsync(ids, columnSort, sortSpec, cancellationToken);
             }
         }
         else if (isRecent)
@@ -1184,11 +1259,11 @@ public sealed partial class MainViewModel : ObservableObject
             ids = await _library.BrowseRecentlyAddedAsync(cancellationToken);
             if (!deferSort)
             {
-                ids = columnSort is not null
-                    ? await _library.SortIdsAsync(ids, columnSort, cancellationToken)
-                    : sort != TrackSortOrder.RecentlyAdded
-                        ? await _library.SortIdsAsync(ids, sort, cancellationToken)
-                        : ids;
+                // The source query already returns "recently added"; only a
+                // different order is worth a second pass over the ids.
+                ids = columnSort is null && SelectedSort?.Preset == TrackSortOrder.RecentlyAdded
+                    ? ids
+                    : await ApplyViewSortAsync(ids, columnSort, sortSpec, cancellationToken);
             }
         }
         else if (columnSort is not null)
@@ -1197,8 +1272,10 @@ public sealed partial class MainViewModel : ObservableObject
         }
         else if (!deferSort)
         {
+            // Browsing the whole library has no source order to keep, so
+            // "Playlist Order" means the plain browse default here.
             ids = await _library.BrowseAllAsync(
-                sort == TrackSortOrder.PlaylistOrder ? TrackSortOrder.Artist : sort,
+                sortSpec ?? SortPresets.SpecFor(TrackSortOrder.Artist)!,
                 cancellationToken);
         }
 
@@ -1216,7 +1293,7 @@ public sealed partial class MainViewModel : ObservableObject
         {
             (ids, runs) = await _library.LoadOrderedGroupRunsAsync(
                 ids,
-                keepSourceOrder ? TrackSortOrder.PlaylistOrder : sort,
+                keepSourceOrder ? null : sortSpec,
                 groupField,
                 cancellationToken);
             if (generation != _loadGeneration)
