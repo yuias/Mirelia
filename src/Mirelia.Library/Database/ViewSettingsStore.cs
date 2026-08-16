@@ -87,7 +87,18 @@ public sealed class ViewSettingsStore(LibraryDatabase db)
     /// fall back to the defaults. Sort state is deliberately left alone:
     /// this is a columns reset, not a view reset.
     /// </summary>
-    public void ClearAllColumns()
+    public void ClearAllColumns() => ClearColumns(keepScopeKey: null);
+
+    /// <summary>
+    /// Drops the saved column layout and widths of every scope but
+    /// <paramref name="keepScopeKey"/>. Views with no saved columns follow
+    /// that scope, so this hands them its current layout without copying it —
+    /// and they keep following it as it changes. Sort state is left alone,
+    /// as in <see cref="ClearAllColumns"/>.
+    /// </summary>
+    public void ClearColumnsExcept(string keepScopeKey) => ClearColumns(keepScopeKey);
+
+    private void ClearColumns(string? keepScopeKey)
     {
         var scopes = new List<string>();
         using (SqliteCommand cmd = db.Command("SELECT scope_key FROM view_settings"))
@@ -95,13 +106,22 @@ public sealed class ViewSettingsStore(LibraryDatabase db)
         {
             while (reader.Read())
             {
-                scopes.Add(reader.GetString(0));
+                string scope = reader.GetString(0);
+                if (scope != keepScopeKey)
+                {
+                    scopes.Add(scope);
+                }
             }
         }
 
+        // One transaction: a crash mid-loop would otherwise leave some views
+        // cleared and the rest not, which reads as the command half-working.
+        using LibraryDatabase.TransactionScope tx = db.BeginTransaction();
         foreach (string scope in scopes)
         {
             Set(scope, Get(scope) with { Columns = null, ColumnWidths = null });
         }
+
+        tx.Commit();
     }
 }

@@ -775,6 +775,15 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void OnApplyMusicColumnsClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is { } vm)
+        {
+            DiscardPendingWidths();
+            await vm.ApplyMusicColumnsEverywhereAsync();
+        }
+    }
+
     // A capture still pending from a just-made resize would be re-persisted
     // right after a reset; the reset supersedes it.
     private void DiscardPendingWidths()

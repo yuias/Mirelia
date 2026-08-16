@@ -960,6 +960,19 @@ public sealed partial class MainViewModel : ObservableObject
         StatusText = "Column layout reset in all views.";
     }
 
+    /// <summary>
+    /// Drops every view's own column layout except the Music view's, so all
+    /// of them fall back to following Music — the state a view starts in.
+    /// Nothing is copied, so they keep following it afterwards. Sort state is
+    /// left untouched.
+    /// </summary>
+    public async Task ApplyMusicColumnsEverywhereAsync()
+    {
+        await _library.ClearViewColumnsExceptAsync(MusicScopeKey);
+        await ReloadAsync();
+        StatusText = "All other views now follow the Music view's columns.";
+    }
+
     partial void OnSearchTextChanged(string value)
     {
         OnPropertyChanged(nameof(CanPromoteSearch));

@@ -123,6 +123,41 @@ public sealed class ViewSettingsTests : IDisposable
     }
 
     [Fact]
+    public void ClearColumnsExceptSparesTheKeptScope()
+    {
+        var store = new ViewSettingsStore(_db);
+        store.Set("source:music", new ViewSettings
+        {
+            Columns = ["title", "artist"],
+            ColumnWidths = new Dictionary<string, double> { ["title"] = 200 },
+        });
+        store.Set("playlist:7", new ViewSettings
+        {
+            Columns = ["title", "genre"],
+            ColumnWidths = new Dictionary<string, double> { ["genre"] = 90 },
+            Layout = "albums",
+            Sort = TrackSortOrder.AlbumByYear,
+        });
+        store.Set("folder:3", new ViewSettings { Columns = ["path"] });
+
+        store.ClearColumnsExcept("source:music");
+
+        // Music keeps its layout; it is the one the others now follow.
+        ViewSettings music = store.Get("source:music");
+        Assert.Equal(["title", "artist"], music.Columns);
+        Assert.Equal(200, music.ColumnWidths?["title"]);
+
+        // Everyone else drops columns and widths only — a null Columns is
+        // what makes a view inherit, and sort and layout are not columns.
+        ViewSettings playlist = store.Get("playlist:7");
+        Assert.Null(playlist.Columns);
+        Assert.Null(playlist.ColumnWidths);
+        Assert.Equal("albums", playlist.Layout);
+        Assert.Equal(TrackSortOrder.AlbumByYear, playlist.Sort);
+        Assert.Null(store.Get("folder:3").Columns);
+    }
+
+    [Fact]
     public void SettingsRoundTripColumnSort()
     {
         var store = new ViewSettingsStore(_db);
