@@ -22,8 +22,10 @@ namespace Mirelia.Sync.Mtp;
 /// on its own task costs nothing.
 /// </para>
 /// <para>
-/// Not verified against a physical device. The path translation and cache above
-/// are covered by tests; this layer is on the manual checklist.
+/// Only partly verified against a physical device — listing, transfer, delete
+/// and free space have been run by hand; cancellation and disconnection have
+/// not. The path translation and cache above are covered by tests; the rest of
+/// this layer stays on the manual checklist in <c>docs/sync-protocol.md</c>.
 /// </para>
 /// </remarks>
 [SupportedOSPlatform("windows5.0")]

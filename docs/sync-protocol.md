@@ -1,7 +1,8 @@
 # Sync protocol
 
-Status: local folder sync **shipped in M7**; MTP is **built in M8** but not yet
-run against a physical device; the network transport is designed and not built.
+Status: local folder sync **shipped in M7**; MTP is **built in M8** and has now
+been run against a physical device, though the checklist below is not finished;
+the network transport is designed and not built.
 This file records all three, plus the decisions frozen at kickoff so earlier
 milestones don't preclude them.
 
@@ -14,7 +15,7 @@ layer differs.
 | Transport | Kind | Destination | Status |
 |---|---|---|---|
 | Local folder | `folder` | A drive letter or UNC path — mounted SD card, USB stick, network share | M7 |
-| MTP | `mtp` | An Android phone or DAP connected over USB, reached through WPD | M8, unverified |
+| MTP | `mtp` | An Android phone or DAP connected over USB, reached through WPD | M8, partly verified |
 | Network | `network` | OpenSubsonic HTTP server, reached over WiFi | M8+ |
 
 Writes go through a single `ISyncFileSink` abstraction (`Stat`, `WriteFile`,
@@ -412,9 +413,19 @@ phone by hand, which is a real workflow on a device the user browses.
 
 ### Manual checklist
 
-Nothing below has been run yet. `WpdObjectStore` compiles clean under
-`-warnaserror` and is written against the CsWin32-generated signatures, which
-is all that can be claimed without a phone on the end of a cable.
+Items 1–4, 6 and 9 were run on 2026-08-17 against an Android phone over USB,
+driving `WpdObjectStore` and `MtpSink` from a throwaway harness rather than
+through the UI. The overwrite and the directory pruning were checked by
+re-reading the tree from the device rather than from the sink's own cache,
+since a stale cache is exactly what would hide a duplicate object.
+
+Two things only a real driver could settle came out right: the device does
+report `WPD_STORAGE_FREE_SPACE_IN_BYTES`, and its storage arrives as a
+functional object rather than a folder — which `Describe` already counts as a
+folder, so the root resolves.
+
+Items 5, 7, 8 and 10, and the device dropdown in the target editor, have not
+been run.
 
 1. **Device list.** Plug in an unlocked Android phone set to file transfer.
    The target editor's device dropdown names it.
