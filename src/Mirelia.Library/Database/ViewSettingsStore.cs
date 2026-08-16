@@ -25,6 +25,13 @@ public sealed record ViewSettings
     public TrackSortOrder? Sort { get; init; }
 
     /// <summary>
+    /// Id of a user-defined sort order overriding <see cref="Sort"/>, or null
+    /// when a preset is active. A reference to an order since deleted falls
+    /// back to <see cref="Sort"/> rather than leaving the view unsorted.
+    /// </summary>
+    public long? CustomSort { get; init; }
+
+    /// <summary>
     /// Column key of a header-click sort overriding <see cref="Sort"/>,
     /// or null when no column sort is active.
     /// </summary>

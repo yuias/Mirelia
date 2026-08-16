@@ -344,6 +344,13 @@ public sealed class LibraryDatabase : IDisposable
         {
             Execute(Schema.V5);
             Execute("UPDATE meta SET value = '5' WHERE key = 'schema_version'");
+            version = 5;
+        }
+
+        if (version == 5)
+        {
+            Execute(Schema.V6);
+            Execute("UPDATE meta SET value = '6' WHERE key = 'schema_version'");
         }
 
         tx.Commit();

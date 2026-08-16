@@ -260,6 +260,29 @@ CREATE UNIQUE INDEX ix_sync_target_file_path
 CREATE INDEX ix_playlist_entry_track ON playlist_entry(track_id);
 ```
 
+## Schema v6 additions
+
+```sql
+-- User-defined sort orders. terms_json is the ordered term list a sort
+-- compiles from: [{"Field":"albumartist","Descending":false}, …], with
+-- Field naming an entry in Mirelia.Library.Querying.SortFields.
+CREATE TABLE sort_order (
+    id            INTEGER PRIMARY KEY,
+    name          TEXT NOT NULL UNIQUE,
+    terms_json    TEXT NOT NULL,
+    position      INTEGER NOT NULL,
+    created_unix  INTEGER NOT NULL,
+    modified_unix INTEGER NOT NULL
+);
+```
+
+The built-in orders (Playlist Order, Artist, Album, Title, Recently Added,
+Year, Album Year) are **not** rows here. They cannot be edited or deleted, so
+a copy per library would only be state to keep in step with the build; they
+live in `SortPresets` instead. `view_settings.json` gains `CustomSort`, the id
+of a row above; when it is null — or names a row since deleted — the view
+falls back to its `Sort` preset.
+
 ## Migration log
 
 | Version | Date | Change |
@@ -269,3 +292,4 @@ CREATE INDEX ix_playlist_entry_track ON playlist_entry(track_id);
 | 3 | 2026-08-08 | `track.date_key` normalized date sort key, backfilled |
 | 4 | 2026-08-13 | `sync_target`, `sync_target_scope`, `sync_target_file` for M7 sync |
 | 5 | 2026-08-15 | `ix_playlist_entry_track`, so `playlist =` references stop scanning |
+| 6 | 2026-08-17 | `sort_order` for user-defined sort orders; `view_settings.json` gains `CustomSort` |

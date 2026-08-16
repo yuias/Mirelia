@@ -135,13 +135,29 @@ public static class TrackGrouper
         IReadOnlyList<long>? ids,
         TrackSortOrder order,
         TrackGroupField field)
+        => LoadOrderedRuns(db, ids, SortPresets.SpecFor(order), field);
+
+    /// <summary>
+    /// Orders a view by an arbitrary sort order and cuts it into runs in one
+    /// statement. A null <paramref name="spec"/> keeps the input's own order —
+    /// the only order the preset clauses cannot express.
+    /// </summary>
+    /// <param name="db">The library.</param>
+    /// <param name="ids">The view's ids, or null for the whole library.</param>
+    /// <param name="spec">The sort order, or null to keep the input order.</param>
+    /// <param name="field">What the layout groups by.</param>
+    public static (long[] Ids, List<TrackGroupRun> Runs) LoadOrderedRuns(
+        LibraryDatabase db,
+        IReadOnlyList<long>? ids,
+        SortSpec? spec,
+        TrackGroupField field)
     {
         if (ids is { Count: 0 })
         {
             return ([], []);
         }
 
-        (long[] ordered, List<RunBuilder> runs) = ReadRuns(db, ids, field, order);
+        (long[] ordered, List<RunBuilder> runs) = ReadRuns(db, ids, field, spec, ordering: true);
         return (ordered, Materialize(db, runs, field));
     }
 
@@ -152,13 +168,14 @@ public static class TrackGrouper
     /// </summary>
     private static List<RunBuilder> ReadRuns(
         LibraryDatabase db, IReadOnlyList<long> ids, TrackGroupField field)
-        => ReadRuns(db, ids, field, order: null).Runs;
+        => ReadRuns(db, ids, field, spec: null, ordering: false).Runs;
 
     private static (long[] Ids, List<RunBuilder> Runs) ReadRuns(
         LibraryDatabase db,
         IReadOnlyList<long>? ids,
         TrackGroupField field,
-        TrackSortOrder? order)
+        SortSpec? spec,
+        bool ordering)
     {
         string groupColumn = field switch
         {
@@ -169,23 +186,23 @@ public static class TrackGrouper
         };
 
         // Ordering here means the caller does not sort first and walk the
-        // result again. "Playlist order" is the input's own order, which the
-        // preset clauses cannot express — only json_each's index can.
-        string orderBy =
-            order is null || (order is TrackSortOrder.PlaylistOrder && ids is not null)
-                ? "je.key"
-                : TrackPager.OrderClauseFor(order.Value);
+        // result again. A spec-less sort is the input's own order, which no
+        // ORDER BY over fields can express — only json_each's index can.
+        bool sorting = ordering && spec is not null;
+        string orderBy = sorting
+            ? TrackPager.OrderClauseFor(spec!, field)
+            : ids is not null ? "je.key" : "t.id";
 
-        // Only the preset clauses reach for the joined tables.
-        string joins = orderBy is "je.key" or "t.id"
-            ? string.Empty
-            : """
+        // Only a compiled clause reaches for the joined tables.
+        string joins = sorting
+            ? """
 
               LEFT JOIN artist ar ON ar.id = t.artist_id
               LEFT JOIN artist aa ON aa.id = t.album_artist_id
               LEFT JOIN album al ON al.id = t.album_id
               LEFT JOIN genre g ON g.id = t.genre_id
-              """;
+              """
+            : string.Empty;
 
         // Column 0 names the row's id and column 1 is the track behind it, and
         // they differ: a LEFT JOIN keeps one output row per input id even when

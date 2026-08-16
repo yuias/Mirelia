@@ -8,7 +8,23 @@ namespace Mirelia.Library.Database;
 internal static class Schema
 {
     /// <summary>Current schema version written to <c>meta['schema_version']</c>.</summary>
-    internal const int CurrentVersion = 5;
+    internal const int CurrentVersion = 6;
+
+    /// <summary>
+    /// Schema v6: user-defined sort orders. The built-in ones stay in code —
+    /// they cannot be edited or deleted, so a row per library would only be a
+    /// copy to keep in step with the build.
+    /// </summary>
+    internal const string V6 = """
+        CREATE TABLE sort_order (
+            id            INTEGER PRIMARY KEY,
+            name          TEXT NOT NULL UNIQUE,
+            terms_json    TEXT NOT NULL,
+            position      INTEGER NOT NULL,
+            created_unix  INTEGER NOT NULL,
+            modified_unix INTEGER NOT NULL
+        );
+        """;
 
     /// <summary>
     /// Schema v5: reverse index on playlist membership. A <c>playlist = "X"</c>

@@ -74,62 +74,25 @@ public sealed record TrackPageRow(
 public static class TrackPager
 {
     /// <summary>
-    /// The ORDER BY for a preset. Internal so <see cref="TrackGrouper"/> can
+    /// The ORDER BY for a spec. Internal so <see cref="TrackGrouper"/> can
     /// order and group in the same statement instead of sorting first and
     /// walking the result again.
     /// </summary>
-    internal static string OrderClauseFor(TrackSortOrder order) => OrderClause(order);
+    internal static string OrderClauseFor(SortSpec spec, TrackGroupField? group = null)
+        => SortCompiler.Compile(spec, group);
 
-    private static string OrderClause(TrackSortOrder order) => order switch
-    {
-        TrackSortOrder.Artist => "ar.name_sort, al.name_sort, t.disc_no, t.track_no, t.title_sort",
-        TrackSortOrder.Album => "al.name_sort, t.disc_no, t.track_no, t.title_sort",
-        TrackSortOrder.Title => "t.title_sort",
-        TrackSortOrder.RecentlyAdded => "t.added_unix DESC, t.id DESC",
-        // date_key normalizes mixed date spellings (2025, 2025/10/5,
-        // 2025-08-12) into one sortable yyyymmdd int; undated tracks sink
-        // to the end.
-        TrackSortOrder.Year =>
-            "COALESCE(t.date_key, 99999999), al.name_sort, t.disc_no, t.track_no",
-        // Compound sorts: the album's aggregate keys the album blocks,
-        // album order keys the tracks inside (window fns are fine in ORDER BY).
-        // MAX skips NULLs, so one undated track cannot sink its album; only
-        // fully undated albums fall to the end via the outer COALESCE.
-        TrackSortOrder.AlbumByYear =>
-            "COALESCE(MAX(t.date_key) OVER (PARTITION BY t.album_id), 99999999), "
-            + "al.name_sort, t.disc_no, t.track_no",
-        TrackSortOrder.AlbumByRecentlyAdded =>
-            "MAX(t.added_unix) OVER (PARTITION BY t.album_id) DESC, al.name_sort, t.disc_no, t.track_no",
-        _ => "t.id",
-    };
-
-    // Header-click sorts. The primary key takes the direction; the
-    // remaining keys are stable ascending tiebreakers. A leading `IS NULL`
-    // key keeps valueless rows at the end in both directions.
-    private static string? ColumnOrderClause(ColumnSort sort)
-    {
-        string dir = sort.Descending ? "DESC" : "ASC";
-        return sort.ColumnKey switch
-        {
-            "trackno" => $"t.track_no IS NULL, t.track_no {dir}, al.name_sort, t.disc_no",
-            "title" => $"t.title_sort {dir}",
-            "artist" => $"ar.name_sort IS NULL, ar.name_sort {dir}, al.name_sort, t.disc_no, t.track_no",
-            "album" => $"al.name_sort IS NULL, al.name_sort {dir}, t.disc_no, t.track_no",
-            "albumartist" => $"aa.name_sort IS NULL, aa.name_sort {dir}, al.name_sort, t.disc_no, t.track_no",
-            "genre" => $"g.name_sort IS NULL, g.name_sort {dir}, ar.name_sort, al.name_sort, t.disc_no, t.track_no",
-            "time" => $"t.duration_ms {dir}",
-            "date" => $"t.date_key IS NULL, t.date_key {dir}, al.name_sort, t.disc_no, t.track_no",
-            "codec" => $"t.codec {dir}, ar.name_sort, al.name_sort, t.disc_no, t.track_no",
-            "bitrate" => $"t.bitrate_kbps IS NULL, t.bitrate_kbps {dir}, ar.name_sort, al.name_sort, t.disc_no, t.track_no",
-            "added" => $"t.added_unix {dir}, t.id {dir}",
-            "rating" => $"t.rating IS NULL, t.rating {dir}, ar.name_sort, al.name_sort, t.disc_no, t.track_no",
-            _ => null,
-        };
-    }
+    /// <summary>
+    /// The spec behind a header-click column sort, or null when the column
+    /// cannot be sorted on (an unknown key from stale settings).
+    /// </summary>
+    public static SortSpec? SpecFor(ColumnSort sort)
+        => SortFields.Find(sort.ColumnKey) is null
+            ? null
+            : SortSpec.Of(sort.ColumnKey, sort.Descending);
 
     /// <summary>Whether a grid column key has a SQL sort mapping.</summary>
     public static bool IsSortableColumn(string columnKey)
-        => ColumnOrderClause(new ColumnSort(columnKey, Descending: false)) is not null;
+        => SortFields.Find(columnKey) is not null;
 
     /// <summary>
     /// Re-sorts an id array in SQL (sorting never happens in memory, §4.3).
@@ -139,12 +102,7 @@ public static class TrackPager
     public static List<long> SortIds(
         LibraryDatabase db, IReadOnlyList<long> ids, TrackSortOrder order)
     {
-        if (order == TrackSortOrder.PlaylistOrder || ids.Count == 0)
-        {
-            return [.. ids];
-        }
-
-        return SortIdsBy(db, ids, OrderClause(order));
+        return SortPresets.SpecFor(order) is { } spec ? SortIds(db, ids, spec) : [.. ids];
     }
 
     /// <summary>
@@ -153,12 +111,24 @@ public static class TrackPager
     /// </summary>
     public static List<long> SortIds(LibraryDatabase db, IReadOnlyList<long> ids, ColumnSort sort)
     {
-        if (ids.Count == 0 || ColumnOrderClause(sort) is not { } clause)
-        {
-            return [.. ids];
-        }
+        return SpecFor(sort) is { } spec ? SortIds(db, ids, spec) : [.. ids];
+    }
 
-        return SortIdsBy(db, ids, clause);
+    /// <summary>Re-sorts an id array in SQL by an arbitrary sort order.</summary>
+    /// <param name="db">The library.</param>
+    /// <param name="ids">The view's ids; duplicates keep their multiplicity.</param>
+    /// <param name="spec">The sort order.</param>
+    /// <param name="group">
+    /// The layout's group field when the result feeds a grouped layout, so the
+    /// order stays group-contiguous; null for the flat grid.
+    /// </param>
+    public static List<long> SortIds(
+        LibraryDatabase db,
+        IReadOnlyList<long> ids,
+        SortSpec spec,
+        TrackGroupField? group = null)
+    {
+        return ids.Count == 0 ? [.. ids] : SortIdsBy(db, ids, SortCompiler.Compile(spec, group));
     }
 
     private static List<long> SortIdsBy(
@@ -188,14 +158,27 @@ public static class TrackPager
 
     /// <summary>All track ids in the given order.</summary>
     public static List<long> BrowseAll(LibraryDatabase db, TrackSortOrder order)
-        => BrowseAllBy(db, OrderClause(order));
+        => BrowseAllBy(db, ClauseOrIdOrder(SortPresets.SpecFor(order)));
 
     /// <summary>
     /// All track ids sorted by a header-click column sort. Unknown column
     /// keys (stale settings) fall back to id order.
     /// </summary>
     public static List<long> BrowseAll(LibraryDatabase db, ColumnSort sort)
-        => BrowseAllBy(db, ColumnOrderClause(sort) ?? "t.id");
+        => BrowseAllBy(db, ClauseOrIdOrder(SpecFor(sort)));
+
+    /// <summary>All track ids in an arbitrary sort order.</summary>
+    /// <param name="db">The library.</param>
+    /// <param name="spec">The sort order.</param>
+    /// <param name="group">The group field of a grouped layout, or null.</param>
+    public static List<long> BrowseAll(
+        LibraryDatabase db, SortSpec spec, TrackGroupField? group = null)
+        => BrowseAllBy(db, SortCompiler.Compile(spec, group));
+
+    // Browsing the whole library has no input order to fall back on, so a
+    // spec-less sort becomes id order rather than nothing.
+    private static string ClauseOrIdOrder(SortSpec? spec)
+        => spec is null ? "t.id" : SortCompiler.Compile(spec);
 
     private static List<long> BrowseAllBy(LibraryDatabase db, string orderClause)
     {
