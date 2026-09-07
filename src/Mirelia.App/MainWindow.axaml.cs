@@ -177,6 +177,13 @@ public partial class MainWindow : Window
         PlaylistTreeView.AddHandler(
             DoubleTappedEvent, OnPlaylistTreeDoubleTapped, handledEventsToo: true);
 
+        // Wheel volume. Slider does not handle the wheel itself, so hovering
+        // is a plain subscription; the focused-but-elsewhere case has to be
+        // caught on the way down, before whatever is under the pointer
+        // scrolls instead.
+        VolumeSlider.AddHandler(PointerWheelChangedEvent, OnVolumeWheel);
+        AddHandler(PointerWheelChangedEvent, OnWindowWheel, RoutingStrategies.Tunnel);
+
         UpdateLibraryTitle();
 
         // Columns are data-driven from per-view settings.
@@ -1312,6 +1319,36 @@ public partial class MainWindow : Window
             : rowCount;
 
         return preDrag > from ? preDrag - 1 : preDrag;
+    }
+
+    private void OnVolumeWheel(object? sender, PointerWheelEventArgs e)
+        => e.Handled = AdjustVolume(e.Delta.Y);
+
+    private void OnWindowWheel(object? sender, PointerWheelEventArgs e)
+    {
+        // Hovering is already covered by the slider's own handler; without
+        // this guard the two would both fire and double the step.
+        if (VolumeSlider.IsFocused && !VolumeSlider.IsPointerOver)
+        {
+            e.Handled = AdjustVolume(e.Delta.Y);
+        }
+    }
+
+    /// <summary>
+    /// Nudges the volume by whole wheel notches. Writing through the slider
+    /// rather than the view model keeps the value inside the control's own
+    /// range — the view model clamps only on its way to the engine, so a raw
+    /// write could persist an out-of-range volume.
+    /// </summary>
+    private bool AdjustVolume(double notches)
+    {
+        if (notches == 0)
+        {
+            return false;
+        }
+
+        VolumeSlider.Value += notches * VolumeSlider.SmallChange;
+        return true;
     }
 
     private static PlaylistNode? NodeUnder(RoutedEventArgs e)

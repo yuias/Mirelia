@@ -158,8 +158,8 @@
                    Text="{Binding TotalText}" />
         <PathIcon Grid.Column="10" Width="14" Height="14" Opacity="0.7"
                   Data="M3,9 V15 H7.5 L13,20 V4 L7.5,9 Z M15.5,8.5 A5,5 0 0 1 15.5,15.5 L14.4,14.4 A3.5,3.5 0 0 0 14.4,9.6 Z" />
-        <Slider Grid.Column="12" VerticalAlignment="Center"
-                Minimum="0" Maximum="1"
+        <Slider Grid.Column="12" x:Name="VolumeSlider" VerticalAlignment="Center"
+                Minimum="0" Maximum="1" SmallChange="0.05"
                 Value="{Binding Volume}" />
       </Grid>
     </Border>
