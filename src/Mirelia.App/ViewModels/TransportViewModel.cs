@@ -57,6 +57,13 @@ public sealed partial class TransportViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(RepeatIsOne))]
     private RepeatMode _repeat;
 
+    /// <summary>
+    /// Starts the selected view from its first track. Set by the main
+    /// view-model, which owns the view; the transport only knows that Play
+    /// on an empty queue should mean "play what is on screen".
+    /// </summary>
+    public Func<Task>? StartSelectedView { get; set; }
+
     /// <summary>Creates the view-model and subscribes to player updates.</summary>
     public TransportViewModel(AudioPlayerService player, SettingsService settings)
     {
@@ -113,7 +120,18 @@ public sealed partial class TransportViewModel : ObservableObject
     public bool RepeatIsOne => Repeat == RepeatMode.One;
 
     [RelayCommand]
-    private void PlayPause() => _player.TogglePause();
+    private async Task PlayPause()
+    {
+        // Nothing queued yet: selecting a playlist and pressing Play should
+        // start it, rather than toggling a pause that has nothing to resume.
+        if (!_player.HasTrack && StartSelectedView is { } start)
+        {
+            await start();
+            return;
+        }
+
+        _player.TogglePause();
+    }
 
     /// <summary>Cycles the single repeat button through off, all, then one.</summary>
     [RelayCommand]

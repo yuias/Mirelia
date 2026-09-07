@@ -265,7 +265,10 @@ public sealed partial class MainViewModel : ObservableObject
         _player = player;
         _artwork = new ArtworkCache(library);
         _artwork.UseCurrentLibrary();
-        Transport = new TransportViewModel(player, settings);
+        Transport = new TransportViewModel(player, settings)
+        {
+            StartSelectedView = () => PlayRowAsync(0),
+        };
         Queue = new QueueViewModel(library, player, settings);
         _searchDebounce = new DispatcherTimer
         {
