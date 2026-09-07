@@ -64,3 +64,5 @@ build/
 
 # Claude CodeCoverage
 .claude/
+CLAUDE.local.md
+
