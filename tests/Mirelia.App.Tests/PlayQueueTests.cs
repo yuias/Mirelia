@@ -279,4 +279,149 @@ public sealed class PlayQueueTests
         Assert.NotNull(queue.Find(queue.Entries[0].EntryId));
         Assert.Null(queue.Find(999));
     }
+
+    // A fixed seed keeps the shuffled order reproducible; these assert the
+    // order's invariants, never a particular permutation.
+    private static PlayQueue Seeded() => new(new Random(20260907));
+
+    [Fact]
+    public void EnablingShuffleLeavesTheCurrentEntryPlaying()
+    {
+        PlayQueue queue = Seeded();
+        queue.Replace([1, 2, 3, 4, 5], startIndex: 2);
+
+        queue.Shuffle = true;
+
+        Assert.Equal(3L, queue.Current!.Value.TrackId);
+    }
+
+    [Fact]
+    public void ShuffledNextEntryIsStableAcrossCalls()
+    {
+        PlayQueue queue = Seeded();
+        queue.Replace([1, 2, 3, 4, 5, 6, 7, 8], startIndex: 0);
+        queue.Shuffle = true;
+
+        // The answer is what gets preloaded into the engine's next slot, so a
+        // second, different answer would desync the cursor from what is audible.
+        Assert.Equal(queue.NextEntry!.Value.EntryId, queue.NextEntry!.Value.EntryId);
+        Assert.Equal(queue.NextEntry!.Value.EntryId, queue.NextEntry!.Value.EntryId);
+    }
+
+    [Fact]
+    public void ShufflePassVisitsEveryEntryExactlyOnce()
+    {
+        PlayQueue queue = Seeded();
+        queue.Replace([1, 2, 3, 4, 5, 6, 7, 8], startIndex: 3);
+        queue.Shuffle = true;
+
+        List<long> visited = [queue.Current!.Value.EntryId];
+        while (queue.NextEntry is { } next)
+        {
+            visited.Add(next.EntryId);
+            queue.SetCurrent(next.EntryId);
+        }
+
+        Assert.Equal(8, visited.Count);
+        Assert.Equal(8, visited.Distinct().Count());
+        Assert.Equal([.. queue.Entries.Select(e => e.EntryId).Order()], [.. visited.Order()]);
+    }
+
+    [Fact]
+    public void ShuffledPreviousEntryReturnsWhereWeCameFrom()
+    {
+        PlayQueue queue = Seeded();
+        queue.Replace([1, 2, 3, 4, 5], startIndex: 0);
+        queue.Shuffle = true;
+
+        long from = queue.Current!.Value.EntryId;
+        queue.SetCurrent(queue.NextEntry!.Value.EntryId);
+
+        Assert.Equal(from, queue.PreviousEntry!.Value.EntryId);
+    }
+
+    [Fact]
+    public void TurningShuffleOffRestoresQueueOrder()
+    {
+        PlayQueue queue = Seeded();
+        queue.Replace([1, 2, 3, 4, 5], startIndex: 0);
+        queue.Shuffle = true;
+        queue.Shuffle = false;
+
+        Assert.Equal(2L, queue.NextEntry!.Value.TrackId);
+    }
+
+    [Fact]
+    public void WrapAroundJoinsTheEndsOfTheQueue()
+    {
+        var queue = new PlayQueue();
+        queue.Replace([1, 2, 3], startIndex: 2);
+
+        Assert.Null(queue.NextEntry);
+
+        queue.WrapAround = true;
+        Assert.Equal(1L, queue.NextEntry!.Value.TrackId);
+
+        queue.SetCurrent(queue.Entries[0].EntryId);
+        Assert.Equal(3L, queue.PreviousEntry!.Value.TrackId);
+    }
+
+    [Fact]
+    public void WrapAroundOnASingleEntryRepeatsIt()
+    {
+        var queue = new PlayQueue { WrapAround = true };
+        queue.Replace([7], startIndex: 0);
+
+        Assert.Equal(queue.Current!.Value.EntryId, queue.NextEntry!.Value.EntryId);
+    }
+
+    [Fact]
+    public void InsertNextUnderShuffleLandsImmediatelyAfterCurrent()
+    {
+        PlayQueue queue = Seeded();
+        queue.Replace([1, 2, 3, 4, 5, 6], startIndex: 0);
+        queue.Shuffle = true;
+
+        IReadOnlyList<QueueEntry> inserted = queue.InsertNext([100, 101]);
+
+        Assert.Equal(inserted[0].EntryId, queue.NextEntry!.Value.EntryId);
+        queue.SetCurrent(inserted[0].EntryId);
+        Assert.Equal(inserted[1].EntryId, queue.NextEntry!.Value.EntryId);
+    }
+
+    [Fact]
+    public void AppendedEntriesStillComeUpUnderShuffle()
+    {
+        PlayQueue queue = Seeded();
+        queue.Replace([1, 2, 3], startIndex: 0);
+        queue.Shuffle = true;
+        IReadOnlyList<QueueEntry> appended = queue.Append([50]);
+
+        var visited = new HashSet<long>();
+        while (queue.NextEntry is { } next && visited.Add(next.EntryId))
+        {
+            queue.SetCurrent(next.EntryId);
+        }
+
+        Assert.Contains(appended[0].EntryId, visited);
+    }
+
+    [Fact]
+    public void RemovedEntriesDropOutOfTheShuffledOrder()
+    {
+        PlayQueue queue = Seeded();
+        queue.Replace([1, 2, 3, 4, 5], startIndex: 0);
+        queue.Shuffle = true;
+        long doomed = queue.Entries[3].EntryId;
+        queue.Remove(doomed);
+
+        var visited = new HashSet<long>();
+        while (queue.NextEntry is { } next && visited.Add(next.EntryId))
+        {
+            queue.SetCurrent(next.EntryId);
+        }
+
+        Assert.DoesNotContain(doomed, visited);
+        Assert.Equal(4, visited.Count + 1);
+    }
 }

@@ -38,8 +38,50 @@ public enum QueueRemoveResult
 public sealed class PlayQueue
 {
     private readonly List<QueueEntry> _entries = [];
+
+    // Entry ids in shuffled play order. Only meaningful while shuffling;
+    // kept separate from _entries so the queue pane still shows the order
+    // the user built, and so turning shuffle off restores it for free.
+    private readonly List<long> _shuffleOrder = [];
+    private readonly Random _random;
     private long _nextEntryId = 1;
     private long? _currentEntryId;
+    private bool _shuffle;
+
+    /// <summary>Creates a queue, optionally with a seeded <see cref="Random"/> for tests.</summary>
+    public PlayQueue(Random? random = null) => _random = random ?? Random.Shared;
+
+    /// <summary>
+    /// Whether <see cref="NextEntry"/> draws from a shuffled order instead of
+    /// queue order. Turning it on leaves the current entry playing and
+    /// shuffles what remains behind it.
+    /// </summary>
+    public bool Shuffle
+    {
+        get => _shuffle;
+        set
+        {
+            if (_shuffle == value)
+            {
+                return;
+            }
+
+            _shuffle = value;
+            _shuffleOrder.Clear();
+            if (value)
+            {
+                ResetShuffleOrder();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether the ends of the queue join up, so the entry after the last is
+    /// the first again (repeat-all). Repeat-one is not expressed here: it
+    /// must not change what "next" means, or pressing Next would replay the
+    /// same track forever.
+    /// </summary>
+    public bool WrapAround { get; set; }
 
     /// <summary>The queue's entries, in play order.</summary>
     public IReadOnlyList<QueueEntry> Entries => _entries;
@@ -65,22 +107,114 @@ public sealed class PlayQueue
     }
 
     /// <summary>The entry that follows the current one, or null.</summary>
-    public QueueEntry? NextEntry
-    {
-        get
-        {
-            int index = CurrentIndex;
-            return index >= 0 && index + 1 < _entries.Count ? _entries[index + 1] : null;
-        }
-    }
+    public QueueEntry? NextEntry => Step(forward: true);
 
     /// <summary>The entry that precedes the current one, or null.</summary>
-    public QueueEntry? PreviousEntry
+    public QueueEntry? PreviousEntry => Step(forward: false);
+
+    /// <summary>
+    /// The neighbour of the current entry in the active order. Repeated
+    /// calls must agree with each other: the answer is what gets preloaded
+    /// into the engine's next slot, and a second, different answer would
+    /// leave the cursor pointing at a track that is not the audible one.
+    /// </summary>
+    private QueueEntry? Step(bool forward)
     {
-        get
+        if (_currentEntryId is not { } currentId)
+        {
+            return null;
+        }
+
+        if (!_shuffle)
         {
             int index = CurrentIndex;
-            return index > 0 ? _entries[index - 1] : null;
+            int step = index + (forward ? 1 : -1);
+            if (step < 0 || step >= _entries.Count)
+            {
+                if (!WrapAround || _entries.Count == 0)
+                {
+                    return null;
+                }
+
+                step = forward ? 0 : _entries.Count - 1;
+            }
+
+            return _entries[step];
+        }
+
+        SyncShuffleOrder();
+        int position = _shuffleOrder.IndexOf(currentId);
+        if (position < 0)
+        {
+            return null;
+        }
+
+        int target = position + (forward ? 1 : -1);
+        if (target < 0 || target >= _shuffleOrder.Count)
+        {
+            if (!WrapAround)
+            {
+                return null;
+            }
+
+            target = forward ? 0 : _shuffleOrder.Count - 1;
+        }
+
+        return Find(_shuffleOrder[target]);
+    }
+
+    /// <summary>
+    /// Rebuilds the shuffled order from scratch, current entry first so
+    /// enabling shuffle never interrupts what is playing.
+    /// </summary>
+    private void ResetShuffleOrder()
+    {
+        _shuffleOrder.Clear();
+        var rest = new List<long>(_entries.Count);
+        foreach (QueueEntry entry in _entries)
+        {
+            if (entry.EntryId == _currentEntryId)
+            {
+                _shuffleOrder.Add(entry.EntryId);
+            }
+            else
+            {
+                rest.Add(entry.EntryId);
+            }
+        }
+
+        for (int i = rest.Count - 1; i > 0; i--)
+        {
+            int j = _random.Next(i + 1);
+            (rest[i], rest[j]) = (rest[j], rest[i]);
+        }
+
+        _shuffleOrder.AddRange(rest);
+    }
+
+    /// <summary>
+    /// Reconciles the shuffled order with the entries lazily, so ordinary
+    /// mutations (append, remove, move, clear) need no shuffle-specific
+    /// code. Entries the order has not seen land at a random position after
+    /// the current one, which keeps them reachable in this pass.
+    /// </summary>
+    private void SyncShuffleOrder()
+    {
+        var live = new HashSet<long>(_entries.Count);
+        foreach (QueueEntry entry in _entries)
+        {
+            live.Add(entry.EntryId);
+        }
+
+        _shuffleOrder.RemoveAll(id => !live.Contains(id));
+        var known = new HashSet<long>(_shuffleOrder);
+        int cursor = _currentEntryId is { } id ? _shuffleOrder.IndexOf(id) : -1;
+        foreach (QueueEntry entry in _entries)
+        {
+            if (known.Add(entry.EntryId))
+            {
+                _shuffleOrder.Insert(_random.Next(cursor + 1, _shuffleOrder.Count + 1), entry.EntryId);
+            }
         }
     }
 
@@ -106,6 +240,11 @@ public sealed class PlayQueue
         _currentEntryId = _entries.Count == 0
             ? null
             : _entries[Math.Clamp(startIndex, 0, _entries.Count - 1)].EntryId;
+        if (_shuffle)
+        {
+            ResetShuffleOrder();
+        }
+
         return _entries;
     }
 
@@ -121,6 +260,17 @@ public sealed class PlayQueue
         foreach (long trackId in trackIds)
         {
             inserted.Add(new QueueEntry(_nextEntryId++, trackId));
+        }
+
+        if (_shuffle)
+        {
+            // "Play Next" is an explicit promise about ordering, so these go
+            // straight after the current entry rather than being scattered
+            // by the lazy reconciliation — which is why they are placed
+            // before the entries themselves land.
+            SyncShuffleOrder();
+            int cursor = _currentEntryId is { } id ? _shuffleOrder.IndexOf(id) : -1;
+            _shuffleOrder.InsertRange(cursor + 1, inserted.Select(e => e.EntryId));
         }
 
         _entries.InsertRange(CurrentIndex + 1, inserted);
@@ -231,6 +381,7 @@ public sealed class PlayQueue
     public void RemoveAll()
     {
         _entries.Clear();
+        _shuffleOrder.Clear();
         _currentEntryId = null;
     }
 

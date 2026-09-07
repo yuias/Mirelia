@@ -128,7 +128,7 @@
          emoji, themed via the button foreground. -->
     <Border DockPanel.Dock="Bottom" Padding="10,8" BorderThickness="0,1,0,0"
             BorderBrush="{DynamicResource SystemControlForegroundBaseLowBrush}">
-      <Grid ColumnDefinitions="Auto,Auto,Auto,12,Auto,8,*,8,Auto,12,Auto,4,120"
+      <Grid ColumnDefinitions="Auto,Auto,Auto,8,Auto,Auto,12,Auto,8,*,8,Auto,12,Auto,4,120"
             DataContext="{Binding Transport}">
         <Button Grid.Column="0" Width="36" Height="30"
                 Command="{Binding PreviousCommand}" ToolTip.Tip="Previous">
@@ -149,16 +149,35 @@
           <PathIcon Width="12" Height="12"
                     Data="M17.5,4 H20 V20 H17.5 Z M4,4 L16.5,12 4,20 Z" />
         </Button>
-        <TextBlock Grid.Column="4" VerticalAlignment="Center"
+        <ToggleButton Grid.Column="4" Width="36" Height="30" Padding="0"
+                      HorizontalContentAlignment="Center"
+                      IsChecked="{Binding Shuffle}" ToolTip.Tip="Shuffle">
+          <PathIcon Width="12" Height="12" Data="M2.47,7.96 L3.53,6.04 L21.53,16.04 L20.47,17.96 Z M2.47,16.04 L3.53,17.96 L21.53,7.96 L20.47,6.04 Z M17.5,3.2 L22.5,6.5 L17.5,9.8 Z M17.5,14.2 L22.5,17.5 L17.5,20.8 Z" />
+        </ToggleButton>
+        <Button Grid.Column="5" Width="36" Height="30" Margin="4,0,0,0"
+                Command="{Binding CycleRepeatCommand}"
+                ToolTip.Tip="Repeat: off / all / one">
+          <Panel>
+            <!-- Off reuses the repeat-all mark dimmed, so the three states
+                 read as one control changing intensity rather than shape. -->
+            <PathIcon Width="12" Height="12" Opacity="0.35"
+                      IsVisible="{Binding RepeatIsOff}" Data="M5,5 H16 V2.8 L21.5,6.25 L16,9.7 V7.5 H5 Z M19,16.5 H8 V14.3 L2.5,17.75 L8,21.2 V19 H19 Z" />
+            <PathIcon Width="12" Height="12"
+                      IsVisible="{Binding RepeatIsAll}" Data="M5,5 H16 V2.8 L21.5,6.25 L16,9.7 V7.5 H5 Z M19,16.5 H8 V14.3 L2.5,17.75 L8,21.2 V19 H19 Z" />
+            <PathIcon Width="12" Height="12"
+                      IsVisible="{Binding RepeatIsOne}" Data="M5,5 H16 V2.8 L21.5,6.25 L16,9.7 V7.5 H5 Z M19,16.5 H8 V14.3 L2.5,17.75 L8,21.2 V19 H19 Z M12.7,10.9 H14.1 V17 H12.7 Z M11.2,12.1 L12.7,10.9 V12.7 L11.9,13.1 Z" />
+          </Panel>
+        </Button>
+        <TextBlock Grid.Column="7" VerticalAlignment="Center"
                    Text="{Binding PositionText}" />
-        <Slider Grid.Column="6" VerticalAlignment="Center"
+        <Slider Grid.Column="9" VerticalAlignment="Center"
                 Minimum="0" Maximum="{Binding TotalSeconds}"
                 Value="{Binding PositionSeconds}" />
-        <TextBlock Grid.Column="8" VerticalAlignment="Center"
+        <TextBlock Grid.Column="11" VerticalAlignment="Center"
                    Text="{Binding TotalText}" />
-        <PathIcon Grid.Column="10" Width="14" Height="14" Opacity="0.7"
+        <PathIcon Grid.Column="13" Width="14" Height="14" Opacity="0.7"
                   Data="M3,9 V15 H7.5 L13,20 V4 L7.5,9 Z M15.5,8.5 A5,5 0 0 1 15.5,15.5 L14.4,14.4 A3.5,3.5 0 0 0 14.4,9.6 Z" />
-        <Slider Grid.Column="12" x:Name="VolumeSlider" VerticalAlignment="Center"
+        <Slider Grid.Column="15" x:Name="VolumeSlider" VerticalAlignment="Center"
                 Minimum="0" Maximum="1" SmallChange="0.05"
                 Value="{Binding Volume}" />
       </Grid>

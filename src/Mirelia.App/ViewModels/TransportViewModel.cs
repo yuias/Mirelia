@@ -48,6 +48,15 @@ public sealed partial class TransportViewModel : ObservableObject
     [ObservableProperty]
     private double _volume = 1.0;
 
+    [ObservableProperty]
+    private bool _shuffle;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RepeatIsOff))]
+    [NotifyPropertyChangedFor(nameof(RepeatIsAll))]
+    [NotifyPropertyChangedFor(nameof(RepeatIsOne))]
+    private RepeatMode _repeat;
+
     /// <summary>Creates the view-model and subscribes to player updates.</summary>
     public TransportViewModel(AudioPlayerService player, SettingsService settings)
     {
@@ -57,6 +66,8 @@ public sealed partial class TransportViewModel : ObservableObject
         // Direct field assignment: the restored level must not immediately
         // write itself back out through OnVolumeChanged.
         _volume = Math.Clamp(settings.Current.Volume, 0.0, 1.0);
+        _shuffle = settings.Current.Shuffle;
+        _repeat = settings.Current.Repeat;
 
         _volumeSaveDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
         _volumeSaveDebounce.Tick += (_, _) => FlushVolume();
@@ -92,8 +103,26 @@ public sealed partial class TransportViewModel : ObservableObject
         previous?.Dispose();
     }
 
+    /// <summary>Icon visibility for the repeat button's three states.</summary>
+    public bool RepeatIsOff => Repeat == RepeatMode.Off;
+
+    /// <inheritdoc cref="RepeatIsOff" />
+    public bool RepeatIsAll => Repeat == RepeatMode.All;
+
+    /// <inheritdoc cref="RepeatIsOff" />
+    public bool RepeatIsOne => Repeat == RepeatMode.One;
+
     [RelayCommand]
     private void PlayPause() => _player.TogglePause();
+
+    /// <summary>Cycles the single repeat button through off, all, then one.</summary>
+    [RelayCommand]
+    private void CycleRepeat() => Repeat = Repeat switch
+    {
+        RepeatMode.Off => RepeatMode.All,
+        RepeatMode.All => RepeatMode.One,
+        _ => RepeatMode.Off,
+    };
 
     [RelayCommand]
     private Task Next() => _player.NextAsync();
@@ -107,6 +136,18 @@ public sealed partial class TransportViewModel : ObservableObject
         {
             _player.Seek(value);
         }
+    }
+
+    partial void OnShuffleChanged(bool value)
+    {
+        _player.Shuffle = value;
+        _settings.Save(_settings.Current with { Shuffle = value });
+    }
+
+    partial void OnRepeatChanged(RepeatMode value)
+    {
+        _player.Repeat = value;
+        _settings.Save(_settings.Current with { Repeat = value });
     }
 
     partial void OnVolumeChanged(double value)

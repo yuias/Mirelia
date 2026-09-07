@@ -12,6 +12,19 @@ public enum ReplayGainMode
     Track,
 }
 
+/// <summary>How playback behaves when a track ends.</summary>
+public enum RepeatMode
+{
+    /// <summary>Stop once the queue runs out.</summary>
+    Off,
+
+    /// <summary>Start the queue again from the top.</summary>
+    All,
+
+    /// <summary>Replay the current track indefinitely.</summary>
+    One,
+}
+
 /// <summary>Color theme preference for the UI.</summary>
 public enum AppTheme
 {
@@ -63,6 +76,12 @@ public sealed record AppSettings
 
     /// <summary>Playback volume, 0-1 linear.</summary>
     public double Volume { get; init; } = 1.0;
+
+    /// <summary>Whether the queue plays in a shuffled order.</summary>
+    public bool Shuffle { get; init; }
+
+    /// <summary>What happens when the queue or the current track ends.</summary>
+    public RepeatMode Repeat { get; init; } = RepeatMode.Off;
 
     /// <summary>Whether the playing-queue pane is shown.</summary>
     public bool QueuePaneOpen { get; init; } = true;

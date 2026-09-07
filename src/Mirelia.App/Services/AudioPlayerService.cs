@@ -36,6 +36,14 @@ public sealed class AudioPlayerService : IDisposable
     private long? _preloadedEntryId;
     private bool _recoveringDevice;
 
+    // The entry StartAtEntryAsync just loaded into the Current slot. Its
+    // TrackStarted is not an auto-advance and must not promote the cursor —
+    // and under repeat-one both slots hold the same entry id, so the id
+    // alone cannot tell the two apart.
+    private long? _pendingStartEntryId;
+
+    private RepeatMode _repeat;
+
     /// <summary>Fires on every poll with the current position.</summary>
     public event Action<PlaybackPosition>? PositionChanged;
 
@@ -63,6 +71,9 @@ public sealed class AudioPlayerService : IDisposable
         _deviceConfig = (current.DeviceId, current.Exclusive);
         _replayGain = current.ReplayGain;
         _volume = ClampVolume(current.Volume);
+        _repeat = current.Repeat;
+        _queue.WrapAround = _repeat == RepeatMode.All;
+        _queue.Shuffle = current.Shuffle;
         _settings.Changed += OnSettingsChanged;
     }
 
@@ -102,6 +113,46 @@ public sealed class AudioPlayerService : IDisposable
         _preloadedEntryId = null;
         ClearCurrentEntry();
     }
+
+    /// <summary>Whether the queue plays in a shuffled order.</summary>
+    public bool Shuffle
+    {
+        get => _queue.Shuffle;
+        set
+        {
+            if (_queue.Shuffle == value)
+            {
+                return;
+            }
+
+            _queue.Shuffle = value;
+            _ = ReconcilePreloadAsync();
+        }
+    }
+
+    /// <summary>What happens when the queue or the current track ends.</summary>
+    public RepeatMode Repeat
+    {
+        get => _repeat;
+        set
+        {
+            if (_repeat == value)
+            {
+                return;
+            }
+
+            _repeat = value;
+            _queue.WrapAround = value == RepeatMode.All;
+            _ = ReconcilePreloadAsync();
+        }
+    }
+
+    /// <summary>
+    /// The entry the engine's Next slot should hold. Repeat-one is expressed
+    /// here rather than in the queue so that pressing Next still advances.
+    /// </summary>
+    private QueueEntry? PreloadTarget
+        => _repeat == RepeatMode.One ? _queue.Current : _queue.NextEntry;
 
     /// <summary>True when a queue is loaded (playing or paused).</summary>
     public bool HasTrack => _queue.Current is not null;
@@ -351,6 +402,7 @@ public sealed class AudioPlayerService : IDisposable
         {
             EnsureEngine();
             PromoteCurrent(entry);
+            _pendingStartEntryId = entry.EntryId;
             _preloadedEntryId = null;
             _engine!.Load(AudioSlot.Current, path, (ulong)entry.EntryId, await GainForAsync(entry.TrackId));
             _engine.Play();
@@ -377,7 +429,7 @@ public sealed class AudioPlayerService : IDisposable
 
     private async Task PreloadNextAsync()
     {
-        if (_preloadedEntryId is not null || _engine is null || _queue.NextEntry is not { } entry)
+        if (_preloadedEntryId is not null || _engine is null || PreloadTarget is not { } entry)
         {
             return;
         }
@@ -407,7 +459,7 @@ public sealed class AudioPlayerService : IDisposable
     /// </summary>
     private async Task ReconcilePreloadAsync()
     {
-        if (_queue.NextEntry?.EntryId == _preloadedEntryId)
+        if (PreloadTarget?.EntryId == _preloadedEntryId)
         {
             return;
         }
@@ -448,9 +500,9 @@ public sealed class AudioPlayerService : IDisposable
 
                     case AudioEventType.QueueEmpty:
                         // Auto-advance path for format changes (see above).
-                        if (_preloadedEntryId is null && _queue.NextEntry is not null)
+                        if (_preloadedEntryId is null && PreloadTarget is { } resume)
                         {
-                            _ = NextAsync();
+                            _ = StartAtEntryAsync(resume);
                         }
 
                         break;
@@ -497,9 +549,17 @@ public sealed class AudioPlayerService : IDisposable
             return;
         }
 
-        if (_queue.Current?.EntryId != entryId)
+        if (_pendingStartEntryId == entryId && _queue.Current?.EntryId == entryId)
         {
-            // The engine advanced into the preloaded next slot on its own.
+            // The start we asked for, now audible — the cursor is already
+            // where it belongs and the Next slot stays armed.
+            _pendingStartEntryId = null;
+        }
+        else
+        {
+            // The engine moved into the preloaded slot on its own. Under
+            // repeat-one that slot holds the entry that was already current,
+            // so this re-arms the loop rather than advancing anything.
             PromoteCurrent(e);
             _preloadedEntryId = null;
             _ = PreloadNextAsync();
