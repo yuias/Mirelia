@@ -831,6 +831,20 @@ public sealed partial class MainViewModel : ObservableObject
         await _player.PlayQueueAsync(Tracks.Ids, rowIndex);
     }
 
+    /// <summary>Selects a tree node and plays its view from the first track.</summary>
+    /// <remarks>
+    /// Selecting the node kicks off its own reload, so <see cref="Tracks"/>
+    /// may still hold the previous view. Awaiting a fresh reload supersedes
+    /// that one, which keeps the queue in the order the node's view actually
+    /// shows rather than raw evaluation order.
+    /// </remarks>
+    public async Task PlayNodeAsync(PlaylistNode node)
+    {
+        SelectedNode = node;
+        await ReloadAsync();
+        await PlayRowAsync(0);
+    }
+
     /// <summary>Inserts tracks right after whatever is currently playing.</summary>
     public Task PlayNextAsync(IReadOnlyList<long> trackIds) => _player.EnqueueNextAsync(trackIds);
 

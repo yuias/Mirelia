@@ -172,6 +172,11 @@ public partial class MainWindow : Window
         // per-node and data-driven, which XAML templates handle poorly.
         PlaylistTreeView.AddHandler(ContextRequestedEvent, OnTreeContextRequested);
 
+        // handledEventsToo: TreeViewItem marks the double tap handled for its
+        // own expand/collapse gesture, which would otherwise swallow it.
+        PlaylistTreeView.AddHandler(
+            DoubleTappedEvent, OnPlaylistTreeDoubleTapped, handledEventsToo: true);
+
         UpdateLibraryTitle();
 
         // Columns are data-driven from per-view settings.
@@ -1309,14 +1314,24 @@ public partial class MainWindow : Window
         return preDrag > from ? preDrag - 1 : preDrag;
     }
 
-    private static PlaylistInfo? PlaylistUnder(RoutedEventArgs e)
-    {
-        var node = (e.Source as Visual)?
+    private static PlaylistNode? NodeUnder(RoutedEventArgs e)
+        => (e.Source as Visual)?
             .GetSelfAndVisualAncestors()
             .OfType<TreeViewItem>()
             .FirstOrDefault()?
             .DataContext as PlaylistNode;
-        return node?.Info;
+
+    private static PlaylistInfo? PlaylistUnder(RoutedEventArgs e) => NodeUnder(e)?.Info;
+
+    private async void OnPlaylistTreeDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        // Folders are left alone: a double tap on one is the tree's own
+        // expand/collapse gesture. They play from the context menu instead.
+        if (ViewModel is { } vm && NodeUnder(e) is { IsPlaylist: true } node)
+        {
+            e.Handled = true;
+            await vm.PlayNodeAsync(node);
+        }
     }
 
     private void OnPlaylistDragOver(object? sender, DragEventArgs e)
@@ -1450,13 +1465,19 @@ public partial class MainWindow : Window
 
     private void OnTreeContextRequested(object? sender, ContextRequestedEventArgs e)
     {
-        if (ViewModel is not { } vm || PlaylistUnder(e) is not { } playlist)
+        if (ViewModel is not { } vm || NodeUnder(e) is not { } node)
         {
             return;
         }
 
+        PlaylistInfo playlist = node.Info;
         e.Handled = true;
         var menu = new ContextMenu();
+
+        var play = new MenuItem { Header = "Play" };
+        play.Click += async (_, _) => await vm.PlayNodeAsync(node);
+        menu.Items.Add(play);
+        menu.Items.Add(new Separator());
 
         if (playlist.Id < 0)
         {
