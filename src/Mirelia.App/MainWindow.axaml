@@ -211,11 +211,15 @@
                     ItemsSource="{Binding PlaylistTree}"
                     SelectedItem="{Binding SelectedNode}"
                     DragDrop.AllowDrop="True">
-            <TreeView.Styles>
-              <Style Selector="TreeViewItem">
-                <Setter Property="IsExpanded" Value="True" />
-              </Style>
-            </TreeView.Styles>
+            <TreeView.ItemContainerTheme>
+              <!-- Expansion lives on the node so a tree rebuild (any playlist
+                   store mutation replaces every instance) does not collapse
+                   the folders the user opened. -->
+              <ControlTheme TargetType="TreeViewItem" x:DataType="vm:PlaylistNode"
+                            BasedOn="{StaticResource {x:Type TreeViewItem}}">
+                <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+              </ControlTheme>
+            </TreeView.ItemContainerTheme>
             <TreeView.ItemTemplate>
               <TreeDataTemplate ItemsSource="{Binding Children}"
                                 x:DataType="vm:PlaylistNode">

@@ -33,8 +33,16 @@ public enum SourceKind
 }
 
 /// <summary>A node of the playlist tree (folders contain children).</summary>
-public sealed class PlaylistNode
+public sealed partial class PlaylistNode : ObservableObject
 {
+    /// <summary>
+    /// Whether a folder node is expanded in the tree. Folders start
+    /// collapsed; <see cref="MainViewModel.RefreshPlaylistsAsync"/> carries
+    /// the flag across the rebuilds that replace every node instance.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isExpanded;
+
     /// <summary>The underlying playlist row.</summary>
     public required PlaylistInfo Info { get; init; }
 
@@ -343,13 +351,16 @@ public sealed partial class MainViewModel : ObservableObject
         List<PlaylistInfo> playlists = await _library.GetPlaylistsAsync();
         long? selectedId = SelectedPlaylist?.Id;
         long? selectedNodeId = SelectedNode?.Info.Id;
+        HashSet<long> expandedIds = [.. ExpandedNodes(PlaylistTree).Select(n => n.Info.Id)];
         Playlists.Clear();
         foreach (PlaylistInfo p in playlists)
         {
             Playlists.Add(p);
         }
 
-        var nodes = playlists.ToDictionary(p => p.Id, p => new PlaylistNode { Info = p });
+        var nodes = playlists.ToDictionary(
+            p => p.Id,
+            p => new PlaylistNode { Info = p, IsExpanded = expandedIds.Contains(p.Id) });
         PlaylistTree.Clear();
         foreach (PlaylistInfo p in playlists)
         {
@@ -381,11 +392,26 @@ public sealed partial class MainViewModel : ObservableObject
         // The rebuild replaced every node instance, so the tree's bound
         // selection must be re-pointed at the new node or the visual
         // highlight silently disappears after any playlist-store mutation.
-        SelectedNode = selectedNodeId is { } nodeId
+        PlaylistNode? selectedNode = selectedNodeId is { } nodeId
             ? nodes.TryGetValue(nodeId, out PlaylistNode? selected)
                 ? selected
                 : ephemeralNodes.GetValueOrDefault(nodeId)
             : null;
+
+        // Keep the selection reachable: a node moved into a collapsed folder
+        // would otherwise be highlighted out of sight. Expanded before the
+        // assignment so the tree has containers to select into.
+        if (selectedNode is not null)
+        {
+            for (long? ancestorId = selectedNode.Info.ParentId;
+                 ancestorId is { } id && nodes.TryGetValue(id, out PlaylistNode? ancestor);
+                 ancestorId = ancestor.Info.ParentId)
+            {
+                ancestor.IsExpanded = true;
+            }
+        }
+
+        SelectedNode = selectedNode;
 
         OnPropertyChanged(nameof(StaticPlaylists));
         OnPropertyChanged(nameof(Folders));
@@ -1369,6 +1395,23 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         return [.. union];
+    }
+
+    /// <summary>Depth-first walk yielding every expanded node in a subtree.</summary>
+    private static IEnumerable<PlaylistNode> ExpandedNodes(IEnumerable<PlaylistNode> nodes)
+    {
+        foreach (PlaylistNode node in nodes)
+        {
+            if (node.IsExpanded)
+            {
+                yield return node;
+            }
+
+            foreach (PlaylistNode child in ExpandedNodes(node.Children))
+            {
+                yield return child;
+            }
+        }
     }
 
     /// <summary>Depth-first walk yielding every playlist (not folder) under <paramref name="folder"/>.</summary>
