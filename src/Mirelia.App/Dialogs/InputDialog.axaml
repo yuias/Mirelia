@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="Mirelia.App.Dialogs.InputDialog"
+        Icon="avares://Mirelia.App/Assets/Mirelia-icon-256.png"
         Width="380" SizeToContent="Height"
         CanResize="False"
         WindowStartupLocation="CenterOwner">

@@ -3,6 +3,7 @@
         xmlns:models="clr-namespace:Mirelia.App.Models"
         x:Class="Mirelia.App.Dialogs.SortOrderEditorDialog"
         Title="Sort Orders"
+        Icon="avares://Mirelia.App/Assets/Mirelia-icon-256.png"
         Width="680" Height="440"
         WindowStartupLocation="CenterOwner">
   <Grid Margin="16" RowDefinitions="*,Auto,Auto" ColumnDefinitions="200,12,*">

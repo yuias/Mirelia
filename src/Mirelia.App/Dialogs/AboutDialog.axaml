@@ -2,17 +2,26 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="Mirelia.App.Dialogs.AboutDialog"
         Title="About Mirelia"
+        Icon="avares://Mirelia.App/Assets/Mirelia-icon-256.png"
         Width="340" SizeToContent="Height"
         CanResize="False"
         WindowStartupLocation="CenterOwner">
   <StackPanel Margin="24" Spacing="16">
 
-    <StackPanel Spacing="4">
-      <TextBlock x:Name="NameText" FontSize="22" FontWeight="SemiBold" />
-      <TextBlock x:Name="VersionText" Opacity="0.7" />
-      <!-- Absent when the build had no git checkout to read. -->
-      <TextBlock x:Name="GitHashText" Opacity="0.5" FontSize="12"
-                 FontFamily="Consolas,Menlo,monospace" IsVisible="False" />
+    <StackPanel Orientation="Horizontal" Spacing="16">
+      <!-- The 256px asset is the only raster we ship; ask for a quality
+           downscale so the mark stays clean at this size. -->
+      <Image Source="avares://Mirelia.App/Assets/Mirelia-icon-256.png"
+             Width="64" Height="64" VerticalAlignment="Center"
+             RenderOptions.BitmapInterpolationMode="HighQuality" />
+
+      <StackPanel Spacing="4" VerticalAlignment="Center">
+        <TextBlock x:Name="NameText" FontSize="22" FontWeight="SemiBold" />
+        <TextBlock x:Name="VersionText" Opacity="0.7" />
+        <!-- Absent when the build had no git checkout to read. -->
+        <TextBlock x:Name="GitHashText" Opacity="0.5" FontSize="12"
+                   FontFamily="Consolas,Menlo,monospace" IsVisible="False" />
+      </StackPanel>
     </StackPanel>
 
     <Button Content="Close" Classes="accent" HorizontalAlignment="Right"

@@ -3,6 +3,7 @@
         xmlns:vm="using:Mirelia.App.ViewModels"
         x:Class="Mirelia.App.Dialogs.SyncDialog"
         Title="Sync"
+        Icon="avares://Mirelia.App/Assets/Mirelia-icon-256.png"
         Width="900" Height="660"
         MinWidth="760" MinHeight="560"
         WindowStartupLocation="CenterOwner">

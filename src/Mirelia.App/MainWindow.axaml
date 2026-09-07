@@ -7,6 +7,7 @@
         x:Class="Mirelia.App.MainWindow"
         x:DataType="vm:MainViewModel"
         Title="Mirelia"
+        Icon="avares://Mirelia.App/Assets/Mirelia-icon-256.png"
         Width="1280" Height="760"
         DragDrop.AllowDrop="True">
 
