@@ -8,6 +8,29 @@ survive the move: the library entries themselves, ratings, play counts, date
 added, static playlists with their folder hierarchy, and auto-playlist
 definitions translated into the query DSL.
 
+## Running it
+
+The import is CLI only; the app has no import command. From a checkout:
+
+```sh
+dotnet run --project src/Mirelia.Cli -- import musicbee "<MusicBee library folder>"
+```
+
+From an installed package, where the CLI is on `PATH` under its alias:
+
+```sh
+mirelia-cli import musicbee "<MusicBee library folder>"
+```
+
+| Flag | Effect |
+|---|---|
+| `--no-scan` | Skip the scan; match against tracks already in the library |
+| `--no-playlists` | Tracks and their user state only |
+| `--merge` | Replace same-named playlists instead of importing a second copy |
+
+The import owns the whole path by default: it scans the roots it finds in the
+export, then writes the export's user state over them.
+
 ## Where the data comes from
 
 MusicBee's own library file, `MusicBeeLibrary.mbl`, is an undocumented binary
@@ -177,6 +200,6 @@ renamed, and every smart playlist still pointing at the plain names.
 
 ## Where the code lives
 
-`Mirelia.Library/Import/`, driven by `Mirelia.Cli` first
-(`mirelia-cli import musicbee <library folder>`) and the app afterwards. That
-matches how every other library operation is already split.
+`Mirelia.Library/Import/`, driven by `Mirelia.Cli`
+(`mirelia-cli import musicbee <library folder>`). Splitting the work that way
+matches every other library operation. Nothing in the app reaches it yet.
