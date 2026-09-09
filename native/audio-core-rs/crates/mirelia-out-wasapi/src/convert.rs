@@ -124,8 +124,10 @@ mod tests {
     fn s16_scales_and_clamps() {
         let out = convert(&[0.0, 0.5, 1.0, -1.0], DeviceFormat::S16, false);
         let v: Vec<i16> = out
-            .chunks_exact(2)
-            .map(|c| i16::from_le_bytes([c[0], c[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| i16::from_le_bytes(*c))
             .collect();
         assert_eq!(v, [0, 16_384, 32_767, -32_768]);
     }
@@ -145,8 +147,10 @@ mod tests {
         let src = [0.123_456_79f32, -0.987_654_3];
         let out = convert(&src, DeviceFormat::F32, true);
         let round: Vec<f32> = out
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_le_bytes(*c))
             .collect();
         assert_eq!(round, src);
     }
@@ -156,8 +160,8 @@ mod tests {
         let src = vec![0.25f32; 4096];
         let out = convert(&src, DeviceFormat::S16, true);
         let expected = (0.25f64 * 32_768.0).round() as i16;
-        for chunk in out.chunks_exact(2) {
-            let v = i16::from_le_bytes([chunk[0], chunk[1]]);
+        for chunk in out.as_chunks::<2>().0 {
+            let v = i16::from_le_bytes(*chunk);
             assert!((v - expected).abs() <= 1, "dithered value {v} vs {expected}");
         }
     }
