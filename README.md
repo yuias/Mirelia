@@ -136,3 +136,8 @@ file.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+Mirelia ships third-party components under their own licenses, including
+TagLib# (LGPL-2.1) and the Symphonia decoders (MPL-2.0). See
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), which both packaging routes
+include in what they produce.
