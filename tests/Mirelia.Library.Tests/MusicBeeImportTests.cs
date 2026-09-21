@@ -478,6 +478,126 @@ public sealed class MusicBeeImportTests : IDisposable
     }
 
     [Fact]
+    public void MergingSurvivesTwoPlaylistsSwappingNames()
+    {
+        WriteExport(
+            [Track(1, "fixture.mp3"), Track(2, "fixture.flac")],
+            [
+                Playlist("PL01", "A", trackIds: [1]),
+                Playlist("PL02", "B", trackIds: [2]),
+            ]);
+        Import();
+
+        // Both names are still taken, but by the other playlist now.
+        WriteExport(
+            [Track(1, "fixture.mp3"), Track(2, "fixture.flac")],
+            [
+                Playlist("PL01", "B", trackIds: [1]),
+                Playlist("PL02", "C", trackIds: [2]),
+            ]);
+
+        Import(new MusicBeeImportOptions { Merge = true });
+
+        var store = new PlaylistStore(_db);
+        Assert.Equal(2, store.List().Count);
+        Assert.Single(store.List(), p => p.Name == "B");
+        Assert.Single(store.List(), p => p.Name == "C");
+    }
+
+    [Fact]
+    public void MergingFollowsThePlaylistThroughARenameInMusicBee()
+    {
+        WriteExport([Track(1, "fixture.mp3")], [Playlist("PL01", "Favourites", trackIds: [1])]);
+        Import();
+
+        WriteExport([Track(1, "fixture.mp3")], [Playlist("PL01", "Faves", trackIds: [1])]);
+
+        MusicBeeImportReport report = Import(new MusicBeeImportOptions { Merge = true });
+
+        Assert.Equal(1, report.PlaylistsReplaced);
+        PlaylistInfo playlist = Assert.Single(new PlaylistStore(_db).List());
+        Assert.Equal("Faves", playlist.Name);
+    }
+
+    [Fact]
+    public void MergingFollowsASmartPlaylistThroughARename()
+    {
+        WriteExport([Track(1, "fixture.mp3", rating: 60)], [Playlist("PL01", "Rated", trackIds: [1])]);
+        WriteAutoPlaylist(
+            "Rated",
+            """
+                <Conditions CombineMethod="All">
+                  <Condition Field="Rating" Comparison="IsNotNull" />
+                </Conditions>
+            """);
+        Import();
+        var store = new PlaylistStore(_db);
+        store.Rename(store.List().Single(p => p.Name == "Rated").Id, "Has A Rating");
+
+        MusicBeeImportReport report = Import(new MusicBeeImportOptions { Merge = true });
+
+        // The id is written inside the smart-create path too, so this is the
+        // one that proves TryCreateSmart records it.
+        Assert.Equal(1, report.PlaylistsReplaced);
+        PlaylistInfo playlist = Assert.Single(store.List());
+        Assert.Equal("Rated", playlist.Name);
+        Assert.Equal(PlaylistKind.Smart, playlist.Kind);
+    }
+
+    [Fact]
+    public void MergingRebuildsNestingWhenAFolderIsRenamed()
+    {
+        WriteExport(
+            [Track(1, "fixture.mp3")],
+            [
+                Folder("FOLDER01", "Anime"),
+                Playlist("PL01", "Favourites", parent: "FOLDER01", trackIds: [1]),
+            ]);
+        Import();
+
+        WriteExport(
+            [Track(1, "fixture.mp3")],
+            [
+                Folder("FOLDER01", "Anime Songs"),
+                Playlist("PL01", "Favourites", parent: "FOLDER01", trackIds: [1]),
+            ]);
+
+        Import(new MusicBeeImportOptions { Merge = true });
+
+        List<PlaylistInfo> all = new PlaylistStore(_db).List();
+        Assert.Equal(2, all.Count);
+        PlaylistInfo folder = Assert.Single(all, p => p.Kind == PlaylistKind.Folder);
+        Assert.Equal("Anime Songs", folder.Name);
+        Assert.Equal(folder.Id, Assert.Single(all, p => p.Name == "Favourites").ParentId);
+    }
+
+    [Fact]
+    public void AnExportWithoutPersistentIdsStoresNoId()
+    {
+        WriteExport([Track(1, "fixture.mp3")], [PlaylistWithoutId("Favourites", trackIds: [1])]);
+
+        Import();
+
+        PlaylistInfo playlist = Assert.Single(new PlaylistStore(_db).List());
+        // Recording the name as an id would go stale at the next rename, so
+        // these libraries keep matching by name.
+        Assert.Equal(DBNull.Value, _db.Scalar(
+            "SELECT mb_persistent_id FROM playlist WHERE id = $id", ("$id", playlist.Id)));
+    }
+
+    [Fact]
+    public void MergingAnExportWithoutPersistentIdsStillMatchesByName()
+    {
+        WriteExport([Track(1, "fixture.mp3")], [PlaylistWithoutId("Favourites", trackIds: [1])]);
+        Import();
+
+        MusicBeeImportReport report = Import(new MusicBeeImportOptions { Merge = true });
+
+        Assert.Equal(1, report.PlaylistsReplaced);
+        Assert.Single(new PlaylistStore(_db).List());
+    }
+
+    [Fact]
     public void MergingKeepsPlaylistsThisRunDoesNotKnowAbout()
     {
         var store = new PlaylistStore(_db);
@@ -738,6 +858,17 @@ public sealed class MusicBeeImportTests : IDisposable
                         </array>
                     </dict>
             """;
+
+    /// <summary>
+    /// A playlist entry with no <c>Playlist Persistent ID</c> key, which is
+    /// what an export from an older MusicBee looks like.
+    /// </summary>
+    private static string PlaylistWithoutId(string name, params int[] trackIds)
+        => Playlist("UNUSED", name, parent: null, trackIds)
+            .Replace(
+                "\t\t\t<key>Playlist Persistent ID</key><string>UNUSED</string>\n",
+                string.Empty,
+                StringComparison.Ordinal);
 
     private static string Playlist(
         string persistentId, string name, string? parent = null, params int[] trackIds)

@@ -309,7 +309,9 @@ one of the two is the milder wrong answer.
 
 An import run before v7 left no id behind. The first `--merge` after the
 migration therefore still matches by name, and writes the id while it does, so
-every later run matches on the id. See `docs/musicbee-import.md`.
+every later run matches on the id. Rows that already carry an id are excluded
+from that fallback, which keeps the two candidate sets disjoint. An export
+with no ids at all stores none. See `docs/musicbee-import.md`.
 
 ## Migration log
 

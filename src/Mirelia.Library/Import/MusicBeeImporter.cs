@@ -346,24 +346,34 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
         int folders = 0, statics = 0, smart = 0, snapshots = 0, replaced = 0;
         int done = 0;
 
+        // Every replacement goes first, in one pass. Plan freed their names as
+        // a set, so deleting each one only when its own source comes up would
+        // leave an earlier source blocked by a row a later source frees — two
+        // playlists swapping names is enough to hit it. Order within the pass
+        // does not matter: deleting a folder re-parents its children to that
+        // folder's own parent, so a hand-made child lands on the nearest
+        // surviving ancestor either way, and imported children are re-parented
+        // in the pass after creation.
+        foreach (Planned item in planned)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (item.Previous is { } previous)
+            {
+                store.Delete(previous.Id);
+                replaced++;
+            }
+        }
+
         foreach (Planned item in planned)
         {
             ct.ThrowIfCancellationRequested();
             progress?.Report(new MusicBeeImportProgress(
                 "Creating playlists", done++, planned.Count));
 
-            // Plan already worked out what this replaces and reserved the
-            // name accordingly.
-            if (item.Previous is { } previous)
-            {
-                store.Delete(previous.Id);
-                replaced++;
-            }
-
             if (item.Source.IsFolder)
             {
                 item.Created = store.CreateFolder(item.Name);
-                store.SetMusicBeeId(item.Created.Id, item.Source.PersistentId);
+                RecordMusicBeeId(store, item);
                 folders++;
                 continue;
             }
@@ -393,7 +403,7 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
             }
 
             item.Created = store.CreateStatic(item.Name);
-            store.SetMusicBeeId(item.Created.Id, item.Source.PersistentId);
+            RecordMusicBeeId(store, item);
             long[] members = [.. item.Source.TrackIds
                 .Select(id => trackIds.TryGetValue(id, out string? path) ? path : null)
                 .OfType<string>()
@@ -431,7 +441,7 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
         try
         {
             item.Created = store.CreateSmart(item.Name, DslPrinter.Print(query));
-            store.SetMusicBeeId(item.Created.Id, item.Source.PersistentId);
+            RecordMusicBeeId(store, item);
             return true;
         }
         catch (Exception ex) when (ex is QueryParseException
@@ -440,6 +450,19 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
         {
             notes.Add($"'{item.Reference}' stays a fixed list: {ex.Message}");
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Stores the export's id on the row just created, when the export carried
+    /// one. An export without ids keeps the pure name behaviour rather than
+    /// recording a name that goes stale at the next rename.
+    /// </summary>
+    private static void RecordMusicBeeId(PlaylistStore store, Planned item)
+    {
+        if (item is { Created: { } created, Source.ExportId: { } exportId })
+        {
+            store.SetMusicBeeId(created.Id, exportId);
         }
     }
 
@@ -548,18 +571,44 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
         var byId = library.Playlists.ToDictionary(p => p.PersistentId, StringComparer.Ordinal);
         var store = new PlaylistStore(db);
 
+        // References are needed twice: to find a rule, and as the second name
+        // the fallback below tries.
+        var references = library.Playlists.ToDictionary(
+            p => p.PersistentId, p => ReferenceOf(p, byId), StringComparer.Ordinal);
+
         // What each source replaces, resolved before any name is handed out.
-        // MusicBee's id wins because it survives a rename on either side; the
-        // natural name is the fallback that recognizes a library imported
-        // before the id was stored.
         var previous = new Dictionary<string, PlaylistInfo>(StringComparer.Ordinal);
         if (merge)
         {
             var claimed = new HashSet<long>();
+
+            // Every id match first. Resolving them in a second pass would let
+            // the order of the export decide whether a row went to the
+            // playlist that owns its id or to one that merely shares a name.
             foreach (MusicBeePlaylist source in library.Playlists)
             {
-                PlaylistInfo? match = store.FindByMusicBeeId(source.PersistentId)
-                    ?? store.FindByName(source.Name);
+                if (source.ExportId is { } exportId
+                    && store.FindByMusicBeeId(exportId) is { } match
+                    && claimed.Add(match.Id))
+                {
+                    previous[source.PersistentId] = match;
+                }
+            }
+
+            // Then the fallback that recognizes a library imported before the
+            // id was stored. It only considers rows no import has claimed, and
+            // tries the reference as well as the bare name because that is how
+            // the earlier run would have resolved two playlists sharing one.
+            foreach (MusicBeePlaylist source in library.Playlists)
+            {
+                if (previous.ContainsKey(source.PersistentId))
+                {
+                    continue;
+                }
+
+                PlaylistInfo? match =
+                    store.FindByNameWithoutMusicBeeId(source.Name)
+                    ?? store.FindByNameWithoutMusicBeeId(references[source.PersistentId]);
                 if (match is not null && claimed.Add(match.Id))
                 {
                     previous[source.PersistentId] = match;
@@ -579,7 +628,7 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
         var planned = new List<Planned>(library.Playlists.Count);
         foreach (MusicBeePlaylist source in library.Playlists)
         {
-            string reference = ReferenceOf(source, byId);
+            string reference = references[source.PersistentId];
             planned.Add(new Planned(
                 source,
                 reference,

@@ -91,6 +91,29 @@ public sealed class PlaylistStore(LibraryDatabase db)
     }
 
     /// <summary>
+    /// Finds a playlist by exact name, ignoring rows a MusicBee import already
+    /// claimed. Used as the import's fallback: restricting it this way keeps
+    /// the id and name candidate sets disjoint, so a name match can never take
+    /// a row that belongs to a different MusicBee playlist.
+    /// </summary>
+    public PlaylistInfo? FindByNameWithoutMusicBeeId(string name)
+    {
+        if (db.Scalar(
+                """
+                SELECT id FROM playlist
+                WHERE name = $n AND mb_persistent_id IS NULL
+                ORDER BY id
+                LIMIT 1
+                """,
+                ("$n", name)) is not long id)
+        {
+            return null;
+        }
+
+        return List().FirstOrDefault(p => p.Id == id);
+    }
+
+    /// <summary>
     /// Records which MusicBee playlist this row came from. Called on every
     /// import path, including the one that matched by name, so a library
     /// imported before the id was stored is backfilled on its next run.

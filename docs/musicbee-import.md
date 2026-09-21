@@ -195,7 +195,13 @@ behind. Each imported playlist carries MusicBee's `Playlist Persistent ID` in
 
 The name is still the fallback, which is what recognizes a library imported
 before the id was stored; that run replaces the old row by name and writes the
-id, so every later run matches on the id.
+id, so every later run matches on the id. The fallback only ever considers
+rows no import has claimed, so it cannot take a row that belongs to a
+different MusicBee playlist.
+
+An export with no `Playlist Persistent ID` at all — an older MusicBee — stores
+no id and keeps matching purely by name. Recording the name as the id would
+look like it worked and then go stale at the next rename.
 
 Playlists this run knows nothing about are left alone. Deleting a folder
 re-parents its children to the folder's parent, so a hand-made playlist filed

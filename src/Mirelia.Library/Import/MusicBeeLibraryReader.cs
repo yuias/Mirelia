@@ -21,17 +21,27 @@ public sealed record MusicBeeTrack(
     long? AddedUnix);
 
 /// <summary>One playlist or playlist folder from the export.</summary>
-/// <param name="PersistentId">Stable id; what children name as their parent.</param>
+/// <param name="PersistentId">
+/// Stable id; what children name as their parent. Falls back to the name when
+/// the export carries no id, so nesting still resolves — see
+/// <paramref name="ExportId"/> before storing this anywhere.
+/// </param>
 /// <param name="ParentPersistentId">Containing folder, or null at the top level.</param>
 /// <param name="Name">Name within its folder; not unique across the library.</param>
 /// <param name="IsFolder">Whether it holds playlists rather than tracks.</param>
 /// <param name="TrackIds">Members in playlist order; empty for a folder.</param>
+/// <param name="ExportId">
+/// The id the export actually carried, or null when it carried none. Only this
+/// is worth persisting: <paramref name="PersistentId"/>'s fallback is a name,
+/// which would be recorded as an id and then go stale on the next rename.
+/// </param>
 public sealed record MusicBeePlaylist(
     string PersistentId,
     string? ParentPersistentId,
     string Name,
     bool IsFolder,
-    IReadOnlyList<int> TrackIds);
+    IReadOnlyList<int> TrackIds,
+    string? ExportId = null);
 
 /// <summary>Everything one export file holds.</summary>
 /// <param name="Tracks">Every file-backed track, in export order.</param>
@@ -194,7 +204,8 @@ public static class MusicBeeLibraryReader
         // A playlist with no name cannot be created and cannot be referenced.
         return name is null
             ? null
-            : new MusicBeePlaylist(persistentId ?? name, parentId, name, folder, items);
+            : new MusicBeePlaylist(
+                persistentId ?? name, parentId, name, folder, items, persistentId);
     }
 
     private static void ReadPlaylistItems(XmlReader reader, List<int> into)
