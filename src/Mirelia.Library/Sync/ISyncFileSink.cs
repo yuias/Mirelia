@@ -33,7 +33,4 @@ public interface ISyncFileSink : IDisposable
 
     /// <summary>Removes a file, along with any directories it leaves empty.</summary>
     void Delete(string relPath);
-
-    /// <summary>Every file below the root, as relative paths.</summary>
-    IEnumerable<string> Enumerate();
 }

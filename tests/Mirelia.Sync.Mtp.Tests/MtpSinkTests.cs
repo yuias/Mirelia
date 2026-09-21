@@ -155,7 +155,6 @@ public sealed class MtpSinkTests : IDisposable
         sink.WriteFile("Artist/01 Song.flac", source, CancellationToken.None);
 
         Assert.Equal(new SinkEntry(9, 0), sink.Stat("Artist/01 Song.flac"));
-        Assert.Single(sink.Enumerate());
     }
 
     [Fact]
@@ -213,7 +212,7 @@ public sealed class MtpSinkTests : IDisposable
         sink.Delete("Artist/Album/01 Song.flac");
 
         Assert.True(_store.Exists(album));
-        Assert.Equal(new[] { "Artist/Album/02 Song.flac" }, sink.Enumerate());
+        Assert.NotNull(sink.Stat("Artist/Album/02 Song.flac"));
     }
 
     [Fact]
@@ -224,32 +223,6 @@ public sealed class MtpSinkTests : IDisposable
         sink.Delete("Artist/Album/01 Song.flac");
 
         Assert.DoesNotContain(_store.Log, e => e.StartsWith("delete:", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public void EnumerateWalksTheWholeRoot()
-    {
-        _store.AddFile($"{RootPath}/Artist/Album/01 Song.flac", new byte[1]);
-        _store.AddFile($"{RootPath}/Artist/Album/Disc 2/01 Song.flac", new byte[1]);
-        _store.AddFile($"{RootPath}/Loose.mp3", new byte[1]);
-        _store.AddFile("Internal shared storage/Elsewhere.mp3", new byte[1]);
-        using var sink = new MtpSink(_store, RootPath);
-
-        string[] expected =
-        [
-            "Artist/Album/01 Song.flac",
-            "Artist/Album/Disc 2/01 Song.flac",
-            "Loose.mp3",
-        ];
-        Assert.Equal(expected, sink.Enumerate().Order(StringComparer.Ordinal));
-    }
-
-    [Fact]
-    public void EnumerateIsEmptyWhenTheRootDoesNotExist()
-    {
-        using var sink = new MtpSink(_store, RootPath);
-
-        Assert.Empty(sink.Enumerate());
     }
 
     [Fact]

@@ -80,20 +80,6 @@ public sealed class FileSystemSink : ISyncFileSink
     }
 
     /// <inheritdoc />
-    public IEnumerable<string> Enumerate()
-    {
-        if (!Directory.Exists(_root))
-        {
-            yield break;
-        }
-
-        foreach (string path in Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories))
-        {
-            yield return Path.GetRelativePath(_root, path).Replace('\\', '/');
-        }
-    }
-
-    /// <inheritdoc />
     public void Dispose()
     {
         // Nothing to release; the interface is disposable for MTP's sake.

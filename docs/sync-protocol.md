@@ -19,7 +19,7 @@ layer differs.
 | Network | `network` | OpenSubsonic HTTP server, reached over WiFi | M8+ |
 
 Writes go through a single `ISyncFileSink` abstraction (`Stat`, `WriteFile`,
-`WriteBytes`, `Delete`, `Enumerate`, `FreeSpaceBytes`). Local folder sync
+`WriteBytes`, `Delete`, `FreeSpaceBytes`). Local folder sync
 implements it over `System.IO`; MTP is a second implementation over the WPD
 COM API (see below).
 
@@ -234,15 +234,17 @@ clears the selection after a successful run.
    that granularity.
 4. Write playlist files.
 5. Delete orphans when `orphanPolicy` is `delete`.
-6. Reconcile against the real filesystem, to catch files the user deleted on
-   the device by hand.
 
 Only step 3 changes when the transcode pipeline lands.
 
 Orphan removal covers only files recorded in `sync_target_file`. The music
 root can hold data this app never wrote, and no scope change is worth
-deleting a stranger's files; step 6 exists to re-copy what the user deleted
-on the device, not to delete what it does not recognize.
+deleting a stranger's files.
+
+A file the user deletes on the device by hand is caught by step 3: `Stat`
+finds nothing at the recorded path and the track is copied again. There is no
+separate pass over the whole device, which on MTP would cost a full recursive
+walk on every run.
 
 `Sync now` is always preceded by a preflight summary — files to copy and
 their total size, files to delete, playlists to write, and free space at the
@@ -394,11 +396,11 @@ allowed but doubles the enumeration cost and lets the two caches disagree.
 
 ### Scope of the sink
 
-`Enumerate` is used by the reconcile step and by nothing else. It walks the
-cached tree, filling it depth-first, and is the one genuinely expensive
-operation — proportional to the whole music root, not to the delta. It stays,
-because step 6 of the sync algorithm is what catches files deleted on the
-phone by hand, which is a real workflow on a device the user browses.
+Every sink operation is addressed by relative path, so cost is proportional
+to the delta rather than to the music root. There is deliberately no
+"list everything" member: on MTP that is a full recursive walk, and the one
+case that would want it — a file the user deleted on the phone by hand — is
+already covered by the per-file `Stat` in step 3 of the sync algorithm.
 
 ### What is not attempted
 

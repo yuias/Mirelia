@@ -104,42 +104,6 @@ public sealed class MtpSink : ISyncFileSink
     }
 
     /// <inheritdoc />
-    /// <remarks>
-    /// Fills the cache depth-first as it goes. This is the one genuinely
-    /// expensive operation — proportional to the whole root rather than to the
-    /// delta — and exists for the reconcile step, which is what catches files
-    /// deleted on the device by hand.
-    /// </remarks>
-    public IEnumerable<string> Enumerate()
-    {
-        var pending = new Stack<string>();
-        pending.Push(string.Empty);
-        while (pending.Count > 0)
-        {
-            string relDir = pending.Pop();
-            MtpDirectory? dir = FindDirectory(relDir);
-            if (dir is null)
-            {
-                continue;
-            }
-
-            Load(dir);
-            foreach (MtpObject child in dir.Children.Values)
-            {
-                string path = relDir.Length == 0 ? child.Name : $"{relDir}/{child.Name}";
-                if (child.IsFolder)
-                {
-                    pending.Push(path);
-                }
-                else
-                {
-                    yield return path;
-                }
-            }
-        }
-    }
-
-    /// <inheritdoc />
     public void Dispose() => _dirs.Clear();
 
     private void Write(string relPath, Stream source, long size, CancellationToken ct)
