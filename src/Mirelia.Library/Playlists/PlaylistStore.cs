@@ -113,6 +113,12 @@ public sealed class PlaylistStore(LibraryDatabase db)
         return List().FirstOrDefault(p => p.Id == id);
     }
 
+    /// <summary>Whether a MusicBee import has claimed this row.</summary>
+    public bool HasMusicBeeId(long id)
+        => db.Scalar(
+            "SELECT 1 FROM playlist WHERE id = $id AND mb_persistent_id IS NOT NULL",
+            ("$id", id)) is not null;
+
     /// <summary>
     /// Records which MusicBee playlist this row came from. Called on every
     /// import path, including the one that matched by name, so a library

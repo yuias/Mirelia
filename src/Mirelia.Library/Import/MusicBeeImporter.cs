@@ -573,8 +573,8 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
 
         // References are needed twice: to find a rule, and as the second name
         // the fallback below tries.
-        var references = library.Playlists.ToDictionary(
-            p => p.PersistentId, p => ReferenceOf(p, byId), StringComparer.Ordinal);
+        Dictionary<string, string> references =
+            MusicBeePlaylistIdentity.ReferencesOf(library);
 
         // What each source replaces, resolved before any name is handed out.
         var previous = new Dictionary<string, PlaylistInfo>(StringComparer.Ordinal);
@@ -606,9 +606,10 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
                     continue;
                 }
 
-                PlaylistInfo? match =
-                    store.FindByNameWithoutMusicBeeId(source.Name)
-                    ?? store.FindByNameWithoutMusicBeeId(references[source.PersistentId]);
+                (PlaylistInfo? byName, PlaylistInfo? byReference) =
+                    MusicBeePlaylistIdentity.Candidates(
+                        store, source, references[source.PersistentId]);
+                PlaylistInfo? match = byName ?? byReference;
                 if (match is not null && claimed.Add(match.Id))
                 {
                     previous[source.PersistentId] = match;
@@ -640,25 +641,6 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
         }
 
         return planned;
-    }
-
-    /// <summary>Folder path plus name, which is how a rule names a playlist.</summary>
-    private static string ReferenceOf(
-        MusicBeePlaylist playlist, Dictionary<string, MusicBeePlaylist> byId)
-    {
-        var parts = new List<string> { playlist.Name };
-        var guard = new HashSet<string>(StringComparer.Ordinal) { playlist.PersistentId };
-
-        string? parentId = playlist.ParentPersistentId;
-        while (parentId is not null
-            && guard.Add(parentId)
-            && byId.TryGetValue(parentId, out MusicBeePlaylist? parent))
-        {
-            parts.Insert(0, parent.Name);
-            parentId = parent.ParentPersistentId;
-        }
-
-        return string.Join('/', parts);
     }
 
     /// <summary>

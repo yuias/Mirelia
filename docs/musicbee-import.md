@@ -203,6 +203,42 @@ An export with no `Playlist Persistent ID` at all — an older MusicBee — stor
 no id and keeps matching purely by name. Recording the name as the id would
 look like it worked and then go stale at the next rename.
 
+## Linking a library imported before the id was stored
+
+A library imported before schema v7 carries no ids, so its first `--merge`
+falls back entirely to names — and names cannot tell a previous import from a
+playlist made by hand. `link` settles that beforehand:
+
+```sh
+mirelia-cli link musicbee "<MusicBee folder>"          # reports, writes nothing
+mirelia-cli link musicbee "<MusicBee folder>" --apply  # stores the ids
+```
+
+It matches the export against the library by the same rules the importer
+uses, and stores nothing but the id: names, contents and nesting are left
+exactly as they are. Each line comes back as one of
+
+| | |
+|---|---|
+| `link` | a playlist this run will claim for that MusicBee entry |
+| `have` | already carries that id; nothing to do |
+| `none` | nothing in the library answers to either of its names |
+| `STOP` | more than one row could be meant, or one row by more than one entry — left alone |
+
+It is stricter than the importer on purpose. The importer deletes and
+recreates whatever it matches, so a wrong guess costs one rebuild; a stored id
+is permanent and would silently aim the next `--merge` at the wrong playlist.
+Anything ambiguous is reported instead, to be resolved by hand — renaming the
+playlist to match MusicBee and re-running is usually enough.
+
+The run ends with the playlists that stay unlinked. Those are the ones
+`--merge` can never touch afterwards, which is the point of running it.
+
+**Linking records identity, not content.** A later `--merge` still replaces
+every linked playlist's contents, name and nesting with MusicBee's. If a
+playlist has been edited here and that edit matters, leave it unlinked — or do
+not re-import playlists at all.
+
 Playlists this run knows nothing about are left alone. Deleting a folder
 re-parents its children to the folder's parent, so a hand-made playlist filed
 under a MusicBee folder resurfaces one level up.

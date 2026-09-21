@@ -24,6 +24,7 @@ return args switch
     ["playlist", .. var plArgs] => PlaylistCommand(plArgs),
     ["export", var name, .. var rest] => Export(name, rest),
     ["import", "musicbee", var folder, .. var rest] => ImportMusicBee(folder, rest),
+    ["link", "musicbee", var folder, .. var rest] => LinkMusicBee(folder, rest),
     ["rgscan", .. var rest] => RgScan(ParseDbOption(rest)),
     [] or ["--help"] or ["-h"] => PrintHelp(0),
     _ => PrintHelp(2),
@@ -394,6 +395,76 @@ static int Export(string name, string[] rest)
     }
 }
 
+static int LinkMusicBee(string folder, string[] rest)
+{
+    (rest, string? dbPath) = ExtractDbOption(rest);
+    bool apply = false;
+    foreach (string argument in rest)
+    {
+        switch (argument)
+        {
+            case "--apply":
+                apply = true;
+                break;
+            default:
+                Console.Error.WriteLine($"link: unknown argument: {argument}");
+                return 2;
+        }
+    }
+
+    string db = dbPath ?? DefaultDbPath();
+    if (!File.Exists(db))
+    {
+        Console.Error.WriteLine($"link: database not found: {db}");
+        return 1;
+    }
+
+    using var database = LibraryDatabase.Open(db);
+    MusicBeeLinkReport report = new MusicBeePlaylistLinker(database).Link(folder, apply);
+
+    foreach (MusicBeeLinkEntry entry in report.Entries)
+    {
+        string kind = entry.IsFolder ? "folder" : "playlist";
+        switch (entry.Outcome)
+        {
+            case MusicBeeLinkOutcome.Linked:
+                Console.WriteLine($"  link  {entry.Reference} -> {entry.PlaylistName} ({kind})");
+                break;
+            case MusicBeeLinkOutcome.AlreadyLinked:
+                Console.WriteLine($"  have  {entry.Reference} -> {entry.PlaylistName}");
+                break;
+            case MusicBeeLinkOutcome.NoMatch:
+                Console.WriteLine($"  none  {entry.Reference}: {entry.Reason}");
+                break;
+            case MusicBeeLinkOutcome.Conflict:
+                Console.WriteLine($"  STOP  {entry.Reference}: {entry.Reason}");
+                break;
+        }
+    }
+
+    Console.WriteLine(
+        $"{report.LinkedCount} to link, {report.AlreadyLinkedCount} already linked, "
+        + $"{report.NoMatchCount} with no match, {report.ConflictCount} left alone");
+
+    if (report.Unlinked.Count > 0)
+    {
+        Console.WriteLine(
+            $"{report.Unlinked.Count} playlists stay unlinked, so --merge will never "
+            + "touch them:");
+        foreach (string name in report.Unlinked)
+        {
+            Console.WriteLine($"  {name}");
+        }
+    }
+
+    Console.WriteLine(
+        report.Applied
+            ? "written. Linking records identity only: a later --merge still replaces "
+              + "each linked playlist's contents with MusicBee's."
+            : "dry run, nothing written. Re-run with --apply to store these.");
+    return 0;
+}
+
 static int ImportMusicBee(string folder, string[] rest)
 {
     (rest, string? dbPath) = ExtractDbOption(rest);
@@ -537,8 +608,13 @@ static int PrintHelp(int exitCode)
           mirelia-cli playlist add <name> <dsl>    Add query results to a static playlist.
           mirelia-cli export <name> --out <file.m3u8> [--relative] [--copy] [--rewrite from=to]
           mirelia-cli import musicbee <library folder> [--no-scan] [--no-playlists] [--merge]
-                                                   --merge replaces same-named playlists
-                                                   instead of importing a second copy.
+                                                   --merge replaces what an earlier run
+                                                   of the same playlist created.
+          mirelia-cli link musicbee <library folder> [--apply]
+                                                   Record which playlist each MusicBee one
+                                                   became, so a later --merge matches on
+                                                   identity rather than on names. Reports
+                                                   without writing unless --apply is given.
           mirelia-cli rgscan [--db <path>]         Scan ReplayGain for tracks that
                                                    have none yet.
           mirelia-cli native-smoke                 Load the native audio backend.
