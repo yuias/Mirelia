@@ -36,14 +36,17 @@ id; the eventual C++ backend under an overridden `operator new`.
 ## Backend selection
 
 `Mirelia.AudioBridge` resolves the native library through
-`NativeLibrary.SetDllImportResolver`, choosing from:
+`NativeLibrary.SetDllImportResolver`. There is one backend,
+`audio_core_rs.dll` / `libaudio_core_rs.dylib`, and the resolver looks for it
+in this order:
 
-```
-audio_core_rs.dll / libaudio_core_rs.dylib     (default)
-audio_core_cpp.dll                             (opt-in, Windows only, if present)
-```
+1. The full path in the `MIRELIA_AUDIO_CORE` environment variable, if set.
+2. Next to the executable, which is how a packaged build is laid out.
+3. The cargo target directory, walking up from the application base, so
+   `dotnet run` works after `cargo build` without a copy step.
 
-Selection is a user setting with an "auto" default.
+A second backend would be substituted through the same resolver. There is no
+user-facing setting for it.
 
 ## Plugin ABIs
 

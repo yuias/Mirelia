@@ -34,7 +34,7 @@
           <StackPanel Spacing="6">
             <ComboBox x:Name="ThemeBox" HorizontalAlignment="Stretch" />
             <TextBlock Opacity="0.6" FontSize="12" TextWrapping="Wrap"
-                       Text="Auto follows the Windows light/dark setting. Takes effect immediately." />
+                       Text="Auto follows the system light/dark setting. Takes effect immediately." />
           </StackPanel>
 
           <TextBlock FontWeight="SemiBold" Text="Font" />

@@ -8,8 +8,8 @@
 The audio engine is a native cdylib (`audio-core-rs`, Rust 2024) behind a
 hand-written, versioned C ABI (`native/include/mirelia/audio_core.h`).
 A C++ backend (`audio-core-cpp`) is written only if measurements or a
-required third-party SDK demand it, as a drop-in alternate selected at
-runtime.
+required third-party SDK demand it, as a drop-in alternate resolved through
+the same `DllImport` resolver. Nothing of it exists yet.
 
 ## Rationale
 

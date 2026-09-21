@@ -72,6 +72,16 @@ public partial class SyncDialog : Window
     public SyncDialog()
     {
         InitializeComponent();
+
+        // Device sync goes through Windows Portable Devices; elsewhere the
+        // button could only ever create a target that finds no device.
+        if (!LibraryService.MtpSupported)
+        {
+            AddDeviceButton.IsEnabled = false;
+            ToolTip.SetTip(
+                AddDeviceButton,
+                "Device sync uses Windows Portable Devices and is available on Windows only.");
+        }
     }
 
     /// <summary>Creates the dialog over the library service.</summary>

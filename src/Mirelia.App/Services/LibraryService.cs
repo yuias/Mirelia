@@ -9,6 +9,7 @@ using Mirelia.Query.Ast;
 using Mirelia.Query.Compilation;
 using Mirelia.Query.Parsing;
 using Mirelia.Sync.Mtp;
+using System.Runtime.Versioning;
 
 namespace Mirelia.App.Services;
 
@@ -451,9 +452,17 @@ public sealed class LibraryService : IDisposable
     /// Empty everywhere else, and when nothing is plugged in.
     /// </summary>
     public static Task<IReadOnlyList<MtpDeviceInfo>> GetMtpDevicesAsync()
-        => OperatingSystem.IsWindowsVersionAtLeast(5)
+        => MtpSupported
             ? Task.Run(MtpDevices.List)
             : Task.FromResult<IReadOnlyList<MtpDeviceInfo>>([]);
+
+    /// <summary>
+    /// Whether this platform can reach MTP devices at all. The transport is
+    /// Windows Portable Devices, so everywhere else enumeration is empty by
+    /// construction rather than by accident.
+    /// </summary>
+    [SupportedOSPlatformGuard("windows5.0")]
+    public static bool MtpSupported => OperatingSystem.IsWindowsVersionAtLeast(5);
 
     /// <summary>Stores a target's name, settings, and selected playlists.</summary>
     public Task SaveSyncTargetAsync(long id, string name, SyncTargetConfig config, IEnumerable<long> scope)

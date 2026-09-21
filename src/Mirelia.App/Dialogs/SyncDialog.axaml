@@ -32,7 +32,7 @@
       <StackPanel DockPanel.Dock="Bottom" Spacing="6" Margin="0,6,0,0">
         <StackPanel Orientation="Horizontal" Spacing="6">
           <Button Content="Add folder" Click="OnAddFolderTarget" />
-          <Button Content="Add device" Click="OnAddDeviceTarget" />
+          <Button x:Name="AddDeviceButton" Content="Add device" Click="OnAddDeviceTarget" />
         </StackPanel>
         <Button x:Name="RemoveButton" Content="Remove" Click="OnRemoveTarget" />
       </StackPanel>
@@ -170,7 +170,7 @@
           <CheckBox x:Name="SkipLosslessCheck" Content="Leave lossless tracks behind"
                     IsCheckedChanged="OnCheckChanged" />
           <TextBlock Classes="label" TextWrapping="Wrap"
-                     Text="Tracks the device cannot play are skipped, and removed if they are already there. Converting them instead arrives with the transcode pipeline." />
+                     Text="Tracks the device cannot play are skipped, and removed if they are already there. Mirelia does not convert them." />
         </StackPanel>
 
         <StackPanel Spacing="6">

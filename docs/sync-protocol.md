@@ -194,11 +194,11 @@ One file per playlist under `playlistDir`.
   is optional and off by default, because many devices scan only the top
   playlist directory.
 
-Writing reuses `Mirelia.Library.Export.M3u8Exporter` from M4 rather than
-adding a second writer. It already emits `#EXTM3U`/`#EXTINF` as UTF-8
-without BOM, and `M3u8Options.PathRewrite` is exactly the `musicRoot` →
-`deviceRoot` mapping. Three additions are needed: the separator option, the
-`.m3u` codepage variant, and CRLF line endings (it currently writes LF).
+Writing reuses `Mirelia.Library.Export.M3u8Exporter` rather than adding a
+second writer. It emits `#EXTM3U`/`#EXTINF` as UTF-8 without BOM,
+`M3u8Options.PathRewrite` is exactly the `musicRoot` → `deviceRoot` mapping,
+and the separator option, the `.m3u` codepage variant and CRLF line endings
+are all in place.
 
 ### Forcing a re-copy
 
