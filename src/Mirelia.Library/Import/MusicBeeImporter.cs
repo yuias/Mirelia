@@ -28,9 +28,10 @@ public sealed record MusicBeeImportOptions
     public bool ImportPlaylists { get; init; } = true;
 
     /// <summary>
-    /// Whether a playlist whose name is already in the library is this same
-    /// playlist from an earlier run. On, the old one is replaced; off (the
-    /// default), the incoming one is renamed and both are kept.
+    /// Whether a playlist an earlier run created is this same playlist. On,
+    /// that one is replaced — matched on MusicBee's persistent id, falling
+    /// back to the name for a library imported before the id was stored. Off
+    /// (the default), the incoming one is renamed and both are kept.
     /// </summary>
     public bool Merge { get; init; }
 }
@@ -47,9 +48,8 @@ public sealed record MusicBeeImportOptions
 /// they held at export time.
 /// </param>
 /// <param name="PlaylistsReplaced">
-/// Playlists that already existed under the same name and were dropped to
-/// make way for this run. Always zero unless
-/// <see cref="MusicBeeImportOptions.Merge"/> is on.
+/// Playlists an earlier run created that were dropped to make way for this
+/// one. Always zero unless <see cref="MusicBeeImportOptions.Merge"/> is on.
 /// </param>
 /// <param name="Notes">One line per thing the user should know about.</param>
 public sealed record MusicBeeImportReport(
