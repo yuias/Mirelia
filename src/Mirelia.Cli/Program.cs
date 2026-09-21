@@ -16,7 +16,11 @@ return args switch
     ["query", var dsl, .. var rest] => RunQuery(dsl, ParseDbOption(rest)),
     ["play", var file] => Play(file, exclusive: false),
     ["play", var file, "--exclusive"] => Play(file, exclusive: true),
+#if DEBUG
+    // Writes synthetic tracks into a real library; kept out of release builds
+    // so a user cannot reach it by accident.
     ["seed", var count, .. var rest] => Seed(count, ParseDbOption(rest)),
+#endif
     ["playlist", .. var plArgs] => PlaylistCommand(plArgs),
     ["export", var name, .. var rest] => Export(name, rest),
     ["import", "musicbee", var folder, .. var rest] => ImportMusicBee(folder, rest),
@@ -34,6 +38,7 @@ static string? ParseDbOption(string[] rest) => rest switch
 
 static string DefaultDbPath() => Mirelia.Library.LibraryPaths.DefaultDatabasePath;
 
+#if DEBUG
 static int Seed(string countText, string? dbPath)
 {
     if (!int.TryParse(countText, out int count) || count <= 0)
@@ -51,6 +56,7 @@ static int Seed(string countText, string? dbPath)
         $"seeded {count} synthetic tracks into {db} in {stopwatch.Elapsed.TotalSeconds:F1}s");
     return 0;
 }
+#endif
 
 static int PrintVersion()
 {
@@ -524,7 +530,8 @@ static int PrintHelp(int exitCode)
         Usage:
           mirelia-cli scan <dir> [--db <path>]     Scan a folder into the library.
           mirelia-cli query <dsl> [--db <path>]    Run a smart-playlist query.
-          mirelia-cli play <file>                  Play an audio file (WASAPI shared).
+          mirelia-cli play <file> [--exclusive]    Play an audio file. --exclusive
+                                                   takes the device bit-perfect.
           mirelia-cli playlist create <name> [--smart <dsl>]
           mirelia-cli playlist list | show <name> | delete <name>
           mirelia-cli playlist add <name> <dsl>    Add query results to a static playlist.
@@ -532,6 +539,8 @@ static int PrintHelp(int exitCode)
           mirelia-cli import musicbee <library folder> [--no-scan] [--no-playlists] [--merge]
                                                    --merge replaces same-named playlists
                                                    instead of importing a second copy.
+          mirelia-cli rgscan [--db <path>]         Scan ReplayGain for tracks that
+                                                   have none yet.
           mirelia-cli native-smoke                 Load the native audio backend.
           mirelia-cli --version                    Print the version and exit.
 

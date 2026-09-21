@@ -1,3 +1,6 @@
+// Debug-only: reachable solely through the `seed` command, which release
+// builds do not carry.
+#if DEBUG
 using Microsoft.Data.Sqlite;
 using Mirelia.Library.Database;
 using Mirelia.Query.Text;
@@ -154,3 +157,4 @@ internal static class Seeder
             ("$s", TextNormalizer.NormalizeSearch(name)))!;
     }
 }
+#endif
