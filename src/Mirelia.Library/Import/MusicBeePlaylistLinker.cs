@@ -92,50 +92,82 @@ public sealed class MusicBeePlaylistLinker(LibraryDatabase db)
         Dictionary<string, string> references = MusicBeePlaylistIdentity.ReferencesOf(library);
         var store = new PlaylistStore(db);
 
-        var resolved = new List<Resolution>(library.Playlists.Count);
-        foreach (MusicBeePlaylist source in library.Playlists)
+        // Settled in rounds, because one link can decide another. Two MusicBee
+        // playlists sharing a name leave the first import holding one row
+        // under the bare name and one under the full reference: while both
+        // rows are free each entry sees two candidates, but once the bare name
+        // is taken the other is unambiguous. Only certain matches are settled
+        // per round, so the result does not depend on the export's order.
+        var settled = new Dictionary<string, PlaylistInfo>(StringComparer.Ordinal);
+        var spokenFor = new HashSet<long>();
+        while (true)
         {
-            resolved.Add(Resolve(store, source, references[source.PersistentId]));
+            var round = new Dictionary<string, PlaylistInfo>(StringComparer.Ordinal);
+            foreach (MusicBeePlaylist source in library.Playlists)
+            {
+                if (settled.ContainsKey(source.PersistentId))
+                {
+                    continue;
+                }
+
+                Resolution r = Resolve(
+                    store, source, references[source.PersistentId], spokenFor);
+                if (r.Entry.Outcome == MusicBeeLinkOutcome.Linked && r.Match is { } match)
+                {
+                    round[source.PersistentId] = match;
+                }
+            }
+
+            // A row two entries both want this round goes to neither.
+            var uncontested = round
+                .GroupBy(pair => pair.Value.Id)
+                .Where(g => g.Count() == 1)
+                .Select(g => g.Single())
+                .ToList();
+            if (uncontested.Count == 0)
+            {
+                break;
+            }
+
+            foreach ((string id, PlaylistInfo match) in uncontested)
+            {
+                settled[id] = match;
+                spokenFor.Add(match.Id);
+            }
         }
 
-        // A row two playlists both point at cannot be handed to either.
-        HashSet<Resolution> contested = [.. resolved
-            .Where(r => r.Match is not null)
-            .GroupBy(r => r.Match!.Id)
-            .Where(g => g.Count() > 1)
-            .SelectMany(g => g)];
-
-        var entries = new List<MusicBeeLinkEntry>(resolved.Count);
-        var linkedIds = new HashSet<long>();
-        foreach (Resolution r in resolved)
+        // One last pass, now that every certain link is known, so the entries
+        // that did not settle carry the reason they finally failed on.
+        var entries = new List<MusicBeeLinkEntry>(library.Playlists.Count);
+        foreach (MusicBeePlaylist source in library.Playlists)
         {
-            if (contested.Contains(r))
+            string reference = references[source.PersistentId];
+            if (settled.TryGetValue(source.PersistentId, out PlaylistInfo? match))
             {
-                entries.Add(r.Entry with
+                entries.Add(new MusicBeeLinkEntry(
+                    reference, source.IsFolder, MusicBeeLinkOutcome.Linked, match.Name, null));
+                if (apply)
+                {
+                    store.SetMusicBeeId(match.Id, source.ExportId!);
+                }
+
+                continue;
+            }
+
+            Resolution r = Resolve(store, source, reference, spokenFor);
+            entries.Add(r.Entry.Outcome == MusicBeeLinkOutcome.Linked
+                ? r.Entry with
                 {
                     Outcome = MusicBeeLinkOutcome.Conflict,
                     PlaylistName = null,
                     Reason = $"'{r.Match!.Name}' is also the best match for another playlist",
-                });
-                continue;
-            }
-
-            entries.Add(r.Entry);
-            if (r.Entry.Outcome == MusicBeeLinkOutcome.Linked && r.Match is { } match)
-            {
-                linkedIds.Add(match.Id);
-                if (apply)
-                {
-                    store.SetMusicBeeId(match.Id, r.ExportId!);
                 }
-            }
+                : r.Entry);
         }
 
-        // Everything the library keeps to itself once this run is done. Read
-        // before the writes above would change it on a dry run, so both modes
-        // report the same list.
+        // Everything the library keeps to itself once this run is done.
         List<string> unlinked = [.. store.List()
-            .Where(p => !linkedIds.Contains(p.Id) && !store.HasMusicBeeId(p.Id))
+            .Where(p => !spokenFor.Contains(p.Id) && !store.HasMusicBeeId(p.Id))
             .Select(p => p.Name)];
 
         return new MusicBeeLinkReport(entries, unlinked, apply);
@@ -145,7 +177,10 @@ public sealed class MusicBeePlaylistLinker(LibraryDatabase db)
         MusicBeeLinkEntry Entry, PlaylistInfo? Match, string? ExportId);
 
     private static Resolution Resolve(
-        PlaylistStore store, MusicBeePlaylist source, string reference)
+        PlaylistStore store,
+        MusicBeePlaylist source,
+        string reference,
+        IReadOnlySet<long> spokenFor)
     {
         MusicBeeLinkEntry Entry(MusicBeeLinkOutcome outcome, string? name, string? reason)
             => new(reference, source.IsFolder, outcome, name, reason);
@@ -165,7 +200,7 @@ public sealed class MusicBeePlaylistLinker(LibraryDatabase db)
         }
 
         (PlaylistInfo? byName, PlaylistInfo? byReference) =
-            MusicBeePlaylistIdentity.Candidates(store, source, reference);
+            MusicBeePlaylistIdentity.Candidates(store, source, reference, spokenFor);
 
         if (byName is not null && byReference is not null && byName.Id != byReference.Id)
         {

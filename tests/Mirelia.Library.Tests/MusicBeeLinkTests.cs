@@ -139,6 +139,45 @@ public sealed class MusicBeeLinkTests : IDisposable
     }
 
     [Fact]
+    public void OneCertainLinkSettlesAnotherThatLookedAmbiguous()
+    {
+        // What the first import leaves when two MusicBee playlists share a
+        // name: one row under the bare name, one under the full reference.
+        var store = new PlaylistStore(_db);
+        store.CreateStatic("Mixes");
+        store.CreateStatic("Rock/Mixes");
+        WriteExport(
+            Folder("FOLDER01", "Rock"),
+            Playlist("PL01", "Mixes"),
+            Playlist("PL02", "Mixes", parent: "FOLDER01"));
+
+        MusicBeeLinkReport report = Link(apply: true);
+
+        // Taken alone each playlist sees two candidates; once the bare name
+        // is settled the other is the only thing left for the reference.
+        Assert.Equal(0, report.ConflictCount);
+        Assert.Equal("Mixes", store.FindByMusicBeeId("PL01")?.Name);
+        Assert.Equal("Rock/Mixes", store.FindByMusicBeeId("PL02")?.Name);
+    }
+
+    [Fact]
+    public void TheOrderOfTheExportDoesNotChangeTheResult()
+    {
+        var store = new PlaylistStore(_db);
+        store.CreateStatic("Mixes");
+        store.CreateStatic("Rock/Mixes");
+        WriteExport(
+            Folder("FOLDER01", "Rock"),
+            Playlist("PL02", "Mixes", parent: "FOLDER01"),
+            Playlist("PL01", "Mixes"));
+
+        Link(apply: true);
+
+        Assert.Equal("Mixes", store.FindByMusicBeeId("PL01")?.Name);
+        Assert.Equal("Rock/Mixes", store.FindByMusicBeeId("PL02")?.Name);
+    }
+
+    [Fact]
     public void AnExportEntryWithNothingToMatchIsReportedNotLinked()
     {
         WriteExport(Playlist("PL01", "Gone"));

@@ -44,13 +44,23 @@ internal static class MusicBeePlaylistIdentity
     /// share one. Only rows no import has claimed are considered, which keeps
     /// this disjoint from matching on the persistent id.
     /// </summary>
+    /// <param name="spokenFor">
+    /// Rows a caller has already decided on but not yet written, so a run
+    /// working out several playlists at once sees the same picture the
+    /// database would give it afterwards.
+    /// </param>
     internal static (PlaylistInfo? ByName, PlaylistInfo? ByReference) Candidates(
-        PlaylistStore store, MusicBeePlaylist source, string reference)
+        PlaylistStore store,
+        MusicBeePlaylist source,
+        string reference,
+        IReadOnlySet<long>? spokenFor = null)
     {
-        PlaylistInfo? byName = store.FindByNameWithoutMusicBeeId(source.Name);
-        PlaylistInfo? byReference = reference == source.Name
-            ? null
-            : store.FindByNameWithoutMusicBeeId(reference);
-        return (byName, byReference);
+        PlaylistInfo? Free(string name)
+            => store.FindByNameWithoutMusicBeeId(name) is { } row
+                && spokenFor?.Contains(row.Id) != true
+                ? row
+                : null;
+
+        return (Free(source.Name), reference == source.Name ? null : Free(reference));
     }
 }
