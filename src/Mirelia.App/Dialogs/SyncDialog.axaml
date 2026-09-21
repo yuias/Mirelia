@@ -35,6 +35,11 @@
           <Button x:Name="AddDeviceButton" Content="Add device" Click="OnAddDeviceTarget" />
         </StackPanel>
         <Button x:Name="RemoveButton" Content="Remove" Click="OnRemoveTarget" />
+        <!-- Shown off Windows, where "Add device" is disabled: MTP has no
+             transport other than Windows Portable Devices. -->
+        <TextBlock x:Name="NoMtpNote" IsVisible="False"
+                   Opacity="0.6" FontSize="12" TextWrapping="Wrap"
+                   Text="Device sync uses Windows Portable Devices and is available on Windows only." />
       </StackPanel>
       <ListBox x:Name="TargetList" SelectionChanged="OnTargetSelected" />
     </DockPanel>

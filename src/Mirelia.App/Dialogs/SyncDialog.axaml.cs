@@ -78,9 +78,7 @@ public partial class SyncDialog : Window
         if (!LibraryService.MtpSupported)
         {
             AddDeviceButton.IsEnabled = false;
-            ToolTip.SetTip(
-                AddDeviceButton,
-                "Device sync uses Windows Portable Devices and is available on Windows only.");
+            NoMtpNote.IsVisible = true;
         }
     }
 
