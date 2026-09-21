@@ -248,6 +248,11 @@ impl Engine {
         &self.config
     }
 
+    /// The platform API behind the installed backend.
+    pub fn backend_name(&self) -> &'static str {
+        self.backend.name()
+    }
+
     /// Lists playback devices.
     pub fn enumerate(&mut self) -> Result<Vec<DeviceInfo>, EngineError> {
         Ok(self.backend.enumerate()?)
@@ -927,6 +932,10 @@ mod tests {
     }
 
     impl OutputBackend for MockBackend {
+        fn name(&self) -> &'static str {
+            "mock"
+        }
+
         fn enumerate(&mut self) -> Result<Vec<DeviceInfo>, OutputError> {
             Ok(vec![self.probe_device(None)?])
         }
@@ -1067,6 +1076,10 @@ mod tests {
     }
 
     impl OutputBackend for CapturingBackend {
+        fn name(&self) -> &'static str {
+            "capture"
+        }
+
         fn enumerate(&mut self) -> Result<Vec<DeviceInfo>, OutputError> {
             Ok(vec![self.probe_device(None)?])
         }

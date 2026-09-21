@@ -139,6 +139,10 @@ fn make_backend() -> Box<dyn OutputBackend> {
     // engine works but no device can be opened on this platform.
     struct NullBackend;
     impl OutputBackend for NullBackend {
+        fn name(&self) -> &'static str {
+            "null"
+        }
+
         fn enumerate(
             &mut self,
         ) -> Result<Vec<mirelia_audio::output::DeviceInfo>, mirelia_audio::output::OutputError>
@@ -341,7 +345,7 @@ pub unsafe extern "C" fn kn_devices_enumerate(
 
     wrapper.device_strings.clear();
     wrapper.device_infos.clear();
-    let backend_name = CString::new("wasapi").unwrap();
+    let backend_name = CString::new(wrapper.engine.backend_name()).unwrap_or_default();
     wrapper.device_strings.push(backend_name);
     let backend_ptr = wrapper.device_strings[0].as_ptr();
 

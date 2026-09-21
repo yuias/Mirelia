@@ -448,6 +448,10 @@ fn setup_shared(
 }
 
 impl OutputBackend for WasapiBackend {
+    fn name(&self) -> &'static str {
+        "wasapi"
+    }
+
     fn enumerate(&mut self) -> Result<Vec<DeviceInfo>, OutputError> {
         let enumerator = enumerator()?;
         let default_id = device_for(&enumerator, None)

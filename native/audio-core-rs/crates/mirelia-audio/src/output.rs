@@ -99,6 +99,10 @@ pub trait OutputStream: Send {
 
 /// A factory for output streams on one audio API.
 pub trait OutputBackend: Send {
+    /// Short identifier of the platform API behind this backend, reported to
+    /// the host through `kn_device_info.backend`. Stable and lowercase.
+    fn name(&self) -> &'static str;
+
     /// Lists render devices.
     fn enumerate(&mut self) -> Result<Vec<DeviceInfo>, OutputError>;
 
