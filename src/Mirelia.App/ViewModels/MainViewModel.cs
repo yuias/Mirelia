@@ -36,9 +36,10 @@ public enum SourceKind
 public sealed partial class PlaylistNode : ObservableObject
 {
     /// <summary>
-    /// Whether a folder node is expanded in the tree. Folders start
-    /// collapsed; <see cref="MainViewModel.RefreshPlaylistsAsync"/> carries
-    /// the flag across the rebuilds that replace every node instance.
+    /// Whether a folder node is expanded in the tree. Restored from the
+    /// library on the first build and saved on every toggle;
+    /// <see cref="MainViewModel.RefreshPlaylistsAsync"/> carries the flag
+    /// across the rebuilds that replace every node instance.
     /// </summary>
     [ObservableProperty]
     private bool _isExpanded;
@@ -193,6 +194,10 @@ public sealed partial class MainViewModel : ObservableObject
 
     /// <summary>True while view settings are being applied programmatically.</summary>
     private bool _applyingViewSettings;
+
+    // The playlist tree's expansion is restored once, on the first build;
+    // every rebuild after that carries the live state instead.
+    private bool _expansionRestored;
 
     // Whether the current view's columns/widths were inherited from the
     // Music view rather than saved under this scope. Inherited fields
@@ -354,7 +359,20 @@ public sealed partial class MainViewModel : ObservableObject
         List<PlaylistInfo> playlists = await _library.GetPlaylistsAsync();
         long? selectedId = SelectedPlaylist?.Id;
         long? selectedNodeId = SelectedNode?.Info.Id;
-        HashSet<long> expandedIds = [.. ExpandedNodes(PlaylistTree).Select(n => n.Info.Id)];
+
+        // Later rebuilds carry the live tree's state across; the first one
+        // has no live tree, so it restores what the last session left.
+        HashSet<long> expandedIds;
+        if (_expansionRestored)
+        {
+            expandedIds = [.. ExpandedNodes(PlaylistTree).Select(n => n.Info.Id)];
+        }
+        else
+        {
+            expandedIds = [.. await _library.GetExpandedPlaylistFoldersAsync()];
+            _expansionRestored = true;
+        }
+
         Playlists.Clear();
         foreach (PlaylistInfo p in playlists)
         {
@@ -364,6 +382,15 @@ public sealed partial class MainViewModel : ObservableObject
         var nodes = playlists.ToDictionary(
             p => p.Id,
             p => new PlaylistNode { Info = p, IsExpanded = expandedIds.Contains(p.Id) });
+
+        // Attached after construction so seeding IsExpanded above does not
+        // write the state straight back. The old nodes are discarded with
+        // their handlers, so nothing accumulates across rebuilds.
+        foreach (PlaylistNode node in nodes.Values.Where(n => n.IsFolder))
+        {
+            node.PropertyChanged += OnPlaylistNodeChanged;
+        }
+
         PlaylistTree.Clear();
         foreach (PlaylistInfo p in playlists)
         {
@@ -1412,6 +1439,15 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         return [.. union];
+    }
+
+    private void OnPlaylistNodeChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(PlaylistNode.IsExpanded))
+        {
+            _ = _library.SetExpandedPlaylistFoldersAsync(
+                [.. ExpandedNodes(PlaylistTree).Select(n => n.Info.Id)]);
+        }
     }
 
     /// <summary>Depth-first walk yielding every expanded node in a subtree.</summary>

@@ -45,6 +45,14 @@ public sealed record ViewSettings
     /// to the registry default; null means no column was ever resized.
     /// </summary>
     public Dictionary<string, double>? ColumnWidths { get; init; }
+
+    /// <summary>
+    /// Ids of the expanded playlist folders. Used only under
+    /// <see cref="ViewSettingsStore.PlaylistTreeScopeKey"/>, which is not a
+    /// view: the ids are rows of this library, so the state cannot live in
+    /// the app-level settings file.
+    /// </summary>
+    public List<long>? ExpandedFolders { get; init; }
 }
 
 /// <summary>
@@ -53,6 +61,12 @@ public sealed record ViewSettings
 /// </summary>
 public sealed class ViewSettingsStore(LibraryDatabase db)
 {
+    /// <summary>
+    /// Reserved scope key holding the playlist tree's expansion state. It is
+    /// never a view, so nothing that writes view settings touches it.
+    /// </summary>
+    public const string PlaylistTreeScopeKey = "tree:playlists";
+
     private static readonly JsonSerializerOptions Options = new()
     {
         Converters = { new JsonStringEnumConverter() },
@@ -88,6 +102,14 @@ public sealed class ViewSettingsStore(LibraryDatabase db)
             ("$k", scopeKey),
             ("$j", JsonSerializer.Serialize(settings, Options)));
     }
+
+    /// <summary>Ids of the playlist folders left expanded; empty when none.</summary>
+    public IReadOnlyList<long> GetExpandedFolders() =>
+        Get(PlaylistTreeScopeKey).ExpandedFolders ?? [];
+
+    /// <summary>Records which playlist folders are expanded.</summary>
+    public void SetExpandedFolders(IEnumerable<long> ids) =>
+        Set(PlaylistTreeScopeKey, new ViewSettings { ExpandedFolders = [.. ids] });
 
     /// <summary>
     /// Drops the saved column layout and widths of every scope, so all views

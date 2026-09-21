@@ -278,6 +278,31 @@ public sealed class ViewSettingsTests : IDisposable
             ("$s", sort))!;
     }
 
+    [Fact]
+    public void ExpandedFoldersRoundTrip()
+    {
+        var store = new ViewSettingsStore(_db);
+
+        Assert.Empty(store.GetExpandedFolders());
+
+        store.SetExpandedFolders([7, 3]);
+
+        Assert.Equal([7L, 3L], store.GetExpandedFolders());
+    }
+
+    [Fact]
+    public void ClearingColumnsLeavesTheExpandedFoldersAlone()
+    {
+        var store = new ViewSettingsStore(_db);
+        store.SetExpandedFolders([7, 3]);
+        store.Set("source:music", new ViewSettings { Columns = ["title"] });
+
+        store.ClearAllColumns();
+
+        Assert.Null(store.Get("source:music").Columns);
+        Assert.Equal([7L, 3L], store.GetExpandedFolders());
+    }
+
     private long InsertTrack(string title, long albumId, int year, int trackNo, long added)
     {
         return (long)_db.Scalar("""

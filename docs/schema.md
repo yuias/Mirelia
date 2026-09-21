@@ -196,6 +196,10 @@ CREATE TABLE view_settings (
 );
 ```
 
+One reserved key is not a view: `tree:playlists` holds the ids of the
+expanded playlist folders. They are rows of this library, so the state cannot
+live in the app-level settings file.
+
 ## Schema v3 additions
 
 ```sql

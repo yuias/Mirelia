@@ -135,6 +135,18 @@ public sealed class LibraryService : IDisposable
             return null;
         });
 
+    /// <summary>Ids of the playlist folders left expanded last session.</summary>
+    public Task<IReadOnlyList<long>> GetExpandedPlaylistFoldersAsync()
+        => RunAsync(() => _viewSettings.GetExpandedFolders());
+
+    /// <summary>Records which playlist folders are expanded.</summary>
+    public Task SetExpandedPlaylistFoldersAsync(IEnumerable<long> ids)
+        => RunAsync<object?>(() =>
+        {
+            _viewSettings.SetExpandedFolders(ids);
+            return null;
+        });
+
     /// <summary>Clears the saved column layout and widths of every view.</summary>
     public Task ClearAllViewColumnsAsync()
         => RunAsync<object?>(() =>
