@@ -31,5 +31,5 @@ mmap_size    = 268435456
 
 | Package | Replaces | Why |
 |---|---|---|
-| `Microsoft.Data.Sqlite` | EF Core | Thin ADO.NET provider, bundled native SQLite (added when M1 starts) |
-| `TagLibSharp` | hand-written tag parsers | Tag read/write for all v1 formats incl. sort tags (added when M1 starts) |
+| `Microsoft.Data.Sqlite` | EF Core | Thin ADO.NET provider, bundled native SQLite |
+| `TagLibSharp` | hand-written tag parsers | Tag read/write for all v1 formats incl. sort tags |

@@ -1,6 +1,6 @@
 # Sync protocol
 
-Status: local folder sync **shipped in M7**; MTP is **built in M8** and has now
+Status: local folder sync **ships**; MTP is **built** and has now
 been run against a physical device, though the checklist below is not finished;
 the network transport is designed and not built.
 This file records all three, plus the decisions frozen at kickoff so earlier
@@ -14,9 +14,9 @@ layer differs.
 
 | Transport | Kind | Destination | Status |
 |---|---|---|---|
-| Local folder | `folder` | A drive letter or UNC path — mounted SD card, USB stick, network share | M7 |
-| MTP | `mtp` | An Android phone or DAP connected over USB, reached through WPD | M8, partly verified |
-| Network | `network` | OpenSubsonic HTTP server, reached over WiFi | M8+ |
+| Local folder | `folder` | A drive letter or UNC path — mounted SD card, USB stick, network share | Ships |
+| MTP | `mtp` | An Android phone or DAP connected over USB, reached through WPD | Built, partly verified |
+| Network | `network` | OpenSubsonic HTTP server, reached over WiFi | Not built |
 
 Writes go through a single `ISyncFileSink` abstraction (`Stat`, `WriteFile`,
 `WriteBytes`, `Delete`, `FreeSpaceBytes`). Local folder sync
@@ -31,7 +31,7 @@ both mobile platforms give immediate usability with offline caching solved,
 and validate the protocol layer before any first-party mobile code is
 written.
 
-It was deferred out of M7 (user decision, 2026-08-13) because the mobile app
+It was deferred (user decision, 2026-08-13) because the mobile app
 specification is not settled, which leaves MTP the higher-value next step:
 it serves the same "get music onto the phone" need against a spec that is
 already fixed.
@@ -65,12 +65,12 @@ right for a plain card whose player is unknown.
 DeviceProfile { List<string>? SupportedCodecs; bool SkipLossless; }
 ```
 
-M7 returns `AsIs` or `Skip` only:
+The planner returns `AsIs` or `Skip` only:
 
 - a codec outside `SupportedCodecs` is skipped;
 - lossless is skipped when `SkipLossless` is set.
 
-Both become `Transcode` when the pipeline lands (M8+), and nothing else in
+Both become `Transcode` when the pipeline lands, and nothing else in
 sync changes — the planner already routes on `Kind`. The kickoff's third
 input, "the track came from a plugin decoder, so always transcode", has no
 schema field yet; it arrives with the plugin decoder work.
@@ -84,7 +84,7 @@ the device up on the next run rather than leaving unplayable files behind.
 A sync target is a persisted, named profile — not a single set of global
 preferences. Users routinely keep more than one (a DAP, a phone's SD card, a
 car USB stick) with different scopes and layouts, and the profile is also
-where the M8+ transcode settings attach without disturbing anything else.
+where the transcode settings will attach without disturbing anything else.
 
 Storage is `sync_target`, `sync_target_scope` and `sync_target_file`; see
 `schema.md` (v4) for the DDL. The per-target configuration is JSON:
@@ -101,7 +101,7 @@ Storage is `sync_target`, `sync_target_scope` and `sync_target_file`; see
 | `playlistFolders` | `flatten` \| `mirror` | `flatten` |
 | `layoutTemplate` | Destination path template | see below |
 | `orphanPolicy` | `delete` \| `keep` | `delete` |
-| `delivery` | Empty in M7; the transcode settings slot | `{}` |
+| `delivery` | Empty today; the transcode settings slot | `{}` |
 
 ## Local folder sync
 
@@ -250,10 +250,10 @@ walk on every run.
 their total size, files to delete, playlists to write, and free space at the
 destination. Deletion is in play, so a dry run is not optional.
 
-### Deferred to M8+
+### Deferred
 
 The transcode pipeline; see the delivery policy above. Everything else in
-local folder sync shipped in M7.
+local folder sync ships.
 
 ## MTP transport
 

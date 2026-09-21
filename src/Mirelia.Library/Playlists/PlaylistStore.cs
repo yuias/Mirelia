@@ -17,7 +17,7 @@ public enum PlaylistKind
     /// <summary>Rule-based; membership comes from evaluating the DSL.</summary>
     Smart,
 
-    /// <summary>Grouping node in the playlist tree (UI lands post-M4).</summary>
+    /// <summary>Grouping node in the playlist tree.</summary>
     Folder,
 }
 

@@ -316,7 +316,7 @@ impl Engine {
                 };
                 if fmt != session.format {
                     return Err(EngineError::Unsupported(
-                        "gapless across format changes lands in M5; reload as CURRENT instead"
+                        "gapless across format changes is not supported; reload as CURRENT instead"
                             .into(),
                     ));
                 }

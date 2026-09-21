@@ -447,8 +447,8 @@ public sealed class AudioPlayerService : IDisposable
         }
         catch (AudioEngineException)
         {
-            // Format change: the engine refuses gapless across formats until
-            // M5. QueueEmpty will arrive at EOF and we reload as Current.
+            // Format change: the engine refuses a gapless Next across
+            // formats. QueueEmpty arrives at EOF and we reload as Current.
         }
     }
 

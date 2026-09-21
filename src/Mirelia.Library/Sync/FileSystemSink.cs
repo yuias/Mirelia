@@ -3,7 +3,7 @@ namespace Mirelia.Library.Sync;
 /// <summary>
 /// <see cref="ISyncFileSink"/> over an ordinary mounted path: SD card reader,
 /// USB stick, UNC share. Drive letters and UNC only — MTP devices have
-/// neither and are handled separately (M8+).
+/// neither and are handled by <c>Mirelia.Sync.Mtp</c> instead.
 /// </summary>
 public sealed class FileSystemSink : ISyncFileSink
 {

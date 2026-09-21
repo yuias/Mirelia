@@ -38,4 +38,4 @@ Rust + Tauri was the main alternative and was rejected.
 |---|---|---|
 | `Avalonia` 12.x | WPF / Tauri webview | Cross-platform Skia UI, see above |
 | `Avalonia.Desktop`, `Avalonia.Themes.Fluent`, `Avalonia.Diagnostics` | — | Standard Avalonia app companions |
-| `Avalonia.Controls.TreeDataGrid` | hand-rolled virtualizing grid | Purpose-built virtualized grid (added when M3 starts; listed here because the stack decision depends on it) |
+| `Avalonia.Controls.TreeDataGrid` | hand-rolled virtualizing grid | Purpose-built virtualized grid (added with the track grid; listed here because the stack decision depends on it) |

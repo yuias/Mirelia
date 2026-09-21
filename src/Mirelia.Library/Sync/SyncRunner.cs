@@ -25,8 +25,8 @@ public sealed record SyncResult(
 
 /// <summary>
 /// Executes a <see cref="SyncPlan"/>. Everything it needs was decided by
-/// <see cref="SyncPlanner"/>; when the transcode pipeline lands (M8+) only
-/// the copy step changes.
+/// <see cref="SyncPlanner"/>; when the transcode pipeline lands, only the
+/// copy step changes.
 /// </summary>
 public sealed class SyncRunner(SyncTargetStore targets)
 {

@@ -10,7 +10,7 @@ public readonly record struct SinkEntry(long SizeBytes, long MTimeUnix);
 /// relative to that root and use <c>/</c> separators.
 /// </summary>
 /// <remarks>
-/// The abstraction exists so MTP destinations (M8+) can be a second
+/// The abstraction exists so MTP destinations can be a second
 /// implementation: they are reachable only through the WPD COM API, never
 /// through <see cref="System.IO"/>, and cannot preserve modification times.
 /// </remarks>

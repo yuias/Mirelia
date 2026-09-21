@@ -4,7 +4,7 @@ The DSL text stored in `playlist.query_text` is the **canonical persisted
 form** of a smart playlist. The GUI condition builder and the advanced text
 editor are two views of one thing and must round-trip through it.
 
-Status: grammar frozen at kickoff; field vocabulary grows during M1/M4.
+Status: grammar frozen at kickoff; the field vocabulary still grows.
 Implementation lives in `src/Mirelia.Query`.
 
 ## v1 implementation decisions

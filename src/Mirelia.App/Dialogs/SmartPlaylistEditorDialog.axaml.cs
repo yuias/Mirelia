@@ -501,7 +501,7 @@ public partial class SmartPlaylistEditorDialog : Window
         return true;
     }
 
-    // ---- live match count (kickoff M6) ----------------------------------
+    // ---- live match count ------------------------------------------------
 
     private void ScheduleCount()
     {

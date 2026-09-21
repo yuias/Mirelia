@@ -34,15 +34,15 @@ the same `DllImport` resolver. Nothing of it exists yet.
 
 | Crate | Replaces | Why |
 |---|---|---|
-| `symphonia` 0.6 (M2 at 0.5, migrated M6.5) | FFmpeg / OS decoders | Pure-Rust decode for the whole v1 format set with gapless trimming and sample-accurate seek. Known gap: AAC is LC-only — HE-AAC (SBR) files fail to decode until a plugin or OS decoder covers them (0.6 detects SBR and rejects the stream) |
-| `windows` 0.62 (M2) | hand-written WASAPI FFI | Official Microsoft bindings for WASAPI/MMDevice; shared mode + `AUTOCONVERTPCM` now, `IAudioClient3` exclusive in M5 |
-| `ebur128` 0.1 (M5) | hand-written R128 meter | EBU R128 integrated loudness + true peak for ReplayGain 2; a faithful libebur128 port beats re-deriving K-weighting and gating by hand |
-| `coreaudio-sys` (planned) | — | macOS output backend, scheduled after the Windows milestones |
+| `symphonia` 0.6 (adopted at 0.5, migrated 2026-08-11) | FFmpeg / OS decoders | Pure-Rust decode for the whole v1 format set with gapless trimming and sample-accurate seek. Known gap: AAC is LC-only — HE-AAC (SBR) files fail to decode until a plugin or OS decoder covers them (0.6 detects SBR and rejects the stream) |
+| `windows` 0.62 | hand-written WASAPI FFI | Official Microsoft bindings for WASAPI/MMDevice; shared mode + `AUTOCONVERTPCM`, and `IAudioClient3` for exclusive mode |
+| `ebur128` 0.1 | hand-written R128 meter | EBU R128 integrated loudness + true peak for ReplayGain 2; a faithful libebur128 port beats re-deriving K-weighting and gating by hand |
+| `coreaudio-sys` (planned) | — | macOS output backend, scheduled after the Windows one |
 
-## Upgrade to symphonia 0.6 — done (M6.5, 2026-08-11)
+## Upgrade to symphonia 0.6 — done 2026-08-11
 
-The 0.5 pin was deliberate but temporary; the migration landed in M6.5,
-confined to `mirelia-decode` as planned. Re-verification outcomes:
+The 0.5 pin was deliberate but temporary; the migration landed confined to
+`mirelia-decode` as planned. Re-verification outcomes:
 
 - **Gapless trimming:** moved from `FormatOptions::enable_gapless` (0.5)
   to `AudioDecoderOptions::gapless` (0.6) — the decoder now trims
@@ -58,4 +58,4 @@ confined to `mirelia-decode` as planned. Re-verification outcomes:
 - **Decoded output vs 0.5:** bit-identical on the lossless fixture set.
 - **HE-AAC (SBR):** still not decoded in 0.6 — the AAC codec detects SBR
   and rejects the stream. The LC-only gap stays open until the plugin
-  decoder work (M8+).
+  decoder loader exists.

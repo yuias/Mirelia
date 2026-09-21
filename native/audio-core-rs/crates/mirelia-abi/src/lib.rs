@@ -5,9 +5,9 @@
 //! contract; every exported symbol, struct layout, and error code here must
 //! match it exactly. On disagreement, the header wins.
 //!
-//! M2 status: device enumeration, shared-mode playback, transport, seek,
-//! volume, probe. Exclusive mode, loudness scan, and plugin registration
-//! return `KN_ERR_UNSUPPORTED` until their milestones.
+//! Implemented: device enumeration, shared and exclusive playback,
+//! transport, seek, volume, probe, loudness scan. Plugin registration
+//! returns `KN_ERR_UNSUPPORTED`; it is post-v1.
 
 use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char};
@@ -361,7 +361,7 @@ pub unsafe extern "C" fn kn_devices_enumerate(
             native_channels: d.native_channels,
             supported_rate_mask: 0,
             supported_format_mask: 1 << 3, // KN_FMT_F32 via shared-mode mixer
-            supports_exclusive: 0,         // M5
+            supports_exclusive: 0,         // Not probed yet; nothing reads it
             min_period_frames: 0,
             default_period_frames: 0,
         });
@@ -390,7 +390,7 @@ pub unsafe extern "C" fn kn_devices_free(e: *mut KnEngine) {
 
 // ---- device open/close -------------------------------------------------
 
-/// Implements `kn_engine_open_device`. Exclusive mode is M5.
+/// Implements `kn_engine_open_device`.
 ///
 /// # Safety
 ///
@@ -680,8 +680,8 @@ pub unsafe extern "C" fn kn_probe(
             channels: info.channels,
             bit_depth: info.bit_depth.unwrap_or(0),
             total_frames: info.total_frames.map(|f| f as i64).unwrap_or(-1),
-            // Symphonia consumes delay/padding internally when trimming;
-            // explicit values are surfaced in M5 for the conformance suite.
+            // Symphonia consumes delay/padding internally when trimming, so
+            // nothing managed needs the explicit values yet.
             encoder_delay: 0,
             encoder_padding: 0,
             bitrate_kbps: info.bitrate_kbps.unwrap_or(0),

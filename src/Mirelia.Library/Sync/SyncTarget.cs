@@ -68,7 +68,7 @@ public enum ReservedCharMode
 
 /// <summary>
 /// Per-target settings. Persisted as the JSON in <c>sync_target.config_json</c>
-/// so new options (the M8+ transcode settings above all) do not need a
+/// so new options (the transcode settings above all) do not need a
 /// migration.
 /// </summary>
 public sealed record SyncTargetConfig
@@ -138,7 +138,7 @@ public sealed record SyncTargetConfig
 
     /// <summary>
     /// What the device can play. Null accepts everything, which is right for
-    /// a plain card whose player is unknown. The M8+ transcode settings
+    /// a plain card whose player is unknown. The transcode settings will
     /// attach here.
     /// </summary>
     public DeviceProfile? Device { get; init; }

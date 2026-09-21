@@ -22,7 +22,7 @@ public sealed record SourceItem(string Name, SourceKind Kind)
     public override string ToString() => Name;
 }
 
-/// <summary>The browsable source kinds of M3.</summary>
+/// <summary>The kinds of source the sources tree can browse.</summary>
 public enum SourceKind
 {
     /// <summary>The whole library.</summary>

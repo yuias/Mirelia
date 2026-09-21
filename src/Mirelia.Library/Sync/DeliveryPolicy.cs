@@ -6,7 +6,7 @@ public enum DeliveryKind
     /// <summary>Copy the file unchanged.</summary>
     AsIs,
 
-    /// <summary>Re-encode before copying. Not implemented until M8+.</summary>
+    /// <summary>Re-encode before copying. Not implemented.</summary>
     Transcode,
 
     /// <summary>Leave the track behind.</summary>
@@ -33,7 +33,7 @@ public readonly record struct DeliveryDecision(
     /// <summary>Leave behind, for the stated reason.</summary>
     public static DeliveryDecision Skip(string reason) => new(DeliveryKind.Skip, null, null, reason);
 
-    /// <summary>Re-encode. Reachable only once the M8+ pipeline exists.</summary>
+    /// <summary>Re-encode. Reachable only once the transcode pipeline exists.</summary>
     public static DeliveryDecision Transcode(string codec, int bitrateKbps, string reason) =>
         new(DeliveryKind.Transcode, codec, bitrateKbps, reason);
 }
@@ -64,10 +64,10 @@ public sealed record DeviceProfile
 /// made, so new formats never have to touch the sync code.
 /// </summary>
 /// <remarks>
-/// M7 returns <see cref="DeliveryKind.AsIs"/> or
-/// <see cref="DeliveryKind.Skip"/> only. When the transcode pipeline lands
-/// (M8+), the two <c>Skip</c> branches below become <c>Transcode</c> and
-/// nothing else in sync has to change.
+/// Today this returns <see cref="DeliveryKind.AsIs"/> or
+/// <see cref="DeliveryKind.Skip"/> only. When the transcode pipeline lands,
+/// the two <c>Skip</c> branches below become <c>Transcode</c> and nothing
+/// else in sync has to change.
 /// </remarks>
 public static class DeliveryPolicy
 {

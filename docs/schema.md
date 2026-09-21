@@ -212,7 +212,7 @@ ALTER TABLE track ADD COLUMN date_key INTEGER;
 -- A named sync destination. 'folder' targets write to a mounted path;
 -- 'network' targets serve over HTTP. config_json holds the per-kind
 -- settings (roots, path style, layout template, orphan policy, and the
--- delivery/transcode slot left empty until M8).
+-- delivery/transcode slot, left empty until that pipeline exists).
 CREATE TABLE sync_target (
     id            INTEGER PRIMARY KEY,
     name          TEXT NOT NULL UNIQUE,
@@ -290,6 +290,6 @@ falls back to its `Sort` preset.
 | 1 | 2026-08-08 | Initial schema, applied by `LibraryDatabase.Open` |
 | 2 | 2026-08-08 | `view_settings` table for per-view columns/sort |
 | 3 | 2026-08-08 | `track.date_key` normalized date sort key, backfilled |
-| 4 | 2026-08-13 | `sync_target`, `sync_target_scope`, `sync_target_file` for M7 sync |
+| 4 | 2026-08-13 | `sync_target`, `sync_target_scope`, `sync_target_file` for sync |
 | 5 | 2026-08-15 | `ix_playlist_entry_track`, so `playlist =` references stop scanning |
 | 6 | 2026-08-17 | `sort_order` for user-defined sort orders; `view_settings.json` gains `CustomSort` |

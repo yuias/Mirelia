@@ -7,10 +7,10 @@
 ## Context
 
 The kickoff planned around `Avalonia.Controls.TreeDataGrid` as "the one
-control we depend on heavily". Discovered during M3: **TreeDataGrid 12.x
-requires a commercial AvaloniaUI license** (`AvaloniaUI.Licensing`, build
-fails with AVLIC0001 without a key). The last MIT versions target
-Avalonia 11.x only.
+control we depend on heavily". Discovered while building the track grid:
+**TreeDataGrid 12.x requires a commercial AvaloniaUI license**
+(`AvaloniaUI.Licensing`, build fails with AVLIC0001 without a key). The last
+MIT versions target Avalonia 11.x only.
 
 ## Options considered
 
@@ -40,7 +40,7 @@ Notes that make this workable:
 - The virtualization design lives in `VirtualTrackList`, not in the grid
   control; swapping grids touched only the XAML and the source property.
 - DataGrid's `Sorting` hook can be intercepted, which is exactly what §7.2
-  needs (column sorting must go through the database) — landed with M6:
+  needs (column sorting must go through the database):
   the handler marks the event `Handled` (suppressing the collection view's
   in-memory sort) and re-queries SQL with the column's ORDER BY mapping.
 - Grouping-by-album (§7.2: group headers as ordinary rows with a sentinel)
