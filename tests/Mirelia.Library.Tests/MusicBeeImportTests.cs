@@ -427,6 +427,57 @@ public sealed class MusicBeeImportTests : IDisposable
     }
 
     [Fact]
+    public void MergingFollowsThePlaylistThroughARenameInMirelia()
+    {
+        WriteExport([Track(1, "fixture.mp3")], [Playlist("PL01", "Favourites", trackIds: [1])]);
+        Import();
+        var store = new PlaylistStore(_db);
+        store.Rename(store.List().Single(p => p.Name == "Favourites").Id, "My Favourites");
+
+        MusicBeeImportReport report = Import(new MusicBeeImportOptions { Merge = true });
+
+        // MusicBee owns the name under --merge: the point of following the id
+        // is that the rename does not produce a second copy.
+        Assert.Equal(1, report.PlaylistsReplaced);
+        Assert.Single(store.List(), p => p.Name == "Favourites");
+        Assert.DoesNotContain(store.List(), p => p.Name == "My Favourites");
+    }
+
+    [Fact]
+    public void MergingBackfillsTheIdOnALibraryImportedBeforeItWasStored()
+    {
+        WriteExport([Track(1, "fixture.mp3")], [Playlist("PL01", "Favourites", trackIds: [1])]);
+        Import();
+
+        // What a pre-v7 import left behind: the right playlist, no id.
+        _db.Execute("UPDATE playlist SET mb_persistent_id = NULL");
+
+        MusicBeeImportReport report = Import(new MusicBeeImportOptions { Merge = true });
+
+        Assert.Equal(1, report.PlaylistsReplaced);
+        PlaylistInfo playlist = Assert.Single(new PlaylistStore(_db).List());
+        Assert.Equal("PL01", _db.Scalar(
+            "SELECT mb_persistent_id FROM playlist WHERE id = $id", ("$id", playlist.Id)));
+    }
+
+    [Fact]
+    public void MergingDoesNotClaimAHandmadePlaylistThatSharesTheName()
+    {
+        WriteExport([Track(1, "fixture.mp3")], [Playlist("PL01", "Favourites", trackIds: [1])]);
+        Import();
+        var store = new PlaylistStore(_db);
+        store.Rename(store.List().Single(p => p.Name == "Favourites").Id, "Imported");
+        store.CreateStatic("Favourites");
+
+        Import(new MusicBeeImportOptions { Merge = true });
+
+        // The id points at the renamed import, so the hand-made list of the
+        // same name is left alone rather than replaced.
+        Assert.Equal(2, store.List().Count);
+        Assert.Single(store.List(), p => p.Name == "Favourites");
+    }
+
+    [Fact]
     public void MergingKeepsPlaylistsThisRunDoesNotKnowAbout()
     {
         var store = new PlaylistStore(_db);

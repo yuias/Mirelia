@@ -68,6 +68,39 @@ public sealed class PlaylistStore(LibraryDatabase db)
     public PlaylistInfo? FindByName(string name)
         => List().FirstOrDefault(p => p.Name == name);
 
+    /// <summary>
+    /// Finds the playlist a previous MusicBee import created for
+    /// <paramref name="persistentId"/>, or null. The id survives a rename in
+    /// either application, which the name does not.
+    /// </summary>
+    public PlaylistInfo? FindByMusicBeeId(string persistentId)
+    {
+        if (db.Scalar(
+                """
+                SELECT id FROM playlist
+                WHERE mb_persistent_id = $p
+                ORDER BY id
+                LIMIT 1
+                """,
+                ("$p", persistentId)) is not long id)
+        {
+            return null;
+        }
+
+        return List().FirstOrDefault(p => p.Id == id);
+    }
+
+    /// <summary>
+    /// Records which MusicBee playlist this row came from. Called on every
+    /// import path, including the one that matched by name, so a library
+    /// imported before the id was stored is backfilled on its next run.
+    /// </summary>
+    public void SetMusicBeeId(long id, string persistentId)
+        => db.Execute(
+            "UPDATE playlist SET mb_persistent_id = $p WHERE id = $id",
+            ("$p", persistentId),
+            ("$id", id));
+
     /// <summary>Creates an empty static playlist.</summary>
     public PlaylistInfo CreateStatic(string name)
         => Insert(name, PlaylistKind.Static, queryText: null);

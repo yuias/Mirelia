@@ -8,7 +8,24 @@ namespace Mirelia.Library.Database;
 internal static class Schema
 {
     /// <summary>Current schema version written to <c>meta['schema_version']</c>.</summary>
-    internal const int CurrentVersion = 6;
+    internal const int CurrentVersion = 7;
+
+    /// <summary>
+    /// Schema v7: MusicBee's <c>Playlist Persistent ID</c> on the playlist row.
+    /// Re-importing matched the previous run by name, so a playlist renamed in
+    /// Mirelia came back as a second copy and a hand-made playlist that
+    /// happened to share a name was replaced.
+    ///
+    /// The index is deliberately not unique. Two MusicBee libraries imported
+    /// into one Mirelia library could reuse an id, and a unique index would
+    /// turn that into an import that simply fails with nothing the user can
+    /// do; matching one of the two instead is the milder wrong answer.
+    /// </summary>
+    internal const string V7 = """
+        ALTER TABLE playlist ADD COLUMN mb_persistent_id TEXT;
+        CREATE INDEX ix_playlist_mb_persistent_id
+            ON playlist(mb_persistent_id) WHERE mb_persistent_id IS NOT NULL;
+        """;
 
     /// <summary>
     /// Schema v6: user-defined sort orders. The built-in ones stay in code —

@@ -26,7 +26,7 @@ mirelia-cli import musicbee "<MusicBee library folder>"
 |---|---|
 | `--no-scan` | Skip the scan; match against tracks already in the library |
 | `--no-playlists` | Tracks and their user state only |
-| `--merge` | Replace same-named playlists instead of importing a second copy |
+| `--merge` | Replace what an earlier run of the same playlist created, instead of importing a second copy |
 
 The import owns the whole path by default: it scans the roots it finds in the
 export, then writes the export's user state over them.
@@ -180,20 +180,26 @@ across are the export's own, not the scan's clock.
 ## Running it again
 
 Tracks are safe either way: they match by path and are updated in place.
-Playlists are not, because nothing ties a playlist row back to the run that
-made it, so the default is to keep both — the second run's `Genres` arrives as
-`Genres (2)`, its `Playlists/Mixes` beside the first `Mixes`.
+Playlists without `--merge` are kept side by side — the second run's `Genres`
+arrives as `Genres (2)`, its `Playlists/Mixes` beside the first `Mixes`.
 
-`--merge` reads a name already in the library as *this same playlist, from an
-earlier run*: the old row is deleted and the incoming one takes the name. It
-is by name and nothing else, so a hand-made playlist that happens to share a
-name with a MusicBee one is replaced too. Playlists this run knows nothing
-about are left alone. Deleting a folder re-parents its children to the
-folder's parent, so a hand-made playlist filed under a MusicBee folder
-resurfaces one level up.
+`--merge` replaces what an earlier run of the same MusicBee playlist left
+behind. Each imported playlist carries MusicBee's `Playlist Persistent ID` in
+`playlist.mb_persistent_id` (schema v7), and that is matched first, so:
 
-Identity that survives without relying on names would mean storing MusicBee's
-`Playlist Persistent ID` on the playlist row — a schema change, deferred.
+- Renaming the playlist in Mirelia no longer produces a second copy on the
+  next import. MusicBee owns the name under `--merge`, so the rename is lost.
+- Renaming it in MusicBee updates the existing row rather than adding one.
+- A hand-made playlist that happens to share a name with a MusicBee one is
+  left alone, and the incoming playlist takes a unique name instead.
+
+The name is still the fallback, which is what recognizes a library imported
+before the id was stored; that run replaces the old row by name and writes the
+id, so every later run matches on the id.
+
+Playlists this run knows nothing about are left alone. Deleting a folder
+re-parents its children to the folder's parent, so a hand-made playlist filed
+under a MusicBee folder resurfaces one level up.
 
 Re-run with `--merge` over that library: every playlist replaced, none
 renamed, and every smart playlist still pointing at the plain names.

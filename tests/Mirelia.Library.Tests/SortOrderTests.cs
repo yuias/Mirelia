@@ -24,7 +24,7 @@ public sealed class SortOrderTests : IDisposable
     [Fact]
     public void FreshDatabaseHasTheSortOrderTable()
     {
-        Assert.Equal("6", _db.Scalar("SELECT value FROM meta WHERE key = 'schema_version'"));
+        Assert.Equal("7", _db.Scalar("SELECT value FROM meta WHERE key = 'schema_version'"));
         Assert.Equal(1L, _db.Scalar(
             "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'sort_order'"));
     }

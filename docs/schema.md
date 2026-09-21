@@ -145,7 +145,11 @@ CREATE TABLE playlist (
     query_order   TEXT,
     live_update   INTEGER NOT NULL DEFAULT 1,
     created_unix  INTEGER NOT NULL,
-    modified_unix INTEGER NOT NULL
+    modified_unix INTEGER NOT NULL,
+    -- v7: MusicBee's Playlist Persistent ID when this row came from an
+    -- import, so --merge follows the playlist through a rename on either
+    -- side. Null for anything made here.
+    mb_persistent_id TEXT
 );
 
 CREATE TABLE playlist_entry (
@@ -287,6 +291,26 @@ live in `SortPresets` instead. `view_settings.json` gains `CustomSort`, the id
 of a row above; when it is null — or names a row since deleted — the view
 falls back to its `Sort` preset.
 
+## Schema v7 additions
+
+```sql
+-- MusicBee's Playlist Persistent ID on rows an import created, so --merge
+-- can follow a playlist through a rename on either side instead of matching
+-- on the name.
+ALTER TABLE playlist ADD COLUMN mb_persistent_id TEXT;
+CREATE INDEX ix_playlist_mb_persistent_id
+    ON playlist(mb_persistent_id) WHERE mb_persistent_id IS NOT NULL;
+```
+
+The index is deliberately **not** unique. Two MusicBee libraries imported into
+one Mirelia library could reuse an id, and a unique index would turn that into
+an import that fails outright with nothing the user can do about it; matching
+one of the two is the milder wrong answer.
+
+An import run before v7 left no id behind. The first `--merge` after the
+migration therefore still matches by name, and writes the id while it does, so
+every later run matches on the id. See `docs/musicbee-import.md`.
+
 ## Migration log
 
 | Version | Date | Change |
@@ -297,3 +321,4 @@ falls back to its `Sort` preset.
 | 4 | 2026-08-13 | `sync_target`, `sync_target_scope`, `sync_target_file` for sync |
 | 5 | 2026-08-15 | `ix_playlist_entry_track`, so `playlist =` references stop scanning |
 | 6 | 2026-08-17 | `sort_order` for user-defined sort orders; `view_settings.json` gains `CustomSort` |
+| 7 | 2026-09-21 | `playlist.mb_persistent_id`, so re-importing a MusicBee library follows its playlists through a rename instead of matching by name |

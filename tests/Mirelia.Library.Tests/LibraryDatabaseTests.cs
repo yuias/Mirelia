@@ -81,6 +81,33 @@ public sealed class LibraryDatabaseTests : IDisposable
         Assert.Contains($"v{future}", problem);
     }
 
+    [Fact]
+    public void ReopeningAV6LibraryAddsThePersistentIdColumn()
+    {
+        string path = TempPath();
+        using (LibraryDatabase db = LibraryDatabase.Open(path))
+        {
+            // Wind the database back to what a v6 build left behind, so the
+            // v7 step runs against a real library rather than an empty file.
+            db.Execute("DROP INDEX ix_playlist_mb_persistent_id");
+            db.Execute("ALTER TABLE playlist DROP COLUMN mb_persistent_id");
+            db.Execute("UPDATE meta SET value = '6' WHERE key = 'schema_version'");
+        }
+
+        using (LibraryDatabase db = LibraryDatabase.Open(path))
+        {
+            Assert.Equal("7", db.Scalar("SELECT value FROM meta WHERE key = 'schema_version'"));
+            Assert.Equal(1L, db.Scalar("""
+                SELECT count(*) FROM pragma_table_info('playlist')
+                WHERE name = 'mb_persistent_id'
+                """));
+            Assert.Equal(1L, db.Scalar("""
+                SELECT count(*) FROM sqlite_master
+                WHERE type = 'index' AND name = 'ix_playlist_mb_persistent_id'
+                """));
+        }
+    }
+
     private string TempPath()
     {
         string path = Path.Combine(Path.GetTempPath(), $"mirelia-open-{Guid.NewGuid():N}.db");

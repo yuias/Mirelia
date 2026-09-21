@@ -312,6 +312,14 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
     {
         /// <summary>Mirelia playlist once created.</summary>
         public PlaylistInfo? Created { get; set; }
+
+        /// <summary>
+        /// What an earlier run of this same MusicBee playlist left behind,
+        /// which merging replaces. Resolved during planning so the name it
+        /// frees is available to the name allocator, and so the lookup cannot
+        /// see playlists this run has already created.
+        /// </summary>
+        public PlaylistInfo? Previous { get; init; }
     }
 
     private (int Folders, int Static, int Smart, int Snapshots, int Replaced) ImportPlaylists(
@@ -344,10 +352,9 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
             progress?.Report(new MusicBeeImportProgress(
                 "Creating playlists", done++, planned.Count));
 
-            // Merging takes a name already in the library to be this same
-            // playlist from an earlier run, and lets the new one have it.
-            // Without merging, Plan has already made the name unique.
-            if (merge && store.FindByName(item.Name) is { } previous)
+            // Plan already worked out what this replaces and reserved the
+            // name accordingly.
+            if (item.Previous is { } previous)
             {
                 store.Delete(previous.Id);
                 replaced++;
@@ -356,6 +363,7 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
             if (item.Source.IsFolder)
             {
                 item.Created = store.CreateFolder(item.Name);
+                store.SetMusicBeeId(item.Created.Id, item.Source.PersistentId);
                 folders++;
                 continue;
             }
@@ -385,6 +393,7 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
             }
 
             item.Created = store.CreateStatic(item.Name);
+            store.SetMusicBeeId(item.Created.Id, item.Source.PersistentId);
             long[] members = [.. item.Source.TrackIds
                 .Select(id => trackIds.TryGetValue(id, out string? path) ? path : null)
                 .OfType<string>()
@@ -410,7 +419,7 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
 
         if (replaced > 0)
         {
-            notes.Add($"{replaced} existing playlists were replaced by name (--merge).");
+            notes.Add($"{replaced} existing playlists were replaced (--merge).");
         }
 
         return (folders, statics, smart, snapshots, replaced);
@@ -422,6 +431,7 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
         try
         {
             item.Created = store.CreateSmart(item.Name, DslPrinter.Print(query));
+            store.SetMusicBeeId(item.Created.Id, item.Source.PersistentId);
             return true;
         }
         catch (Exception ex) when (ex is QueryParseException
@@ -536,12 +546,34 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
         MusicBeeLibrary library, Dictionary<string, MusicBeeAutoPlaylist> rules, bool merge)
     {
         var byId = library.Playlists.ToDictionary(p => p.PersistentId, StringComparer.Ordinal);
+        var store = new PlaylistStore(db);
 
-        // Merging wants the natural names, clash with the library or not —
-        // the clash is the point. Only names this run itself hands out twice
-        // still have to be made unique.
+        // What each source replaces, resolved before any name is handed out.
+        // MusicBee's id wins because it survives a rename on either side; the
+        // natural name is the fallback that recognizes a library imported
+        // before the id was stored.
+        var previous = new Dictionary<string, PlaylistInfo>(StringComparer.Ordinal);
+        if (merge)
+        {
+            var claimed = new HashSet<long>();
+            foreach (MusicBeePlaylist source in library.Playlists)
+            {
+                PlaylistInfo? match = store.FindByMusicBeeId(source.PersistentId)
+                    ?? store.FindByName(source.Name);
+                if (match is not null && claimed.Add(match.Id))
+                {
+                    previous[source.PersistentId] = match;
+                }
+            }
+        }
+
+        // Merging lets a replaced playlist's name be reused — that is the
+        // point — but a playlist this run will not touch keeps its name, so a
+        // hand-made list is never quietly taken over.
         var used = new HashSet<string>(
-            merge ? [] : new PlaylistStore(db).List().Select(p => p.Name),
+            merge
+                ? store.List().Select(p => p.Name).Except(previous.Values.Select(p => p.Name))
+                : store.List().Select(p => p.Name),
             StringComparer.OrdinalIgnoreCase);
 
         var planned = new List<Planned>(library.Playlists.Count);
@@ -552,7 +584,10 @@ public sealed class MusicBeeImporter(LibraryDatabase db)
                 source,
                 reference,
                 UniqueName(source.Name, reference, used),
-                rules.GetValueOrDefault(reference)));
+                rules.GetValueOrDefault(reference))
+            {
+                Previous = previous.GetValueOrDefault(source.PersistentId),
+            });
         }
 
         return planned;
