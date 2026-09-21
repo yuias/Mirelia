@@ -17,6 +17,11 @@
             <ComboBox x:Name="DeviceBox" HorizontalAlignment="Stretch" />
             <CheckBox x:Name="ExclusiveCheck"
                       Content="Exclusive mode (bit-perfect, blocks other apps)" />
+            <!-- Shown when the backend enumerated nothing, which on macOS is
+                 every run: there is no output backend there yet. -->
+            <TextBlock x:Name="NoDeviceNote" IsVisible="False"
+                       Opacity="0.6" FontSize="12" TextWrapping="Wrap"
+                       Text="No output device was found, so nothing here takes effect. Audio output is implemented on Windows only." />
           </StackPanel>
 
           <TextBlock FontWeight="SemiBold" Text="ReplayGain" />

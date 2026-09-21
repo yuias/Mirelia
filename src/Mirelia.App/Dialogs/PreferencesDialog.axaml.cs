@@ -59,6 +59,13 @@ public partial class PreferencesDialog : Window
             choices.FirstOrDefault(c => c.Id == settings.Current.DeviceId) ?? choices[0];
         ExclusiveCheck.IsChecked = settings.Current.Exclusive;
 
+        // Only the "(System default)" entry means nothing was enumerated, so
+        // say so rather than offering controls that cannot do anything.
+        bool noDevices = choices.Count == 1;
+        NoDeviceNote.IsVisible = noDevices;
+        DeviceBox.IsEnabled = !noDevices;
+        ExclusiveCheck.IsEnabled = !noDevices;
+
         RgBox.ItemsSource = new[] { ReplayGainMode.Off, ReplayGainMode.Track };
         RgBox.SelectedItem = settings.Current.ReplayGain;
 
