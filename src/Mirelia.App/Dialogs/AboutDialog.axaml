@@ -3,7 +3,8 @@
         x:Class="Mirelia.App.Dialogs.AboutDialog"
         Title="About Mirelia"
         Icon="avares://Mirelia.App/Assets/Mirelia-icon-256.png"
-        Width="340" SizeToContent="Height"
+        Width="420" SizeToContent="Height"
+        MaxHeight="600"
         CanResize="False"
         WindowStartupLocation="CenterOwner">
   <StackPanel Margin="24" Spacing="16">
@@ -22,6 +23,24 @@
         <TextBlock x:Name="GitHashText" Opacity="0.5" FontSize="12"
                    FontFamily="Consolas,Menlo,monospace" IsVisible="False" />
       </StackPanel>
+    </StackPanel>
+
+    <TextBlock Text="Mirelia is released under the MIT License."
+               Opacity="0.7" TextWrapping="Wrap" />
+
+    <Expander Header="Third-party notices">
+      <ScrollViewer MaxHeight="280" HorizontalScrollBarVisibility="Disabled">
+        <SelectableTextBlock x:Name="NoticesText"
+                             FontSize="12" TextWrapping="Wrap" />
+      </ScrollViewer>
+    </Expander>
+
+    <StackPanel Spacing="4">
+      <TextBlock Text="Log file" Opacity="0.7" />
+      <!-- Selectable so it can be pasted into a bug report; absent when the
+           log could not be opened. -->
+      <SelectableTextBlock x:Name="LogPathText" FontSize="12"
+                           TextWrapping="Wrap" Opacity="0.5" />
     </StackPanel>
 
     <Button Content="Close" Classes="accent" HorizontalAlignment="Right"

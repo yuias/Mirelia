@@ -139,6 +139,13 @@ if (!File.Exists(nativeSource))
 
 File.Copy(nativeSource, Path.Combine(staging, "audio_core_rs.dll"), overwrite: true);
 
+// The MIT text and the notices the LGPL and MPL components require have to
+// travel with the binaries, not just live in the repository.
+foreach (string doc in (string[])["LICENSE", "THIRD-PARTY-NOTICES.md"])
+{
+    File.Copy(Path.Combine(root, doc), Path.Combine(staging, doc), overwrite: true);
+}
+
 // Debug symbols roughly double the package and help nobody downstream.
 foreach (string pdb in Directory.GetFiles(staging, "*.pdb", SearchOption.AllDirectories))
 {

@@ -8,6 +8,10 @@
 
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
+    <!-- Shown verbatim in the About dialog, so the notices travel with the
+         binary rather than depending on a file next to it. -->
+    <AvaloniaResource Include="..\..\THIRD-PARTY-NOTICES.md"
+                      Link="Assets\THIRD-PARTY-NOTICES.md" />
   </ItemGroup>
 
   <ItemGroup>
