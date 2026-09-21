@@ -92,6 +92,15 @@ foreach (string doc in (string[])["LICENSE", "THIRD-PARTY-NOTICES.md", "README.m
     File.Copy(Path.Combine(root, doc), Path.Combine(staging, doc), overwrite: true);
 }
 
+// The notices file only names the licenses; the LGPL and MPL both want the
+// text itself to travel with the binaries.
+string licenseStaging = Path.Combine(staging, "licenses");
+Directory.CreateDirectory(licenseStaging);
+foreach (string text in Directory.GetFiles(Path.Combine(root, "licenses")))
+{
+    File.Copy(text, Path.Combine(licenseStaging, Path.GetFileName(text)), overwrite: true);
+}
+
 // Debug symbols roughly double the archive and help nobody downstream.
 foreach (string pdb in Directory.GetFiles(staging, "*.pdb", SearchOption.AllDirectories))
 {
