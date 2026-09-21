@@ -1,6 +1,6 @@
 [package]
 name = "mirelia-out-wasapi"
-description = "Mirelia WASAPI output backend, shared mode (exclusive lands in M5)"
+description = "Mirelia WASAPI output backend, shared and exclusive mode"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

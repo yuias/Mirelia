@@ -1,6 +1,6 @@
 [package]
 name = "mirelia-out-coreaudio"
-description = "Mirelia CoreAudio output backend, incl. hog mode (lands in M2/M5)"
+description = "Mirelia CoreAudio output backend, incl. hog mode (not written yet)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

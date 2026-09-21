@@ -5,9 +5,9 @@
  * same binary validates audio-core-rs, audio-core-cpp, or any future
  * implementation. Any backend must pass identically.
  *
- * M0 coverage: symbol presence, version negotiation, lifecycle, argument
- * validation, idle position/event contract. Device, gapless, and RT-thread
- * allocation checks are added milestone by milestone (see kickoff §5.6).
+ * Covered: symbol presence, version negotiation, lifecycle, argument
+ * validation, the idle position/event contract, device open/close, and
+ * probe. Gapless and RT-thread allocation checks are still to be added.
  */
 
 #include <stdio.h>
