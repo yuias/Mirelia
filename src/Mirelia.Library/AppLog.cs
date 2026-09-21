@@ -24,6 +24,8 @@ public static class AppLog
 
     private static string? _path;
 
+    private static int _errorCount;
+
     /// <summary>
     /// The file currently being written, or null until <see cref="Open"/>
     /// succeeds. Exposed so the UI can point a user at it.
@@ -61,6 +63,13 @@ public static class AppLog
         Write("start", startupLine);
     }
 
+    /// <summary>
+    /// How many errors have been recorded. The smoke run reads it, because
+    /// the UI-thread hook marks exceptions handled and they would otherwise
+    /// leave no trace in the exit code.
+    /// </summary>
+    public static int ErrorCount => Volatile.Read(ref _errorCount);
+
     /// <summary>Records an informational line.</summary>
     public static void Info(string message) => Write("info", message);
 
@@ -71,8 +80,11 @@ public static class AppLog
     /// Records an error and, when present, the exception's full text
     /// including its stack trace and any inner exceptions.
     /// </summary>
-    public static void Error(string message, Exception? exception = null) =>
+    public static void Error(string message, Exception? exception = null)
+    {
+        Interlocked.Increment(ref _errorCount);
         Write("error", exception is null ? message : $"{message}{Environment.NewLine}{exception}");
+    }
 
     private static void Write(string level, string message)
     {

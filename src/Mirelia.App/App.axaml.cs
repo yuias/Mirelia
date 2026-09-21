@@ -110,6 +110,15 @@ public class App : Application
             () => viewModel.SelectedLayout = Models.TrackLayouts.Tracks);
         await Task.Delay(TimeSpan.FromSeconds(1));
 
+        // The UI-thread hook marks exceptions handled so a failed click cannot
+        // kill the window; without this the smoke run would exit 0 over a
+        // crash it had swallowed.
+        if (AppLog.ErrorCount > 0)
+        {
+            Console.WriteLine($"smoke: {AppLog.ErrorCount} error(s) logged, see {AppLog.Path}");
+            healthy = false;
+        }
+
         await Dispatcher.UIThread.InvokeAsync(() => desktop.Shutdown(healthy ? 0 : 1));
     }
 
