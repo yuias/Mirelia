@@ -68,7 +68,7 @@ static int NativeSmoke()
         Console.WriteLine($"native-smoke: ok (state={position.State}, host_time_ns={position.HostTimeNs})");
         return 0;
     }
-    catch (Exception ex) when (ex is AudioEngineException or DllNotFoundException)
+    catch (AudioEngineException ex)
     {
         Console.Error.WriteLine($"native-smoke: FAILED: {ex.Message}");
         return 1;
@@ -237,7 +237,7 @@ static int Play(string file, bool exclusive)
             Thread.Sleep(100);
         }
     }
-    catch (Exception ex) when (ex is AudioEngineException or DllNotFoundException)
+    catch (AudioEngineException ex)
     {
         Console.Error.WriteLine($"play: {ex.Message}");
         return 1;

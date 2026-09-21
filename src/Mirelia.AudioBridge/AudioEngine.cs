@@ -16,7 +16,9 @@ public sealed class AudioEngine : IDisposable
     /// <summary>
     /// Creates an engine, negotiating ABI v1 with whichever backend the
     /// resolver loaded. Throws <see cref="AudioEngineException"/> with
-    /// <see cref="KnResult.AbiMismatch"/> if the backend is stale.
+    /// <see cref="KnResult.AbiMismatch"/> if the backend is stale, or with
+    /// <see cref="KnResult.Unsupported"/> if the backend library is missing
+    /// altogether.
     /// </summary>
     public static AudioEngine Create(AudioEngineConfig config = default)
     {
@@ -28,7 +30,25 @@ public sealed class AudioEngine : IDisposable
             AllowResample = config.AllowResample ? 1 : 0,
             DitherToInt = config.DitherToInt ? 1 : 0,
         };
-        KnResult result = NativeMethods.kn_engine_create(in native, out nint handle);
+
+        KnResult result;
+        nint handle;
+        try
+        {
+            result = NativeMethods.kn_engine_create(in native, out handle);
+        }
+        catch (Exception ex) when (ex is DllNotFoundException or BadImageFormatException)
+        {
+            // This is the first call into the backend, so a broken or absent
+            // library surfaces here and nowhere else. Callers already handle
+            // AudioEngineException everywhere; a raw loader exception from a
+            // WinExe is a silent exit instead.
+            throw new AudioEngineException(
+                KnResult.Unsupported,
+                $"The audio backend library could not be loaded. {ex.Message}",
+                ex);
+        }
+
         return result == KnResult.Ok
             ? new AudioEngine(handle)
             : throw new AudioEngineException(result, NativeMethods.LastError(nint.Zero));

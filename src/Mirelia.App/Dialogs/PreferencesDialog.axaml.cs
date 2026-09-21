@@ -49,7 +49,7 @@ public partial class PreferencesDialog : Window
                     $"{device.Name} — {device.NativeRate} Hz, {device.NativeChannels} ch"));
             }
         }
-        catch (Exception ex) when (ex is AudioEngineException or DllNotFoundException)
+        catch (AudioEngineException)
         {
             // No backend: only the default entry is offered.
         }

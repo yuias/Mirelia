@@ -12,6 +12,16 @@ public sealed class AudioEngineException : Exception
         Result = result;
     }
 
+    /// <summary>Creates an exception that wraps a lower-level failure.</summary>
+    /// <param name="result">The native result code the failure maps to.</param>
+    /// <param name="message">The message to surface.</param>
+    /// <param name="inner">The underlying exception.</param>
+    public AudioEngineException(KnResult result, string message, Exception inner)
+        : base(message, inner)
+    {
+        Result = result;
+    }
+
     /// <summary>The native result code of the failed call.</summary>
     public KnResult Result { get; }
 }

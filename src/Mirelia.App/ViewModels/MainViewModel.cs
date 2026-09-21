@@ -698,7 +698,7 @@ public sealed partial class MainViewModel : ObservableObject
                     }
                 }
             }
-            catch (DllNotFoundException)
+            catch (AudioBridge.AudioEngineException)
             {
                 // No backend; scanned stays empty.
             }
