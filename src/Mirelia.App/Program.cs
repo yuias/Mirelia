@@ -1,5 +1,7 @@
 using Avalonia;
 using Avalonia.Media;
+using Mirelia.App.Services;
+using Mirelia.Library;
 
 namespace Mirelia.App;
 
@@ -23,5 +25,19 @@ internal static class Program
 
     [STAThread]
     public static int Main(string[] args)
-        => BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+    {
+        // Before anything else, so a failure during Avalonia setup is logged
+        // too rather than ending the process silently.
+        CrashHandler.Install();
+
+        try
+        {
+            return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("startup failed", ex);
+            throw;
+        }
+    }
 }

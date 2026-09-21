@@ -22,6 +22,15 @@ public static class LibraryPaths
             "library.db");
 
     /// <summary>
+    /// Where the rolling application log lives. Anchored to the default
+    /// library's folder for the same reason settings are: a bug report must
+    /// not depend on which library happened to be open.
+    /// </summary>
+    public static string LogFilePath => Path.Combine(
+        Path.GetDirectoryName(Path.GetFullPath(DefaultDatabasePath))!,
+        "mirelia.log");
+
+    /// <summary>
     /// Where app-level settings live. Anchored to the default library's
     /// folder, not to whichever library happens to be open, so preferences
     /// like theme and output device do not fork per library.
