@@ -14,7 +14,7 @@
 - Keep comments up to date when changing the code they describe.
 - Do not add comments that merely mark generated or modified sections.
 
-### C#
+### Additional style for C#
 
 - Use single-line comments (`//`) for brief explanations.
 - Avoid multi-line comments (`/* */`) for longer explanations.
@@ -24,13 +24,9 @@
 - End comment text with a period.
 - Insert one space between the comment delimiter (`//`) and the comment text, as shown in the following example.
 
-### C/C++
+### Additional style for C/C++
 
 - Prefer `//` over `/* */`. Both are acceptable, but be consistent within a file.
-
-### Rust
-
-- Document public APIs with doc comments (/// in Rust)
 
 ## C# Naming conventions
 
