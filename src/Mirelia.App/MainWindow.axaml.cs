@@ -34,6 +34,9 @@ public partial class MainWindow : Window
     private static readonly Avalonia.Media.IBrush BandingBrush =
         new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.FromArgb(0x0F, 0x80, 0x80, 0x80));
 
+    // Looked up once; the brush follows the accent colour by itself.
+    private readonly Avalonia.Media.IBrush? _nowPlayingRowBrush;
+
     private Point _dragOrigin;
     private PointerPressedEventArgs? _dragPress;
 
@@ -94,6 +97,9 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        _nowPlayingRowBrush = this.TryFindResource("NowPlayingRowBrush", ActualThemeVariant, out object? tint)
+            ? tint as Avalonia.Media.IBrush
+            : null;
         RestoreWindowPlacement();
         RestorePaneWidths();
 
@@ -146,7 +152,7 @@ public partial class MainWindow : Window
             if (e.Row.DataContext is TrackRow row)
             {
                 ViewModel?.Tracks?.NotifyVisible(row.Index);
-                e.Row.Background = row.Index % 2 == 1 ? BandingBrush : null;
+                ApplyRowBackground(e.Row);
             }
         };
 
@@ -209,6 +215,9 @@ public partial class MainWindow : Window
             {
                 RebuildColumns();
                 vm.ViewSettingsApplied += OnViewSettingsApplied;
+                // LoadingRow does not re-fire for a row that is already
+                // realized when its now-playing flag flips.
+                vm.NowPlayingTrackChanged += (_, _) => RefreshRowBackgrounds();
                 ApplyQueuePaneWidth();
                 vm.Queue.PropertyChanged += (_, args) =>
                 {
@@ -241,6 +250,26 @@ public partial class MainWindow : Window
             }
         };
         Grid.ColumnReordered += async (_, _) => await PersistColumnOrderAsync();
+    }
+
+    // Banding by data index is reliable under row recycling; the now-playing
+    // tint takes precedence over it.
+    private void ApplyRowBackground(DataGridRow row)
+    {
+        row.Background = row.DataContext switch
+        {
+            TrackRow { IsNowPlaying: true } => _nowPlayingRowBrush,
+            TrackRow { Index: var index } when index % 2 == 1 => BandingBrush,
+            _ => null,
+        };
+    }
+
+    private void RefreshRowBackgrounds()
+    {
+        foreach (DataGridRow row in Grid.GetVisualDescendants().OfType<DataGridRow>())
+        {
+            ApplyRowBackground(row);
+        }
     }
 
     /// <summary>
@@ -430,6 +459,21 @@ public partial class MainWindow : Window
                     ? new DataGridLength(width, DataGridLengthUnitType.Star)
                     : new DataGridLength(width);
 
+                if (spec.Key == "trackno")
+                {
+                    // SortMemberPath keeps the header sortable: template
+                    // columns have no binding to derive it from.
+                    Grid.Columns.Add(new DataGridTemplateColumn
+                    {
+                        Header = spec.Header,
+                        Width = gridWidth,
+                        Tag = spec.Key,
+                        SortMemberPath = spec.Property,
+                        CellTemplate = FlatTrackNoCellTemplate,
+                    });
+                    continue;
+                }
+
                 if (spec.Key == "rating")
                 {
                     Grid.Columns.Add(new DataGridTemplateColumn
@@ -477,7 +521,7 @@ public partial class MainWindow : Window
             HorizontalAlignment.Right, new Thickness(0, 0, 10, 0),
             textOpacity: 0.5, iconOpacity: 0.85, fontSize: 12);
 
-    // Reserved for the flat grid's "#" column.
+    // The flat grid's "#" column.
     private static readonly IDataTemplate FlatTrackNoCellTemplate =
         BuildTrackNoCellTemplate(HorizontalAlignment.Left, new Thickness(12, 0, 12, 0));
 
