@@ -217,7 +217,11 @@ public partial class MainWindow : Window
                 vm.ViewSettingsApplied += OnViewSettingsApplied;
                 // LoadingRow does not re-fire for a row that is already
                 // realized when its now-playing flag flips.
-                vm.NowPlayingTrackChanged += (_, _) => RefreshRowBackgrounds();
+                vm.NowPlayingTrackChanged += (previous, current) =>
+                {
+                    RefreshRowBackgrounds();
+                    FollowNowPlaying(vm, previous, current);
+                };
                 vm.LocateRowRequested += index => RevealRow(index, select: true);
                 ApplyQueuePaneWidth();
                 vm.Queue.PropertyChanged += (_, args) =>
@@ -1038,6 +1042,18 @@ public partial class MainWindow : Window
             BlockList.Focus();
         }
 
+        Avalonia.Controls.Grid? FindRealizedRow() => BlockList.GetVisualDescendants()
+            .OfType<Avalonia.Controls.Grid>()
+            .FirstOrDefault(g => g.Classes.Contains("trackrow") && ReferenceEquals(g.DataContext, row));
+
+        // A realized row is scrolled to directly: scrolling to the block first
+        // would align a tall album's top to the viewport and then jump back.
+        if (FindRealizedRow() is { } realized)
+        {
+            realized.BringIntoView();
+            return;
+        }
+
         // Only the block's top comes into view, and an album can be taller
         // than the viewport, so the row itself is brought in once the block
         // has been realized.
@@ -1045,17 +1061,99 @@ public partial class MainWindow : Window
         Dispatcher.UIThread.Post(
             () =>
             {
-                if (!ReferenceEquals(ViewModel?.Tracks, tracks))
+                if (ReferenceEquals(ViewModel?.Tracks, tracks))
                 {
-                    return;
+                    FindRealizedRow()?.BringIntoView();
                 }
-
-                BlockList.GetVisualDescendants()
-                    .OfType<Avalonia.Controls.Grid>()
-                    .FirstOrDefault(g => g.Classes.Contains("trackrow") && ReferenceEquals(g.DataContext, row))
-                    ?.BringIntoView();
             },
             DispatcherPriority.Background);
+    }
+
+    private void FollowNowPlaying(MainViewModel vm, long? previous, long? current)
+    {
+        if (previous is not { } previousId || current is not { } currentId || previousId == currentId)
+        {
+            return;
+        }
+
+        // Follow only when the old row was on screen, so a user who scrolled
+        // away is not pulled back. The rows are already re-flagged here, so
+        // the old row is found by id and position, never by its flag.
+        int at = FindVisibleRowIndex(previousId);
+        if (at < 0 || vm.Tracks is not { } tracks)
+        {
+            return;
+        }
+
+        // A copy of the new track that is already on screen needs no scrolling,
+        // and the nearest-copy search below could pick one far away.
+        if (FindVisibleRowIndex(currentId) >= 0)
+        {
+            return;
+        }
+
+        int target = tracks.IndexOf(currentId, at);
+        if (target >= 0)
+        {
+            RevealRow(target, select: false);
+        }
+    }
+
+    /// <summary>
+    /// Returns the index of a realized row showing <paramref name="trackId"/>
+    /// that lies inside the viewport of the current layout, or -1.
+    /// </summary>
+    private int FindVisibleRowIndex(long trackId)
+    {
+        if (ViewModel is not { Tracks: { } tracks } vm)
+        {
+            return -1;
+        }
+
+        Visual? viewport;
+        IEnumerable<Control> candidates;
+        if (vm.IsFlatLayout)
+        {
+            viewport = Grid.GetVisualDescendants().OfType<DataGridRowsPresenter>().FirstOrDefault();
+            candidates = Grid.GetVisualDescendants().OfType<DataGridRow>();
+        }
+        else
+        {
+            viewport = BlockList.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
+            candidates = BlockList.GetVisualDescendants()
+                .OfType<Avalonia.Controls.Grid>()
+                .Where(g => g.Classes.Contains("trackrow"));
+        }
+
+        if (viewport is null)
+        {
+            return -1;
+        }
+
+        var viewportRect = new Rect(viewport.Bounds.Size);
+        int found = -1;
+        foreach (Control candidate in candidates)
+        {
+            // Recycled DataGrid rows can linger detached or hidden, and
+            // containers may still hold rows from a previous list.
+            if (candidate.DataContext is not TrackRow row
+                || row.Id != trackId
+                || row.Index >= tracks.Count
+                || !ReferenceEquals(tracks[row.Index], row)
+                || !candidate.IsEffectivelyVisible
+                || candidate.TransformToVisual(viewport) is not { } transform)
+            {
+                continue;
+            }
+
+            Rect visible = new Rect(candidate.Bounds.Size).TransformToAABB(transform).Intersect(viewportRect);
+            if (visible.Width * visible.Height > 0 && (found < 0 || row.Index < found))
+            {
+                found = row.Index;
+            }
+        }
+
+        return found;
     }
 
     // Rows are read straight from the grid rather than through SelectedTrackIds,
