@@ -18,6 +18,11 @@
                      Color="{DynamicResource SystemAccentColor}" Opacity="0.22" />
   </Window.Resources>
 
+  <Window.KeyBindings>
+    <!-- InputGesture on the menu item only displays the shortcut. -->
+    <KeyBinding Gesture="Ctrl+L" Command="{Binding LocateNowPlayingCommand}" />
+  </Window.KeyBindings>
+
   <Window.Styles>
     <!-- Grouped-layout track rows. The flat grid gets banding and a hover
          cue from the DataGrid's own row template; these rows are plain
@@ -83,6 +88,9 @@
              so the toggle needs TwoWay to reach the view-model. -->
         <MenuItem Header="Queue" ToggleType="CheckBox"
                   IsChecked="{Binding Queue.IsOpen, Mode=TwoWay}" />
+        <MenuItem Header="Locate Now Playing"
+                  Command="{Binding LocateNowPlayingCommand}"
+                  InputGesture="Ctrl+L" />
         <Separator />
         <MenuItem Header="Columns">
           <!-- Per-view reset lives in the grid's own context menu; this one

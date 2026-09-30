@@ -218,6 +218,7 @@ public partial class MainWindow : Window
                 // LoadingRow does not re-fire for a row that is already
                 // realized when its now-playing flag flips.
                 vm.NowPlayingTrackChanged += (_, _) => RefreshRowBackgrounds();
+                vm.LocateRowRequested += index => RevealRow(index, select: true);
                 ApplyQueuePaneWidth();
                 vm.Queue.PropertyChanged += (_, args) =>
                 {
@@ -982,6 +983,79 @@ public partial class MainWindow : Window
         {
             _removingEntries = false;
         }
+    }
+
+    /// <summary>
+    /// Scrolls the current view to the row at <paramref name="rowIndex"/>,
+    /// optionally making it the only selected row.
+    /// </summary>
+    private void RevealRow(int rowIndex, bool select)
+    {
+        if (ViewModel is not { Tracks: { } tracks } vm || rowIndex < 0 || rowIndex >= tracks.Count)
+        {
+            return;
+        }
+
+        TrackRow row = tracks[rowIndex];
+        if (vm.IsFlatLayout)
+        {
+            if (select)
+            {
+                // Assigning the current SelectedItem again is a no-op and would
+                // keep the rest of a multi-row selection.
+                Grid.SelectedItems.Clear();
+                Grid.SelectedItem = row;
+                Grid.Focus();
+            }
+
+            // The selection may have just changed and the grid has not laid out yet.
+            Dispatcher.UIThread.Post(
+                () =>
+                {
+                    if (ReferenceEquals(ViewModel?.Tracks, tracks))
+                    {
+                        Grid.ScrollIntoView(row, null);
+                    }
+                },
+                DispatcherPriority.Loaded);
+            return;
+        }
+
+        if (vm.GroupedTracks is not { } blocks)
+        {
+            return;
+        }
+
+        int blockIndex = TrackGroupBlocks.IndexOfBlockContaining(blocks, rowIndex);
+        if (blockIndex < 0)
+        {
+            return;
+        }
+
+        if (select)
+        {
+            vm.SelectBlockRow(rowIndex, toggle: false, extend: false);
+            BlockList.Focus();
+        }
+
+        // Only the block's top comes into view, and an album can be taller
+        // than the viewport, so the row itself is brought in once the block
+        // has been realized.
+        BlockList.ScrollIntoView(blockIndex);
+        Dispatcher.UIThread.Post(
+            () =>
+            {
+                if (!ReferenceEquals(ViewModel?.Tracks, tracks))
+                {
+                    return;
+                }
+
+                BlockList.GetVisualDescendants()
+                    .OfType<Avalonia.Controls.Grid>()
+                    .FirstOrDefault(g => g.Classes.Contains("trackrow") && ReferenceEquals(g.DataContext, row))
+                    ?.BringIntoView();
+            },
+            DispatcherPriority.Background);
     }
 
     // Rows are read straight from the grid rather than through SelectedTrackIds,

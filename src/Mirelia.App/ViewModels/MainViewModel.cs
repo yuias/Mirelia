@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using Microsoft.Data.Sqlite;
 using Mirelia.App.Models;
 using Mirelia.App.Services;
@@ -233,6 +234,9 @@ public sealed partial class MainViewModel : ObservableObject
 
     /// <summary>Raised after the rows were re-flagged: (previousId, currentId). Not raised when the id is unchanged.</summary>
     public event Action<long?, long?>? NowPlayingTrackChanged;
+
+    /// <summary>Raised by <see cref="LocateNowPlayingCommand"/> with the row index to reveal and select.</summary>
+    public event Action<int>? LocateRowRequested;
 
     /// <summary>The transport bar view-model.</summary>
     public TransportViewModel Transport { get; }
@@ -1697,6 +1701,26 @@ public sealed partial class MainViewModel : ObservableObject
         {
             NowPlayingTrackChanged?.Invoke(previous, id);
         }
+    }
+
+    /// <summary>Asks the view to reveal and select the playing row of the current view.</summary>
+    [RelayCommand]
+    private void LocateNowPlaying()
+    {
+        if (NowPlayingTrackId is not { } id)
+        {
+            StatusText = "Nothing is playing.";
+            return;
+        }
+
+        int index = Tracks?.IndexOf(id, 0) ?? -1;
+        if (index < 0)
+        {
+            StatusText = "The playing track is not in this view.";
+            return;
+        }
+
+        LocateRowRequested?.Invoke(index);
     }
 
     private async Task ShowNowPlayingAsync(long id)
