@@ -265,6 +265,15 @@ public sealed partial class MainViewModel : ObservableObject
             && SelectedSort?.IsSourceOrder == true
             && string.IsNullOrWhiteSpace(SearchText);
 
+    /// <summary>True when a static playlist is the viewed source, whatever its order.</summary>
+    public bool IsStaticPlaylistView => SelectedPlaylist is { Kind: PlaylistKind.Static };
+
+    /// <summary>
+    /// True when grid rows are playlist entry positions, so selected rows can
+    /// be removed by position: only the flat grid in Playlist Order guarantees
+    /// that. Any other view of a static playlist removes by track id instead.
+    /// </summary>
+    public bool CanRemoveFromStaticPlaylist => IsFlatLayout && CanReorderStaticPlaylist;
 
     /// <summary>The library facade, for dialogs that talk to it directly.</summary>
     public LibraryService Library => _library;
@@ -666,6 +675,56 @@ public sealed partial class MainViewModel : ObservableObject
         await _library.MovePlaylistEntryAsync(playlist.Id, from, to);
         await ReloadAsync();
         return true;
+    }
+
+    /// <summary>
+    /// Removes entries by position from the viewed static playlist, reloads,
+    /// and reports in the status line. Returns false when
+    /// <see cref="CanRemoveFromStaticPlaylist"/> is false or the store found the
+    /// view stale; in the stale case the view is reloaded anyway.
+    /// </summary>
+    public async Task<bool> RemoveStaticPlaylistEntriesAsync(IReadOnlyList<PlaylistEntryRef> entries)
+    {
+        if (!CanRemoveFromStaticPlaylist
+            || SelectedPlaylist is not { } playlist
+            || entries.Count == 0)
+        {
+            return false;
+        }
+
+        return await FinishRemovalAsync(
+            playlist, entries.Count, await _library.RemovePlaylistEntriesAsync(playlist.Id, entries));
+    }
+
+    /// <summary>
+    /// Removes tracks by id from the viewed static playlist, in any view: for
+    /// each id, as many of its last occurrences as the caller lists it. Reloads
+    /// and reports in the status line. Returns false when no static playlist is
+    /// viewed or the store found the view stale; in the stale case the view is
+    /// reloaded anyway.
+    /// </summary>
+    public async Task<bool> RemoveStaticPlaylistOccurrencesAsync(IReadOnlyCollection<long> trackIds)
+    {
+        if (!IsStaticPlaylistView
+            || SelectedPlaylist is not { } playlist
+            || trackIds.Count == 0)
+        {
+            return false;
+        }
+
+        return await FinishRemovalAsync(
+            playlist, trackIds.Count, await _library.RemovePlaylistOccurrencesAsync(playlist.Id, trackIds));
+    }
+
+    private async Task<bool> FinishRemovalAsync(PlaylistInfo playlist, int count, bool removed)
+    {
+        await ReloadAsync();
+
+        // Set after the reload, which ends by writing its own row-count status.
+        StatusText = removed
+            ? $"Removed {count} track(s) from '{playlist.Name}'"
+            : "The playlist view was out of date; nothing was removed.";
+        return removed;
     }
 
     /// <summary>Exports a playlist to the chosen file, absolute paths.</summary>

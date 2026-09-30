@@ -46,6 +46,8 @@ public partial class MainWindow : Window
     // the grid; collapsing to it waits for a release that did not become a drag.
     private TrackRow? _collapseSelectionOnRelease;
 
+    private bool _removingEntries;
+
     private Point _queueDragOrigin;
     private PointerPressedEventArgs? _queueDragPress;
     private long? _queueDragEntryId;
@@ -153,6 +155,10 @@ public partial class MainWindow : Window
         Grid.AddHandler(PointerPressedEvent, OnGridPointerPressed, RoutingStrategies.Tunnel);
         Grid.AddHandler(PointerMovedEvent, OnGridPointerMoved, RoutingStrategies.Tunnel);
         Grid.AddHandler(PointerReleasedEvent, OnGridPointerReleased, RoutingStrategies.Tunnel);
+
+        // Tunnel so Delete is seen before the list's own key handling.
+        Grid.AddHandler(KeyDownEvent, OnTrackListKeyDown, RoutingStrategies.Tunnel);
+        BlockList.AddHandler(KeyDownEvent, OnTrackListKeyDown, RoutingStrategies.Tunnel);
 
         // Drop targets: playlists take track ids and files, the window takes files.
         PlaylistTreeView.AddHandler(DragDrop.DragOverEvent, OnPlaylistDragOver);
@@ -740,6 +746,9 @@ public partial class MainWindow : Window
             return;
         }
 
+        RemoveFromPlaylistMenu.IsVisible = vm.IsStaticPlaylistView;
+        RemoveFromPlaylistMenu.IsEnabled = Grid.SelectedItems is { Count: > 0 };
+
         ColumnsMenu.Items.Clear();
         foreach (Models.ColumnSpec spec in Models.TrackColumns.All)
         {
@@ -829,6 +838,122 @@ public partial class MainWindow : Window
         => ViewModel is { IsFlatLayout: false } grouped
             ? grouped.BlockSelectedIndex
             : Grid.SelectedIndex;
+
+    // The flat grid in Playlist Order removes by entry position. Every other
+    // view of a static playlist has rows that carry track ids only, so it
+    // removes by id.
+    private async Task RemoveSelectedFromPlaylistAsync()
+    {
+        // A repeated Delete would otherwise resend this selection against the
+        // list the first removal is about to replace.
+        if (_removingEntries || ViewModel is not { IsStaticPlaylistView: true } vm)
+        {
+            return;
+        }
+
+        _removingEntries = true;
+        try
+        {
+            if (vm.CanRemoveFromStaticPlaylist)
+            {
+                await RemoveSelectedByPositionAsync(vm);
+            }
+            else
+            {
+                await RemoveSelectedByIdAsync(vm);
+            }
+        }
+        finally
+        {
+            _removingEntries = false;
+        }
+    }
+
+    // Rows are read straight from the grid rather than through SelectedTrackIds,
+    // which drops the row index that identifies a duplicate entry.
+    private async Task RemoveSelectedByPositionAsync(MainViewModel vm)
+    {
+        if (Grid.SelectedItems is not { } items)
+        {
+            return;
+        }
+
+        List<PlaylistEntryRef> entries =
+            [.. items.OfType<TrackRow>()
+                .Select(r => new PlaylistEntryRef(r.Index, r.Id))
+                .OrderBy(e => e.Position)];
+        if (entries.Count == 0)
+        {
+            return;
+        }
+
+        int first = entries[0].Position;
+        bool removed = await vm.RemoveStaticPlaylistEntriesAsync(entries);
+        if (removed && vm.Tracks is { Count: > 0 } tracks)
+        {
+            int index = Math.Min(first, tracks.Count - 1);
+            Grid.SelectedIndex = index;
+
+            // The grid has not laid out the replaced list yet.
+            TrackRow row = tracks[index];
+            Dispatcher.UIThread.Post(() => Grid.ScrollIntoView(row, null), DispatcherPriority.Loaded);
+        }
+
+        // Keeps the next Delete press working after the list was replaced.
+        Grid.Focus();
+    }
+
+    // SelectedTrackIds yields one id per selected row in both layouts, so
+    // duplicate rows count separately, as the store's multiset expects.
+    private async Task RemoveSelectedByIdAsync(MainViewModel vm)
+    {
+        long[] ids = SelectedTrackIds();
+        if (ids.Length == 0)
+        {
+            return;
+        }
+
+        await vm.RemoveStaticPlaylistOccurrencesAsync(ids);
+
+        // The replaced list starts with no selection; focus keeps Delete working.
+        if (vm.IsFlatLayout)
+        {
+            Grid.Focus();
+        }
+        else
+        {
+            BlockList.Focus();
+        }
+    }
+
+    private async void OnRemoveFromPlaylistClick(object? sender, RoutedEventArgs e)
+        => await RemoveSelectedFromPlaylistAsync();
+
+    private void OnBlockMenuOpened(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { } vm)
+        {
+            return;
+        }
+
+        RemoveFromBlockPlaylistMenu.IsVisible = vm.IsStaticPlaylistView;
+        RemoveFromBlockPlaylistMenu.IsEnabled = vm.BlockSelectedIds.Length > 0;
+    }
+
+    // Shared by the grid and the grouped block list; the search box and the
+    // queue have their own key handling and never reach this.
+    private async void OnTrackListKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Delete
+            || e.KeyModifiers != KeyModifiers.None
+            || ViewModel is not { IsStaticPlaylistView: true })
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await RemoveSelectedFromPlaylistAsync();
+    }
 
     // ---- playback ------------------------------------------------------
 

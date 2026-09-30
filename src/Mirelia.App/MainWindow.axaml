@@ -362,6 +362,10 @@
                   </DataTemplate>
                 </MenuItem.ItemTemplate>
               </MenuItem>
+              <MenuItem x:Name="RemoveFromPlaylistMenu"
+                        Header="Remove from Playlist"
+                        InputGesture="Delete"
+                        Click="OnRemoveFromPlaylistClick" />
               <Separator />
               <MenuItem x:Name="ColumnsMenu" Header="Columns" />
             </ContextMenu>
@@ -384,7 +388,7 @@
                  ContainerPrepared="OnBlockPrepared"
                  ContainerClearing="OnBlockClearing">
           <ListBox.ContextMenu>
-            <ContextMenu>
+            <ContextMenu Opened="OnBlockMenuOpened">
               <MenuItem Header="Play" Click="OnPlaySelectedClick" />
               <MenuItem Header="Play Next" Click="OnPlayNextClick" />
               <MenuItem Header="Add to Queue" Click="OnAddToQueueClick" />
@@ -398,6 +402,10 @@
                   </DataTemplate>
                 </MenuItem.ItemTemplate>
               </MenuItem>
+              <MenuItem x:Name="RemoveFromBlockPlaylistMenu"
+                        Header="Remove from Playlist"
+                        InputGesture="Delete"
+                        Click="OnRemoveFromPlaylistClick" />
             </ContextMenu>
           </ListBox.ContextMenu>
           <ListBox.ItemTemplate>

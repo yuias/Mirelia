@@ -427,6 +427,14 @@ public sealed class LibraryService : IDisposable
         => RunAsync(() => _playlists.RemoveEntries(playlistId, entries));
 
     /// <summary>
+    /// Removes tracks from a static playlist by id, taking the last occurrences
+    /// first; see <see cref="PlaylistStore.RemoveOccurrences"/>.
+    /// </summary>
+    public Task<bool> RemovePlaylistOccurrencesAsync(
+        long playlistId, IReadOnlyCollection<long> trackIds)
+        => RunAsync(() => _playlists.RemoveOccurrences(playlistId, trackIds));
+
+    /// <summary>
     /// Moves a static playlist entry (grid drag reorder). <paramref name="to"/>
     /// follows <see cref="PlaylistStore.Move"/>'s contract: the index in the
     /// list <em>after</em> the entry at <paramref name="from"/> is removed.
