@@ -26,6 +26,8 @@ public sealed class VirtualTrackList : IReadOnlyList<TrackRow>, IList
     private readonly HashSet<int> _hydrated = [];
     private readonly HashSet<int> _inFlight = [];
     private readonly LinkedList<int> _lru = [];
+    private readonly List<int> _nowPlayingIndexes = [];
+    private long? _nowPlayingId;
 
     /// <summary>Creates a list over an id array.</summary>
     /// <param name="ids">Result-set ids, already sorted by the database.</param>
@@ -58,6 +60,80 @@ public sealed class VirtualTrackList : IReadOnlyList<TrackRow>, IList
 
     /// <summary>The track id at a row index.</summary>
     public long IdAt(int index) => _ids[index];
+
+    /// <summary>The id last passed to <see cref="SetNowPlaying"/>.</summary>
+    public long? NowPlayingId => _nowPlayingId;
+
+    /// <summary>
+    /// Marks every row holding <paramref name="trackId"/> (null clears). With
+    /// the same id as before, only the play state of the marked rows changes.
+    /// </summary>
+    public void SetNowPlaying(long? trackId, bool isPlaying)
+    {
+        NowPlayingState state = isPlaying ? NowPlayingState.Playing : NowPlayingState.Paused;
+        if (trackId == _nowPlayingId)
+        {
+            if (trackId is not null)
+            {
+                foreach (int index in _nowPlayingIndexes)
+                {
+                    _rows[index].NowPlaying = state;
+                }
+            }
+
+            return;
+        }
+
+        foreach (int index in _nowPlayingIndexes)
+        {
+            _rows[index].NowPlaying = NowPlayingState.None;
+        }
+
+        _nowPlayingIndexes.Clear();
+        _nowPlayingId = trackId;
+        if (trackId is not { } id)
+        {
+            return;
+        }
+
+        // Every row exists from construction, so flagging here covers rows that
+        // are not hydrated or realized yet.
+        for (int i = 0; i < _ids.Length; i++)
+        {
+            if (_ids[i] == id)
+            {
+                _rows[i].NowPlaying = state;
+                _nowPlayingIndexes.Add(i);
+            }
+        }
+    }
+
+    /// <summary>
+    /// First index at or after <paramref name="startIndex"/> holding
+    /// <paramref name="trackId"/>, wrapping to the start; -1 if absent.
+    /// <paramref name="startIndex"/> is clamped to [0, Count].
+    /// </summary>
+    public int IndexOf(long trackId, int startIndex = 0)
+    {
+        int start = Math.Clamp(startIndex, 0, _ids.Length);
+        for (int i = start; i < _ids.Length; i++)
+        {
+            if (_ids[i] == trackId)
+            {
+                return i;
+            }
+        }
+
+        for (int i = 0; i < start; i++)
+        {
+            if (_ids[i] == trackId)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
 
     /// <inheritdoc />
     public TrackRow this[int index] => _rows[index];

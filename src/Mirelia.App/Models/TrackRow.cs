@@ -3,6 +3,19 @@ using Mirelia.Library.Querying;
 
 namespace Mirelia.App.Models;
 
+/// <summary>Whether a row is the audible track, and if so whether it is paused.</summary>
+public enum NowPlayingState
+{
+    /// <summary>The row is not the audible track.</summary>
+    None,
+
+    /// <summary>The row is the audible track and playback is running.</summary>
+    Playing,
+
+    /// <summary>The row is the audible track and playback is paused.</summary>
+    Paused,
+}
+
 /// <summary>
 /// One grid row. Rows are created as placeholders showing only "…" and are
 /// filled in place when their page arrives; the cells update through INPC.
@@ -29,6 +42,26 @@ public sealed partial class TrackRow : ObservableObject
     /// </summary>
     [ObservableProperty]
     private bool _isSelected;
+
+    /// <summary>
+    /// Whether this row holds the audible track. Deliberately outside
+    /// <see cref="Reset"/>: LRU eviction clears a row's text, not the fact that
+    /// its track is playing.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsNowPlaying))]
+    [NotifyPropertyChangedFor(nameof(IsNowPlayingActive))]
+    [NotifyPropertyChangedFor(nameof(IsNowPlayingPaused))]
+    private NowPlayingState _nowPlaying;
+
+    /// <summary>True while the row holds the audible track, playing or paused.</summary>
+    public bool IsNowPlaying => NowPlaying != NowPlayingState.None;
+
+    /// <summary>True while the row holds the audible track and it is playing.</summary>
+    public bool IsNowPlayingActive => NowPlaying == NowPlayingState.Playing;
+
+    /// <summary>True while the row holds the audible track and it is paused.</summary>
+    public bool IsNowPlayingPaused => NowPlaying == NowPlayingState.Paused;
 
     [ObservableProperty]
     private string _trackNo = string.Empty;
@@ -72,7 +105,10 @@ public sealed partial class TrackRow : ObservableObject
     [ObservableProperty]
     private int _rating;
 
-    /// <summary>Returns the row to its placeholder state after LRU eviction.</summary>
+    /// <summary>
+    /// Returns the row to its placeholder state after LRU eviction. Leaves
+    /// <see cref="IsSelected"/> and <see cref="NowPlaying"/> alone.
+    /// </summary>
     public void Reset()
     {
         TrackNo = string.Empty;

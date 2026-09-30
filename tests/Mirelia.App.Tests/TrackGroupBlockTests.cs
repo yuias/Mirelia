@@ -194,6 +194,43 @@ public sealed class TrackGroupBlockTests
         Assert.Equal(42, block.CoverId);
     }
 
+    [Fact]
+    public void IndexOfBlockContainingFindsTheBlockForARow()
+    {
+        List<TrackGroupBlock> blocks = ThreeBlocks();
+
+        Assert.Equal(0, TrackGroupBlocks.IndexOfBlockContaining(blocks, 0));
+        Assert.Equal(0, TrackGroupBlocks.IndexOfBlockContaining(blocks, 2));
+        Assert.Equal(1, TrackGroupBlocks.IndexOfBlockContaining(blocks, 3));
+        Assert.Equal(1, TrackGroupBlocks.IndexOfBlockContaining(blocks, 4));
+        Assert.Equal(2, TrackGroupBlocks.IndexOfBlockContaining(blocks, 5));
+        Assert.Equal(2, TrackGroupBlocks.IndexOfBlockContaining(blocks, 9));
+    }
+
+    [Fact]
+    public void IndexOfBlockContainingReturnsMinusOneOutsideEveryBlock()
+    {
+        List<TrackGroupBlock> blocks = ThreeBlocks();
+
+        Assert.Equal(-1, TrackGroupBlocks.IndexOfBlockContaining(blocks, -1));
+        Assert.Equal(-1, TrackGroupBlocks.IndexOfBlockContaining(blocks, 10));
+        Assert.Equal(-1, TrackGroupBlocks.IndexOfBlockContaining([], 0));
+    }
+
+    private static List<TrackGroupBlock> ThreeBlocks()
+    {
+        VirtualTrackList tracks = MakeList(10, out _);
+        return TrackGroupBlocks.Build(
+            tracks,
+            [
+                Run(0, 3, [new DiscSpan(null, 0, 3)]),
+                Run(3, 2, [new DiscSpan(null, 3, 2)]),
+                Run(5, 5, [new DiscSpan(null, 5, 5)]),
+            ],
+            TrackLayouts.Albums,
+            _ => { });
+    }
+
     private static List<TrackGroupBlock> Blocks(VirtualTrackList tracks, TrackGroupRun run)
         => TrackGroupBlocks.Build(tracks, [run], TrackLayouts.Albums, _ => { });
 

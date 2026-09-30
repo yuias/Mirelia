@@ -237,4 +237,37 @@ public static class TrackGroupBlocks
 
         return blocks;
     }
+
+    /// <summary>
+    /// Index of the block whose [StartIndex, StartIndex + Count) contains
+    /// <paramref name="rowIndex"/>; -1 if none.
+    /// </summary>
+    public static int IndexOfBlockContaining(IReadOnlyList<TrackGroupBlock> blocks, int rowIndex)
+    {
+        // Last block starting at or before the row.
+        int low = 0;
+        int high = blocks.Count - 1;
+        int found = -1;
+        while (low <= high)
+        {
+            int mid = low + ((high - low) / 2);
+            if (blocks[mid].StartIndex <= rowIndex)
+            {
+                found = mid;
+                low = mid + 1;
+            }
+            else
+            {
+                high = mid - 1;
+            }
+        }
+
+        if (found < 0 || rowIndex < 0)
+        {
+            return -1;
+        }
+
+        TrackGroupBlock block = blocks[found];
+        return rowIndex < block.StartIndex + block.Count ? found : -1;
+    }
 }
