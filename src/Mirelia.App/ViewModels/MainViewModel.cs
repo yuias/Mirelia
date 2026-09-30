@@ -218,7 +218,13 @@ public sealed partial class MainViewModel : ObservableObject
     private string _statusText = string.Empty;
 
     [ObservableProperty]
-    private bool _isLibraryEmpty;
+    private bool _isViewEmpty;
+
+    [ObservableProperty]
+    private string _emptyViewTitle = string.Empty;
+
+    [ObservableProperty]
+    private string _emptyViewHint = string.Empty;
 
     /// <summary>The transport bar view-model.</summary>
     public TransportViewModel Transport { get; }
@@ -1443,7 +1449,15 @@ public sealed partial class MainViewModel : ObservableObject
 
         Tracks = list;
         GroupedTracks = blocks;
-        IsLibraryEmpty = viewIds.Length == 0 && string.IsNullOrWhiteSpace(SearchText);
+        IsViewEmpty = viewIds.Length == 0 && string.IsNullOrWhiteSpace(SearchText);
+        (EmptyViewTitle, EmptyViewHint) = (SelectedPlaylist, SelectedNode) switch
+        {
+            ({ Kind: PlaylistKind.Static }, _) =>
+                ("This playlist is empty", "Drop music files or folders here to add them."),
+            ({ }, _) or (_, { IsFolder: true }) =>
+                ("No tracks here", "Nothing in the library matches this view yet."),
+            _ => ("Your library is empty", "Use “Add Folder…” or drop music files here."),
+        };
         StatusText = blocks is null
             ? $"{viewIds.Length:N0} track(s)"
             : $"{viewIds.Length:N0} track(s) / {blocks.Count:N0} {layout.Label.ToLowerInvariant()}";

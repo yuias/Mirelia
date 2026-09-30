@@ -478,11 +478,11 @@
 
         <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
                     Spacing="8"
-                    IsVisible="{Binding IsLibraryEmpty}">
+                    IsVisible="{Binding IsViewEmpty}">
           <TextBlock FontSize="18" Opacity="0.7" HorizontalAlignment="Center"
-                     Text="Your library is empty" />
+                     Text="{Binding EmptyViewTitle}" />
           <TextBlock Opacity="0.5" HorizontalAlignment="Center"
-                     Text="Use “Add Folder…” to scan your music." />
+                     Text="{Binding EmptyViewHint}" />
         </StackPanel>
       </Panel>
 
