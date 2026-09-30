@@ -63,6 +63,42 @@ public sealed class LibraryServiceTests : IDisposable
             Mirelia.Library.Querying.TrackSortOrder.Artist));
     }
 
+    [Fact]
+    public async Task RemovePlaylistEntriesRemovesOneDuplicateByPosition()
+    {
+        string path = Path.Combine(_root, "dupes.db");
+        long a, b;
+        using (var db = LibraryDatabase.Open(path))
+        {
+            a = InsertTrack(db, "Song A");
+            b = InsertTrack(db, "Song B");
+            var store = new PlaylistStore(db);
+            PlaylistInfo created = store.CreateStatic("Mix");
+            store.AddTracks(created.Id, [a, b, a]);
+        }
+
+        using var service = new LibraryService(path);
+        PlaylistInfo playlist = (await service.GetPlaylistsAsync()).Single();
+
+        Assert.True(await service.RemovePlaylistEntriesAsync(playlist.Id, [new(2, a)]));
+
+        Assert.Equal([a, b], await service.EvaluatePlaylistAsync(playlist));
+    }
+
+    private static long InsertTrack(LibraryDatabase db, string title)
+    {
+        return (long)db.Scalar("""
+            INSERT INTO track (
+                path, path_lower, size_bytes, mtime_unix, title,
+                title_sort, title_search, duration_ms, sample_rate, channels,
+                codec, is_lossless, rating, added_unix, modified_unix)
+            VALUES ($t, lower($t), 1, 0, $t, lower($t), lower($t),
+                    180000, 44100, 2, 'flac', 1, 0, 0, 0)
+            RETURNING id
+            """,
+            ("$t", title))!;
+    }
+
     private string MakeLibrary(string name)
     {
         string path = Path.Combine(_root, $"{name}.db");

@@ -285,14 +285,43 @@ public sealed class PlaylistStore(LibraryDatabase db)
         tx.Commit();
     }
 
-    /// <summary>Removes entries at the given positions.</summary>
-    public void RemoveAt(long playlistId, IReadOnlyCollection<int> positions)
+    /// <summary>
+    /// Removes the given entries from a static playlist and renumbers the rest.
+    /// Library tracks are untouched. Returns false, changing nothing, when any
+    /// entry's position is out of range or no longer holds the expected track.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Not a static playlist, or no such playlist.</exception>
+    public bool RemoveEntries(long playlistId, IReadOnlyCollection<PlaylistEntryRef> entries)
     {
+        PlaylistInfo playlist = Require(playlistId);
+        if (playlist.Kind != PlaylistKind.Static)
+        {
+            throw new InvalidOperationException($"'{playlist.Name}' is not a static playlist.");
+        }
+
+        if (entries.Count == 0)
+        {
+            return true;
+        }
+
+        bool removed = false;
         Reorder(playlistId, ids =>
         {
-            var drop = new HashSet<int>(positions);
+            foreach (PlaylistEntryRef entry in entries)
+            {
+                if (entry.Position < 0
+                    || entry.Position >= ids.Count
+                    || ids[entry.Position] != entry.TrackId)
+                {
+                    return null;
+                }
+            }
+
+            var drop = new HashSet<int>(entries.Select(e => e.Position));
+            removed = true;
             return ids.Where((_, i) => !drop.Contains(i)).ToList();
         });
+        return removed;
     }
 
     /// <summary>Moves the entry at <paramref name="from"/> to <paramref name="to"/>.</summary>
@@ -442,11 +471,17 @@ public sealed class PlaylistStore(LibraryDatabase db)
         }
     }
 
-    private void Reorder(long playlistId, Func<List<long>, List<long>> transform)
+    private void Reorder(long playlistId, Func<List<long>, List<long>?> transform)
     {
         using LibraryDatabase.TransactionScope tx = db.BeginTransaction();
         List<long> ids = GetStaticTracks(playlistId);
-        List<long> reordered = transform(ids);
+        List<long>? reordered = transform(ids);
+
+        // Null means "leave the playlist as it is"; disposing rolls back the read.
+        if (reordered is null)
+        {
+            return;
+        }
 
         db.Execute("DELETE FROM playlist_entry WHERE playlist_id = $p", ("$p", playlistId));
         for (int i = 0; i < reordered.Count; i++)

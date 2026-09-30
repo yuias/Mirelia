@@ -55,16 +55,85 @@ public sealed class PlaylistStoreTests : IDisposable
     }
 
     [Fact]
-    public void RemoveAtAndMoveRenumberPositions()
+    public void RemoveEntriesAndMoveRenumberPositions()
     {
         PlaylistInfo p = _store.CreateStatic("Edit");
         _store.AddTracks(p.Id, _trackIds);
 
-        _store.RemoveAt(p.Id, [1, 3]);
+        Assert.True(_store.RemoveEntries(p.Id, [new(1, _trackIds[1]), new(3, _trackIds[3])]));
         Assert.Equal([_trackIds[0], _trackIds[2], _trackIds[4]], _store.GetStaticTracks(p.Id));
 
         _store.Move(p.Id, from: 2, to: 0);
         Assert.Equal([_trackIds[4], _trackIds[0], _trackIds[2]], _store.GetStaticTracks(p.Id));
+    }
+
+    [Fact]
+    public void RemoveEntriesDropsOnlyTheChosenDuplicate()
+    {
+        long t0 = _trackIds[0], t1 = _trackIds[1], t2 = _trackIds[2];
+        PlaylistInfo p = _store.CreateStatic("Dupes");
+        _store.AddTracks(p.Id, [t2, t0, t2, t1, t2]);
+
+        Assert.True(_store.RemoveEntries(p.Id, [new(2, t2)]));
+
+        Assert.Equal([t2, t0, t1, t2], _store.GetStaticTracks(p.Id));
+        // GetStaticTracks orders by position, so gaps need a direct check.
+        Assert.Equal([0L, 1L, 2L, 3L], Positions(p.Id));
+    }
+
+    [Fact]
+    public void RemoveEntriesLeavesLibraryTracksAndOtherPlaylists()
+    {
+        PlaylistInfo a = _store.CreateStatic("A");
+        PlaylistInfo b = _store.CreateStatic("B");
+        _store.AddTracks(a.Id, _trackIds);
+        _store.AddTracks(b.Id, [_trackIds[0]]);
+
+        Assert.True(_store.RemoveEntries(
+            a.Id, [.. _trackIds.Select((id, i) => new PlaylistEntryRef(i, id))]));
+
+        Assert.Empty(_store.GetStaticTracks(a.Id));
+        Assert.Equal([_trackIds[0]], _store.GetStaticTracks(b.Id));
+        Assert.Equal(5L, _db.Scalar("SELECT COUNT(*) FROM track"));
+    }
+
+    [Fact]
+    public void RemoveEntriesRejectsAStaleViewWithoutWriting()
+    {
+        long t0 = _trackIds[0], t1 = _trackIds[1], t2 = _trackIds[2];
+        PlaylistInfo p = _store.CreateStatic("Stale");
+        _store.AddTracks(p.Id, [t0, t1, t2]);
+        long generation = _db.GetLibraryGeneration();
+
+        Assert.False(_store.RemoveEntries(p.Id, [new(0, t0), new(1, t2)]));
+        Assert.False(_store.RemoveEntries(p.Id, [new(7, t0)]));
+
+        Assert.Equal([t0, t1, t2], _store.GetStaticTracks(p.Id));
+        Assert.Equal(generation, _db.GetLibraryGeneration());
+    }
+
+    [Fact]
+    public void RemoveEntriesRejectsASmartPlaylist()
+    {
+        PlaylistInfo smart = _store.CreateSmart("Smart", "rating >= 0");
+        Assert.Throws<InvalidOperationException>(
+            () => _store.RemoveEntries(smart.Id, [new(0, _trackIds[0])]));
+    }
+
+    private List<long> Positions(long playlistId)
+    {
+        using var cmd = _db.Connection.CreateCommand();
+        cmd.CommandText =
+            "SELECT position FROM playlist_entry WHERE playlist_id = $p ORDER BY position";
+        cmd.Parameters.AddWithValue("$p", playlistId);
+        using var reader = cmd.ExecuteReader();
+        var positions = new List<long>();
+        while (reader.Read())
+        {
+            positions.Add(reader.GetInt64(0));
+        }
+
+        return positions;
     }
 
     [Fact]

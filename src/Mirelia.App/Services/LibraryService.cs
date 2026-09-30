@@ -419,6 +419,14 @@ public sealed class LibraryService : IDisposable
         });
 
     /// <summary>
+    /// Removes entries from a static playlist by position; see
+    /// <see cref="PlaylistStore.RemoveEntries"/> for the stale-entry check.
+    /// </summary>
+    public Task<bool> RemovePlaylistEntriesAsync(
+        long playlistId, IReadOnlyCollection<PlaylistEntryRef> entries)
+        => RunAsync(() => _playlists.RemoveEntries(playlistId, entries));
+
+    /// <summary>
     /// Moves a static playlist entry (grid drag reorder). <paramref name="to"/>
     /// follows <see cref="PlaylistStore.Move"/>'s contract: the index in the
     /// list <em>after</em> the entry at <paramref name="from"/> is removed.
