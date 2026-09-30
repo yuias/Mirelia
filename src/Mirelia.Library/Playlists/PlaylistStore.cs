@@ -324,6 +324,58 @@ public sealed class PlaylistStore(LibraryDatabase db)
         return removed;
     }
 
+    /// <summary>
+    /// Removes tracks from a static playlist by id and renumbers the rest, for
+    /// views whose rows do not carry entry positions. Each id is a multiset
+    /// element: an id given <c>c</c> times removes its last <c>c</c> occurrences.
+    /// Library tracks are untouched. Returns false, changing nothing, when any
+    /// track occurs fewer times than requested.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Not a static playlist, or no such playlist.</exception>
+    public bool RemoveOccurrences(long playlistId, IReadOnlyCollection<long> trackIds)
+    {
+        PlaylistInfo playlist = Require(playlistId);
+        if (playlist.Kind != PlaylistKind.Static)
+        {
+            throw new InvalidOperationException($"'{playlist.Name}' is not a static playlist.");
+        }
+
+        if (trackIds.Count == 0)
+        {
+            return true;
+        }
+
+        var pending = new Dictionary<long, int>();
+        foreach (long id in trackIds)
+        {
+            pending[id] = pending.GetValueOrDefault(id) + 1;
+        }
+
+        bool removed = false;
+        Reorder(playlistId, ids =>
+        {
+            // Walking from the end takes the last occurrences first.
+            var drop = new HashSet<int>();
+            for (int i = ids.Count - 1; i >= 0; i--)
+            {
+                if (pending.TryGetValue(ids[i], out int left) && left > 0)
+                {
+                    pending[ids[i]] = left - 1;
+                    drop.Add(i);
+                }
+            }
+
+            if (pending.Values.Any(left => left > 0))
+            {
+                return null;
+            }
+
+            removed = true;
+            return ids.Where((_, i) => !drop.Contains(i)).ToList();
+        });
+        return removed;
+    }
+
     /// <summary>Moves the entry at <paramref name="from"/> to <paramref name="to"/>.</summary>
     public void Move(long playlistId, int from, int to)
     {

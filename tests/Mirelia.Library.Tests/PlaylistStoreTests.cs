@@ -120,6 +120,67 @@ public sealed class PlaylistStoreTests : IDisposable
             () => _store.RemoveEntries(smart.Id, [new(0, _trackIds[0])]));
     }
 
+    [Fact]
+    public void RemoveOccurrencesDropsTheLastOccurrenceAndRenumbers()
+    {
+        long t0 = _trackIds[0], t1 = _trackIds[1], t2 = _trackIds[2];
+        PlaylistInfo p = _store.CreateStatic("ById");
+        _store.AddTracks(p.Id, [t2, t0, t2, t1, t2]);
+
+        Assert.True(_store.RemoveOccurrences(p.Id, [t2]));
+
+        Assert.Equal([t2, t0, t2, t1], _store.GetStaticTracks(p.Id));
+        Assert.Equal([0L, 1L, 2L, 3L], Positions(p.Id));
+    }
+
+    [Fact]
+    public void RemoveOccurrencesTreatsIdsAsAMultiset()
+    {
+        long t0 = _trackIds[0], t1 = _trackIds[1], t2 = _trackIds[2];
+        PlaylistInfo p = _store.CreateStatic("Multi");
+        _store.AddTracks(p.Id, [t2, t0, t2, t1, t2]);
+
+        Assert.True(_store.RemoveOccurrences(p.Id, [t2, t1, t2]));
+
+        Assert.Equal([t2, t0], _store.GetStaticTracks(p.Id));
+        Assert.Equal([0L, 1L], Positions(p.Id));
+    }
+
+    [Fact]
+    public void RemoveOccurrencesRejectsTooFewOccurrencesWithoutWriting()
+    {
+        long t0 = _trackIds[0], t1 = _trackIds[1], t2 = _trackIds[2];
+        PlaylistInfo p = _store.CreateStatic("StaleIds");
+        _store.AddTracks(p.Id, [t0, t1, t0]);
+        long generation = _db.GetLibraryGeneration();
+
+        Assert.False(_store.RemoveOccurrences(p.Id, [t0, t0, t0]));
+        Assert.False(_store.RemoveOccurrences(p.Id, [t1, t2]));
+
+        Assert.Equal([t0, t1, t0], _store.GetStaticTracks(p.Id));
+        Assert.Equal(generation, _db.GetLibraryGeneration());
+    }
+
+    [Fact]
+    public void RemoveOccurrencesRejectsASmartPlaylist()
+    {
+        PlaylistInfo smart = _store.CreateSmart("SmartIds", "rating >= 0");
+        Assert.Throws<InvalidOperationException>(
+            () => _store.RemoveOccurrences(smart.Id, [_trackIds[0]]));
+    }
+
+    [Fact]
+    public void RemoveOccurrencesLeavesLibraryTracks()
+    {
+        PlaylistInfo p = _store.CreateStatic("KeepTracks");
+        _store.AddTracks(p.Id, _trackIds);
+
+        Assert.True(_store.RemoveOccurrences(p.Id, _trackIds));
+
+        Assert.Empty(_store.GetStaticTracks(p.Id));
+        Assert.Equal(5L, _db.Scalar("SELECT COUNT(*) FROM track"));
+    }
+
     private List<long> Positions(long playlistId)
     {
         using var cmd = _db.Connection.CreateCommand();
