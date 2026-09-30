@@ -472,6 +472,77 @@ public partial class MainWindow : Window
     /// </summary>
     public static IDataTemplate RatingCell => RatingCellTemplate;
 
+    private static readonly IDataTemplate GroupedTrackNoCellTemplate =
+        BuildTrackNoCellTemplate(
+            HorizontalAlignment.Right, new Thickness(0, 0, 10, 0),
+            textOpacity: 0.5, iconOpacity: 0.85, fontSize: 12);
+
+    // Reserved for the flat grid's "#" column.
+    private static readonly IDataTemplate FlatTrackNoCellTemplate =
+        BuildTrackNoCellTemplate(HorizontalAlignment.Left, new Thickness(12, 0, 12, 0));
+
+    /// <summary>
+    /// The grouped layout's "#" cell: the track number, or a play/pause glyph
+    /// while the row holds the audible track. Exposed for the row template in
+    /// XAML, like <see cref="RatingCell"/>.
+    /// </summary>
+    public static IDataTemplate TrackNoCell => GroupedTrackNoCellTemplate;
+
+    private const string PlayIconData = "M6,4 L20,12 6,20 Z";
+    private const string PauseIconData = "M5,4 H9.5 V20 H5 Z M14.5,4 H19 V20 H14.5 Z";
+
+    // One builder for both layouts so the glyph swap cannot drift between
+    // them. Visibility comes from TrackRow's own flags, so recycled cells stay
+    // correct without a rebuild.
+    private static IDataTemplate BuildTrackNoCellTemplate(
+        HorizontalAlignment alignment, Thickness margin,
+        double textOpacity = 1, double iconOpacity = 1, double? fontSize = null)
+    {
+        return new FuncDataTemplate<TrackRow>((_, _) =>
+        {
+            var number = new TextBlock
+            {
+                HorizontalAlignment = alignment,
+                Margin = margin,
+                Opacity = textOpacity,
+            };
+            if (fontSize is { } size)
+            {
+                number.FontSize = size;
+            }
+
+            number.Bind(TextBlock.TextProperty, new Binding(nameof(TrackRow.TrackNo)));
+            number.Bind(
+                Visual.IsVisibleProperty,
+                new Binding(nameof(TrackRow.IsNowPlaying)) { Converter = Avalonia.Data.Converters.BoolConverters.Not });
+
+            var panel = new Panel { VerticalAlignment = VerticalAlignment.Center };
+            panel.Children.Add(number);
+            panel.Children.Add(BuildNowPlayingIcon(
+                PlayIconData, nameof(TrackRow.IsNowPlayingActive), alignment, margin, iconOpacity));
+            panel.Children.Add(BuildNowPlayingIcon(
+                PauseIconData, nameof(TrackRow.IsNowPlayingPaused), alignment, margin, iconOpacity));
+            return panel;
+        });
+    }
+
+    private static PathIcon BuildNowPlayingIcon(
+        string data, string visibleProperty, HorizontalAlignment alignment,
+        Thickness margin, double opacity)
+    {
+        var icon = new PathIcon
+        {
+            Data = Avalonia.Media.Geometry.Parse(data),
+            Width = 10,
+            Height = 10,
+            HorizontalAlignment = alignment,
+            Margin = margin,
+            Opacity = opacity,
+        };
+        icon.Bind(Visual.IsVisibleProperty, new Binding(visibleProperty));
+        return icon;
+    }
+
     // Unrated cells render as empty text, so the glyphs carry a fixed width
     // to keep both the hover target and the column alignment.
     private const double RatingStarWidth = 14;

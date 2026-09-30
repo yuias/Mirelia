@@ -11,15 +11,26 @@
         Width="1280" Height="760"
         DragDrop.AllowDrop="True">
 
+  <Window.Resources>
+    <!-- Accent-coloured so the now-playing row cannot be mistaken for the
+         grey hover, selection or banding colours. -->
+    <SolidColorBrush x:Key="NowPlayingRowBrush"
+                     Color="{DynamicResource SystemAccentColor}" Opacity="0.22" />
+  </Window.Resources>
+
   <Window.Styles>
     <!-- Grouped-layout track rows. The flat grid gets banding and a hover
          cue from the DataGrid's own row template; these rows are plain
-         panels, so they carry their own. -->
+         panels, so they carry their own. Precedence, lowest to highest:
+         banding, now-playing tint, hover, selection. -->
     <Style Selector="Grid.trackrow">
       <Setter Property="Background" Value="Transparent" />
     </Style>
     <Style Selector="Grid.trackrow.alt">
       <Setter Property="Background" Value="#0C808080" />
+    </Style>
+    <Style Selector="Grid.trackrow.playing">
+      <Setter Property="Background" Value="{DynamicResource NowPlayingRowBrush}" />
     </Style>
     <Style Selector="Grid.trackrow:pointerover">
       <Setter Property="Background" Value="#1C808080" />
@@ -453,14 +464,13 @@
                               <DataTemplate x:DataType="m:TrackRow">
                                 <Grid Height="26" Classes="trackrow"
                                       Classes.alt="{Binding IsAlternate}"
+                                      Classes.playing="{Binding IsNowPlaying}"
                                       Classes.selected="{Binding IsSelected}"
                                       PointerPressed="OnBlockRowPressed"
                                       DoubleTapped="OnBlockRowDoubleTapped"
                                       ColumnDefinitions="40,*,Auto,58">
-                                  <TextBlock Grid.Column="0" Opacity="0.5" FontSize="12"
-                                             VerticalAlignment="Center"
-                                             TextAlignment="Right" Margin="0,0,10,0"
-                                             Text="{Binding TrackNo}" />
+                                  <ContentControl Grid.Column="0" Content="{Binding}"
+                                                  ContentTemplate="{x:Static local:MainWindow.TrackNoCell}" />
                                   <TextBlock Grid.Column="1" VerticalAlignment="Center"
                                              TextTrimming="CharacterEllipsis"
                                              Text="{Binding Title}" />
