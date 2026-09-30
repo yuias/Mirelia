@@ -42,6 +42,11 @@ public sealed class AudioPlayerService : IDisposable
     // alone cannot tell the two apart.
     private long? _pendingStartEntryId;
 
+    // Latched across polls: the engine pushes TrackEnded before it switches
+    // its state to Idle, so one poll can see the event while the state still
+    // reads Playing.
+    private bool _trackEndedPending;
+
     private RepeatMode _repeat;
 
     /// <summary>Fires on every poll with the current position.</summary>
@@ -55,6 +60,13 @@ public sealed class AudioPlayerService : IDisposable
 
     /// <summary>Fires when the current queue entry changes, with its entry id (null when nothing is current).</summary>
     public event Action<long?>? CurrentEntryChanged;
+
+    /// <summary>
+    /// Fires when playback stops with nothing further to play: the queue ran out,
+    /// the current entry was removed with nothing after it, the queue was cleared
+    /// for a library switch, or the output device/mode changed.
+    /// </summary>
+    public event Action? PlaybackEnded;
 
     /// <summary>Fires on asynchronous playback errors, with detail text.</summary>
     public event Action<string>? PlaybackError;
@@ -111,7 +123,9 @@ public sealed class AudioPlayerService : IDisposable
 
         _deviceOpen = false;
         _preloadedEntryId = null;
+        _trackEndedPending = false;
         ClearCurrentEntry();
+        PlaybackEnded?.Invoke();
     }
 
     /// <summary>Whether the queue plays in a shuffled order.</summary>
@@ -289,6 +303,7 @@ public sealed class AudioPlayerService : IDisposable
         _preloadedEntryId = null;
         _queue.RemoveAll();
         CurrentEntryChanged?.Invoke(null);
+        PlaybackEnded?.Invoke();
         QueueChanged?.Invoke();
     }
 
@@ -401,10 +416,16 @@ public sealed class AudioPlayerService : IDisposable
         try
         {
             EnsureEngine();
+
+            // Awaited before the promote: a poll during the await would
+            // otherwise see the old track's end with the new entry already
+            // current and report playback as over.
+            float gain = await GainForAsync(entry.TrackId);
             PromoteCurrent(entry);
             _pendingStartEntryId = entry.EntryId;
+            _trackEndedPending = false;
             _preloadedEntryId = null;
-            _engine!.Load(AudioSlot.Current, path, (ulong)entry.EntryId, await GainForAsync(entry.TrackId));
+            _engine!.Load(AudioSlot.Current, path, (ulong)entry.EntryId, gain);
             _engine.Play();
             _timer.Start();
             NowPlayingChanged?.Invoke(entry.TrackId);
@@ -498,6 +519,10 @@ public sealed class AudioPlayerService : IDisposable
                         OnTrackStarted((long)ev.UserToken);
                         break;
 
+                    case AudioEventType.TrackEnded:
+                        _trackEndedPending = true;
+                        break;
+
                     case AudioEventType.QueueEmpty:
                         // Auto-advance path for format changes (see above).
                         if (_preloadedEntryId is null && PreloadTarget is { } resume)
@@ -530,7 +555,18 @@ public sealed class AudioPlayerService : IDisposable
                 }
             }
 
-            PositionChanged?.Invoke(_engine.GetPosition());
+            PlaybackPosition pos = _engine.GetPosition();
+            PositionChanged?.Invoke(pos);
+
+            // QueueEmpty is no end signal: it fires at decoder EOF, before the
+            // buffered audio has played out, and a Next slot can still arrive
+            // after it. The PreloadTarget check keeps the format-change restart
+            // and the repeat modes from counting as an end.
+            if (_trackEndedPending && pos.State == PlaybackState.Idle && PreloadTarget is null)
+            {
+                _trackEndedPending = false;
+                PlaybackEnded?.Invoke();
+            }
         }
         catch (AudioEngineException ex)
         {
@@ -540,6 +576,8 @@ public sealed class AudioPlayerService : IDisposable
 
     private void OnTrackStarted(long entryId)
     {
+        _trackEndedPending = false;
+
         QueueEntry? entry = _queue.Find(entryId);
         if (entry is not { } e)
         {
@@ -715,6 +753,7 @@ public sealed class AudioPlayerService : IDisposable
         // The queue already cleared its own current pointer (Remove); this
         // only broadcasts that fact to subscribers (e.g. the queue pane).
         CurrentEntryChanged?.Invoke(null);
+        PlaybackEnded?.Invoke();
     }
 
     private void PromoteCurrent(QueueEntry entry)

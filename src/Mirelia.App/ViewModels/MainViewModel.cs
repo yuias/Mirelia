@@ -111,6 +111,8 @@ public sealed partial class MainViewModel : ObservableObject
 
     private int _loadGeneration;
 
+    private bool _nowPlayingIsPlaying;
+
     [ObservableProperty]
     private VirtualTrackList? _tracks;
 
@@ -226,6 +228,12 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string _emptyViewHint = string.Empty;
 
+    /// <summary>Track id of the audible track, or null when nothing is playing.</summary>
+    public long? NowPlayingTrackId { get; private set; }
+
+    /// <summary>Raised after the rows were re-flagged: (previousId, currentId). Not raised when the id is unchanged.</summary>
+    public event Action<long?, long?>? NowPlayingTrackChanged;
+
     /// <summary>The transport bar view-model.</summary>
     public TransportViewModel Transport { get; }
 
@@ -308,7 +316,21 @@ public sealed partial class MainViewModel : ObservableObject
             }
         };
 
-        _player.NowPlayingChanged += id => _ = ShowNowPlayingAsync(id);
+        _player.NowPlayingChanged += id =>
+        {
+            // The transport poll lags a start by up to 200 ms, so the play
+            // state is set here rather than read from Transport.IsPlaying.
+            SetNowPlayingTrack(id, isPlaying: true);
+            _ = ShowNowPlayingAsync(id);
+        };
+        _player.PlaybackEnded += () => SetNowPlayingTrack(null, isPlaying: false);
+        Transport.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(TransportViewModel.IsPlaying) && NowPlayingTrackId is { } playing)
+            {
+                SetNowPlayingTrack(playing, Transport.IsPlaying);
+            }
+        };
         _player.PlaybackError += msg => StatusText = $"Playback error: {msg}";
         _selectedSource = Sources[0];
     }
@@ -1506,6 +1528,9 @@ public sealed partial class MainViewModel : ObservableObject
             }
         }
 
+        // Applied here, not inside the Task.Run lambda: the playing id can
+        // change while the list is being built.
+        list.SetNowPlaying(NowPlayingTrackId, _nowPlayingIsPlaying);
         Tracks = list;
         GroupedTracks = blocks;
         IsViewEmpty = viewIds.Length == 0 && string.IsNullOrWhiteSpace(SearchText);
@@ -1660,6 +1685,18 @@ public sealed partial class MainViewModel : ObservableObject
                 return null;
             }
         });
+    }
+
+    private void SetNowPlayingTrack(long? id, bool isPlaying)
+    {
+        long? previous = NowPlayingTrackId;
+        NowPlayingTrackId = id;
+        _nowPlayingIsPlaying = isPlaying;
+        Tracks?.SetNowPlaying(id, isPlaying);
+        if (previous != id)
+        {
+            NowPlayingTrackChanged?.Invoke(previous, id);
+        }
     }
 
     private async Task ShowNowPlayingAsync(long id)
