@@ -773,6 +773,38 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Scans dropped files/folders into the library and appends the resulting
+    /// tracks to a static playlist, in drop order. Other playlist kinds get a
+    /// library-only add.
+    /// </summary>
+    public async Task AddDroppedPathsToPlaylistAsync(
+        PlaylistInfo playlist, IReadOnlyList<string> paths)
+    {
+        if (playlist.Kind != PlaylistKind.Static)
+        {
+            await AddDroppedPathsAsync(paths);
+            return;
+        }
+
+        StatusText = "Scanning dropped items…";
+        Library.Scanning.PathScanResult result =
+            await _library.ScanPathsWithTrackIdsAsync(paths, progress: null);
+        if (result.TrackIds.Count > 0)
+        {
+            await _library.AddToPlaylistAsync(playlist.Id, result.TrackIds);
+        }
+
+        // The library changed even when the playlist is not the selected view.
+        // Reloading rewrites the status line, so the summary goes after it.
+        await ReloadAsync();
+
+        Library.Scanning.ScanResult c = result.Counts;
+        StatusText =
+            $"Added {result.TrackIds.Count} track(s) to '{playlist.Name}' " +
+            $"({c.Added} new, {c.Updated} updated, {c.Skipped} skipped)";
+    }
+
+    /// <summary>
     /// Switches the window to a different library file. Returns null on
     /// success, otherwise why the file was refused. Everything on screen is
     /// keyed by track and playlist ids, and none of those survive the move,

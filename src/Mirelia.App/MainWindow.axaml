@@ -330,7 +330,9 @@
       </Border>
 
       <!-- Track grid -->
-      <Panel Grid.Column="2">
+      <Panel Grid.Column="2" x:Name="TrackPane"
+             Background="Transparent"
+             DragDrop.AllowDrop="True">
         <DataGrid x:Name="Grid"
                   ItemsSource="{Binding Tracks}"
                   IsVisible="{Binding IsFlatLayout}"

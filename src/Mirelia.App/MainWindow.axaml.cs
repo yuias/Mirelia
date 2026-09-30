@@ -154,7 +154,7 @@ public partial class MainWindow : Window
         Grid.AddHandler(PointerMovedEvent, OnGridPointerMoved, RoutingStrategies.Tunnel);
         Grid.AddHandler(PointerReleasedEvent, OnGridPointerReleased, RoutingStrategies.Tunnel);
 
-        // Drop targets: playlists take track ids, the window takes files.
+        // Drop targets: playlists take track ids and files, the window takes files.
         PlaylistTreeView.AddHandler(DragDrop.DragOverEvent, OnPlaylistDragOver);
         PlaylistTreeView.AddHandler(DragDrop.DropEvent, OnPlaylistDrop);
         AddHandler(DragDrop.DragOverEvent, OnWindowDragOver);
@@ -165,6 +165,11 @@ public partial class MainWindow : Window
         // reorder it (see OnGridPointerMoved for the gate).
         Grid.AddHandler(DragDrop.DragOverEvent, OnGridDragOver);
         Grid.AddHandler(DragDrop.DropEvent, OnGridDrop);
+
+        // The whole track pane takes Explorer files, so a drop still lands
+        // when the grid is empty or the grouped layout is showing.
+        TrackPane.AddHandler(DragDrop.DragOverEvent, OnTrackPaneDragOver);
+        TrackPane.AddHandler(DragDrop.DropEvent, OnTrackPaneDrop);
 
         // Queue pane: drag source and drop target are the same list, for
         // in-place reordering.
@@ -1208,13 +1213,16 @@ public partial class MainWindow : Window
     {
         if (ViewModel is { } vm && e.DataTransfer.TryGetFiles() is { } files)
         {
-            string[] paths = [.. files.Select(f => f.TryGetLocalPath()).OfType<string>()];
+            string[] paths = LocalPaths(files);
             if (paths.Length > 0)
             {
                 await vm.AddDroppedPathsAsync(paths);
             }
         }
     }
+
+    private static string[] LocalPaths(IEnumerable<IStorageItem> items)
+        => [.. items.Select(f => f.TryGetLocalPath()).OfType<string>()];
 
     // ---- grid → playlist drag & drop -----------------------------------
 
@@ -1300,11 +1308,52 @@ public partial class MainWindow : Window
 
     private void OnGridDragOver(object? sender, DragEventArgs e)
     {
+        // File drops are the track pane's to judge.
+        if (e.DataTransfer.TryGetFiles() is not null)
+        {
+            return;
+        }
+
         bool ok = _dragSourceIndex is not null
             && ViewModel is { CanReorderStaticPlaylist: true }
             && e.DataTransfer.Contains(TrackIdsFormat);
         e.DragEffects = ok ? DragDropEffects.Move : DragDropEffects.None;
         e.Handled = true;
+    }
+
+    private void OnTrackPaneDragOver(object? sender, DragEventArgs e)
+    {
+        if (e.DataTransfer.TryGetFiles() is not null)
+        {
+            e.DragEffects = DragDropEffects.Copy;
+            e.Handled = true;
+        }
+    }
+
+    private async void OnTrackPaneDrop(object? sender, DragEventArgs e)
+    {
+        // Files dropped anywhere in the track pane, including an empty
+        // view's placeholder, go into the static playlist on screen, or into
+        // the library alone for any other view.
+        if (ViewModel is { } viewModel && e.DataTransfer.TryGetFiles() is { } files)
+        {
+            // Set before the await, or the drop also bubbles to OnWindowDrop.
+            e.Handled = true;
+            string[] paths = LocalPaths(files);
+            if (paths.Length == 0)
+            {
+                return;
+            }
+
+            if (viewModel.SelectedPlaylist is { Kind: PlaylistKind.Static } playlist)
+            {
+                await viewModel.AddDroppedPathsToPlaylistAsync(playlist, paths);
+            }
+            else
+            {
+                await viewModel.AddDroppedPathsAsync(paths);
+            }
+        }
     }
 
     private async void OnGridDrop(object? sender, DragEventArgs e)
@@ -1403,20 +1452,60 @@ public partial class MainWindow : Window
 
     private void OnPlaylistDragOver(object? sender, DragEventArgs e)
     {
-        bool ok = e.DataTransfer.Contains(TrackIdsFormat)
-            && PlaylistUnder(e) is { Kind: PlaylistKind.Static };
-        e.DragEffects = ok ? DragDropEffects.Copy : DragDropEffects.None;
+        if (e.DataTransfer.Contains(TrackIdsFormat))
+        {
+            bool ok = PlaylistUnder(e) is { Kind: PlaylistKind.Static };
+            e.DragEffects = ok ? DragDropEffects.Copy : DragDropEffects.None;
+        }
+        else
+        {
+            e.DragEffects = e.DataTransfer.TryGetFiles() is not null
+                ? DragDropEffects.Copy
+                : DragDropEffects.None;
+        }
+
         e.Handled = true;
     }
 
     private async void OnPlaylistDrop(object? sender, DragEventArgs e)
     {
-        if (ViewModel is { } vm
-            && e.DataTransfer.TryGetValue(TrackIdsFormat) is { } ids
-            && PlaylistUnder(e) is { Kind: PlaylistKind.Static } playlist)
+        if (ViewModel is not { } vm)
         {
+            return;
+        }
+
+        if (e.DataTransfer.TryGetValue(TrackIdsFormat) is { } ids)
+        {
+            if (PlaylistUnder(e) is { Kind: PlaylistKind.Static } target)
+            {
+                e.Handled = true;
+                await vm.AddTracksToPlaylistAsync(target, ids);
+            }
+
+            return;
+        }
+
+        if (e.DataTransfer.TryGetFiles() is { } files)
+        {
+            // An async void handler returns to the event system at its first
+            // await, so Handled must be set now or the drop bubbles to
+            // OnWindowDrop and scans twice; e must not be read after the await.
             e.Handled = true;
-            await vm.AddTracksToPlaylistAsync(playlist, ids);
+            string[] paths = LocalPaths(files);
+            PlaylistInfo? playlist = PlaylistUnder(e);
+            if (paths.Length == 0)
+            {
+                return;
+            }
+
+            if (playlist is { Kind: PlaylistKind.Static })
+            {
+                await vm.AddDroppedPathsToPlaylistAsync(playlist, paths);
+            }
+            else
+            {
+                await vm.AddDroppedPathsAsync(paths);
+            }
         }
     }
 

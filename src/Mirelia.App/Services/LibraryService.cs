@@ -364,6 +364,21 @@ public sealed class LibraryService : IDisposable
         });
     }
 
+    /// <summary>
+    /// Scans dropped files/folders like <see cref="ScanPathsAsync"/> and also
+    /// returns the track id of each scanned file, in drop order.
+    /// </summary>
+    public Task<PathScanResult> ScanPathsWithTrackIdsAsync(
+        IReadOnlyList<string> paths, IProgress<int>? progress)
+    {
+        string path = _dbPath;
+        return RunJobAsync(() =>
+        {
+            using var scanDb = LibraryDatabase.Open(path);
+            return new LibraryScanner(scanDb).ScanPathsWithTrackIds(paths, progress);
+        });
+    }
+
     // ---- playlists -----------------------------------------------------
 
     /// <summary>All playlists.</summary>
