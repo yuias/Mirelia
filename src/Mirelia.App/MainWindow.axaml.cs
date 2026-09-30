@@ -42,6 +42,10 @@ public partial class MainWindow : Window
     private TrackRow? _dragSourceRow;
     private int? _dragSourceIndex;
 
+    // Row whose plain press on an existing multi-selection was withheld from
+    // the grid; collapsing to it waits for a release that did not become a drag.
+    private TrackRow? _collapseSelectionOnRelease;
+
     private Point _queueDragOrigin;
     private PointerPressedEventArgs? _queueDragPress;
     private long? _queueDragEntryId;
@@ -148,6 +152,7 @@ public partial class MainWindow : Window
         // handled for its own selection gestures, so observe them anyway.
         Grid.AddHandler(PointerPressedEvent, OnGridPointerPressed, RoutingStrategies.Tunnel);
         Grid.AddHandler(PointerMovedEvent, OnGridPointerMoved, RoutingStrategies.Tunnel);
+        Grid.AddHandler(PointerReleasedEvent, OnGridPointerReleased, RoutingStrategies.Tunnel);
 
         // Drop targets: playlists take track ids, the window takes files.
         PlaylistTreeView.AddHandler(DragDrop.DragOverEvent, OnPlaylistDragOver);
@@ -1228,6 +1233,30 @@ public partial class MainWindow : Window
         _dragPress = _dragSourceRow is not null && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed
             ? e
             : null;
+
+        // The grid collapses a multi-selection to the pressed row on press,
+        // before a drag can start, so dragging several rows would carry only
+        // one. Withhold the press and collapse on release instead, as
+        // Explorer does. Ctrl/Shift presses still go to the grid.
+        _collapseSelectionOnRelease = null;
+        if (_dragPress is not null
+            && (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Shift)) == 0
+            && Grid.SelectedItems is { Count: > 1 } selected
+            && selected.Contains(_dragSourceRow))
+        {
+            _collapseSelectionOnRelease = _dragSourceRow;
+            e.Handled = true;
+            Grid.Focus();
+        }
+    }
+
+    private void OnGridPointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (_collapseSelectionOnRelease is { } row)
+        {
+            _collapseSelectionOnRelease = null;
+            Grid.SelectedItem = row;
+        }
     }
 
     private async void OnGridPointerMoved(object? sender, PointerEventArgs e)
@@ -1261,6 +1290,7 @@ public partial class MainWindow : Window
 
         PointerPressedEventArgs press = _dragPress;
         _dragPress = null;
+        _collapseSelectionOnRelease = null;
         var transfer = new DataTransfer();
         transfer.Add(DataTransferItem.Create(TrackIdsFormat, ids));
         DragDropEffects allowed = DragDropEffects.Copy
