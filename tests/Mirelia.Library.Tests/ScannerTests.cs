@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Mirelia.Library.Database;
 using Mirelia.Library.Querying;
 using Mirelia.Library.Scanning;
@@ -212,5 +213,65 @@ public sealed class ScannerTests : IDisposable
         List<TrackSummary> all = Query("duration > 0");
         Assert.Equal(5, all.Count);
         Assert.Equal(5L, _db.Scalar("SELECT count(*) FROM track WHERE sample_rate = 44100"));
+    }
+
+    [Fact]
+    public void ScanPathsWithTrackIdsReturnsIdsInDropOrder()
+    {
+        string drop = Path.Combine(_workDir, "drop");
+        string sub = Path.Combine(drop, "sub");
+        Directory.CreateDirectory(sub);
+        File.Copy(Path.Combine(FixturesDir, "fixture.flac"), Path.Combine(drop, "B.flac"));
+        File.Copy(Path.Combine(FixturesDir, "fixture.mp3"), Path.Combine(drop, "a.mp3"));
+        File.Copy(Path.Combine(FixturesDir, "fixture-aac.m4a"), Path.Combine(drop, "z.m4a"));
+        File.Copy(Path.Combine(FixturesDir, "fixture.wav"), Path.Combine(sub, "c.wav"));
+        File.WriteAllText(Path.Combine(drop, "notes.txt"), "not audio");
+
+        string knownWav = Path.Combine(_workDir, "fixture.wav");
+        string knownMp3 = Path.Combine(_workDir, "fixture.mp3");
+        List<long> preExisting = AllTrackIds();
+
+        PathScanResult result = new LibraryScanner(_db)
+            .ScanPathsWithTrackIds([knownWav, drop, knownMp3]);
+
+        // Directory contents are sorted by full path, ignoring case.
+        List<string> newFiles =
+        [
+            .. new[]
+            {
+                Path.Combine(drop, "B.flac"),
+                Path.Combine(drop, "a.mp3"),
+                Path.Combine(drop, "z.m4a"),
+                Path.Combine(sub, "c.wav"),
+            }.OrderBy(p => p, StringComparer.OrdinalIgnoreCase),
+        ];
+        List<long> expected =
+        [
+            .. new[] { knownWav }.Concat(newFiles).Append(knownMp3).Select(IdOf),
+        ];
+
+        Assert.Equal(expected, result.TrackIds);
+        Assert.Equal(4, result.Counts.Added);
+        Assert.Equal(2, result.Counts.Unchanged);
+        Assert.Equal(0, result.Counts.Skipped);
+        Assert.Empty(newFiles.Select(IdOf).Intersect(preExisting));
+        Assert.Equal(4, newFiles.Select(IdOf).Distinct().Count());
+    }
+
+    private long IdOf(string path) => (long)_db.Scalar(
+        "SELECT id FROM track WHERE path_lower = $p",
+        ("$p", Path.GetFullPath(path).ToLowerInvariant()))!;
+
+    private List<long> AllTrackIds()
+    {
+        using SqliteCommand cmd = _db.Command("SELECT id FROM track");
+        using SqliteDataReader reader = cmd.ExecuteReader();
+        List<long> ids = [];
+        while (reader.Read())
+        {
+            ids.Add(reader.GetInt64(0));
+        }
+
+        return ids;
     }
 }

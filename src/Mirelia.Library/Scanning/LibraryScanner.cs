@@ -77,13 +77,31 @@ public sealed class LibraryScanner(LibraryDatabase db)
     /// </summary>
     public ScanResult ScanPaths(
         IEnumerable<string> paths, IProgress<int>? progress = null, bool force = false)
+        => ScanPathsCore(paths, progress, force, trackIds: null);
+
+    /// <summary>
+    /// Scans like <see cref="ScanPaths"/> and also returns the track id of
+    /// every scanned file in scan order: top-level items in the order given,
+    /// files inside a directory sorted by full path.
+    /// </summary>
+    public PathScanResult ScanPathsWithTrackIds(
+        IEnumerable<string> paths, IProgress<int>? progress = null)
+    {
+        List<long> ids = [];
+        ScanResult counts = ScanPathsCore(paths, progress, force: false, ids);
+        return new PathScanResult(counts, ids);
+    }
+
+    private ScanResult ScanPathsCore(
+        IEnumerable<string> paths, IProgress<int>? progress, bool force, List<long>? trackIds)
     {
         int added = 0, updated = 0, unchanged = 0, skipped = 0, processed = 0;
         using LibraryDatabase.TransactionScope tx = db.BeginTransaction();
 
         foreach (string path in EnumeratePaths(paths))
         {
-            switch (ScanOne(path, force))
+            (FileOutcome outcome, long? trackId) = ScanOne(path, force);
+            switch (outcome)
             {
                 case FileOutcome.Added:
                     added++;
@@ -97,6 +115,11 @@ public sealed class LibraryScanner(LibraryDatabase db)
                 case FileOutcome.Skipped:
                     skipped++;
                     break;
+            }
+
+            if (trackIds is not null && trackId is { } id)
+            {
+                trackIds.Add(id);
             }
 
             progress?.Report(++processed);
@@ -122,12 +145,14 @@ public sealed class LibraryScanner(LibraryDatabase db)
         {
             if (Directory.Exists(path))
             {
-                foreach (string file in Directory.EnumerateFiles(path, "*", options))
+                // Raw enumeration yields a directory's own files before its
+                // subdirectories, which is not a stable, path-sorted order.
+                IEnumerable<string> files = Directory.EnumerateFiles(path, "*", options)
+                    .Where(file => Extensions.Contains(Path.GetExtension(file)))
+                    .OrderBy(file => file, StringComparer.OrdinalIgnoreCase);
+                foreach (string file in files)
                 {
-                    if (Extensions.Contains(Path.GetExtension(file)))
-                    {
-                        yield return file;
-                    }
+                    yield return file;
                 }
             }
             else if (File.Exists(path) && Extensions.Contains(Path.GetExtension(path)))
@@ -163,7 +188,7 @@ public sealed class LibraryScanner(LibraryDatabase db)
                     continue;
                 }
 
-                switch (ScanOne(path, force))
+                switch (ScanOne(path, force).Outcome)
                 {
                     case FileOutcome.Added:
                         added++;
@@ -238,7 +263,7 @@ public sealed class LibraryScanner(LibraryDatabase db)
             ("$now", DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
     }
 
-    private FileOutcome ScanOne(string path, bool force = false)
+    private (FileOutcome Outcome, long? TrackId) ScanOne(string path, bool force = false)
     {
         var info = new FileInfo(path);
         string fullPath = info.FullName;
@@ -256,7 +281,7 @@ public sealed class LibraryScanner(LibraryDatabase db)
                 existingId = reader.GetInt64(0);
                 if (!force && reader.GetInt64(1) == info.Length && reader.GetInt64(2) == mtime)
                 {
-                    return FileOutcome.Unchanged;
+                    return (FileOutcome.Unchanged, existingId);
                 }
             }
         }
@@ -271,7 +296,7 @@ public sealed class LibraryScanner(LibraryDatabase db)
             or TagLib.UnsupportedFormatException
             or IOException)
         {
-            return FileOutcome.Skipped;
+            return (FileOutcome.Skipped, null);
         }
 
         long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -365,7 +390,7 @@ public sealed class LibraryScanner(LibraryDatabase db)
         }
 
         UpdateFts(trackId, isNew: existingId is null, meta, displayTitle);
-        return existingId is null ? FileOutcome.Added : FileOutcome.Updated;
+        return (existingId is null ? FileOutcome.Added : FileOutcome.Updated, trackId);
     }
 
     private void UpdateFts(long trackId, bool isNew, TrackMetadata meta, string displayTitle)
