@@ -299,7 +299,7 @@ public sealed partial class MainViewModel : ObservableObject
         _artwork.UseCurrentLibrary();
         Transport = new TransportViewModel(player, settings)
         {
-            StartSelectedView = () => PlayRowAsync(0),
+            StartSelectedView = PlayViewAsync,
         };
         Queue = new QueueViewModel(library, player, settings);
         _searchDebounce = new DispatcherTimer
@@ -984,7 +984,14 @@ public sealed partial class MainViewModel : ObservableObject
         await _player.PlayQueueAsync(Tracks.Ids, rowIndex);
     }
 
-    /// <summary>Selects a tree node and plays its view from the first track.</summary>
+    /// <summary>
+    /// Plays the whole current view: from the first row, or from a random row
+    /// when shuffle is on, since the shuffled order starts at the row played.
+    /// </summary>
+    private Task PlayViewAsync()
+        => PlayRowAsync(_player.Shuffle && Tracks is { Count: > 0 } tracks ? Random.Shared.Next(tracks.Count) : 0);
+
+    /// <summary>Selects a tree node and plays its whole view.</summary>
     /// <remarks>
     /// Selecting the node kicks off its own reload, so <see cref="Tracks"/>
     /// may still hold the previous view. Awaiting a fresh reload supersedes
@@ -995,7 +1002,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         SelectedNode = node;
         await ReloadAsync();
-        await PlayRowAsync(0);
+        await PlayViewAsync();
     }
 
     /// <summary>Inserts tracks right after whatever is currently playing.</summary>
