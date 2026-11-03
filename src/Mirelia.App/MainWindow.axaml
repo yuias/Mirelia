@@ -286,7 +286,7 @@
                   <PathIcon Width="52" Height="52" Opacity="0.25"
                             HorizontalAlignment="Center" VerticalAlignment="Center"
                             Data="M9,3 H20 V15.5 A3.5,3.5 0 1 1 17.5,12.1 V7 L11.5,8.2 V17.5 A3.5,3.5 0 1 1 9,14.1 Z" />
-                  <Image Source="{Binding Transport.Artwork}" Stretch="UniformToFill" />
+                  <Image Source="{Binding Transport.Artwork}" Stretch="Uniform" />
                 </Panel>
               </Border>
               <TextBlock FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
@@ -437,7 +437,7 @@
                     <PathIcon Width="56" Height="56" Opacity="0.22"
                               HorizontalAlignment="Center" VerticalAlignment="Center"
                               Data="M9,3 H20 V15.5 A3.5,3.5 0 1 1 17.5,12.1 V7 L11.5,8.2 V17.5 A3.5,3.5 0 1 1 9,14.1 Z" />
-                    <Image Source="{Binding Cover}" Stretch="UniformToFill" />
+                    <Image Source="{Binding Cover}" Stretch="Uniform" />
                   </Panel>
                 </Border>
 
