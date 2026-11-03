@@ -626,6 +626,7 @@ public sealed class AudioPlayerService : IDisposable
                 // The audible entry is no longer in the queue; there is
                 // nothing sane left to resume onto.
                 PlaybackError?.Invoke("output device lost; playback stopped");
+                PlaybackEnded?.Invoke();
                 return;
             }
 
@@ -645,6 +646,7 @@ public sealed class AudioPlayerService : IDisposable
                 }
 
                 PlaybackError?.Invoke("output device lost; playback stopped");
+                PlaybackEnded?.Invoke();
                 return;
             }
 
@@ -652,6 +654,7 @@ public sealed class AudioPlayerService : IDisposable
             if (path is null || !File.Exists(path))
             {
                 PlaybackError?.Invoke($"file missing for track {entry.TrackId}");
+                PlaybackEnded?.Invoke();
                 return;
             }
 
