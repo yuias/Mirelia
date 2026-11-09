@@ -26,6 +26,7 @@ use crate::output::{
     DeviceInfo, OutputBackend, OutputError, OutputStream, RenderInfo, ShareMode, StreamFormat,
     StreamOptions,
 };
+use crate::resample::Converter;
 use crate::spsc::{self, Consumer, Producer, SpscCore};
 use crate::{EngineConfig, Position, State, host_time_ns};
 
@@ -576,6 +577,9 @@ impl Engine {
             queue_empty_sent: false,
             leftover: Vec::new(),
             leftover_pos: 0,
+            output_rate: fmt.sample_rate,
+            converter: None,
+            convert_in: Vec::new(),
         };
 
         let handle = std::thread::Builder::new()
@@ -613,6 +617,34 @@ struct WorkerState {
     /// Gain-adjusted samples not yet pushed into the ring.
     leftover: Vec<f32>,
     leftover_pos: usize,
+    /// Rate of the stream the ring feeds.
+    output_rate: u32,
+    /// Present while the current track's rate differs from `output_rate`.
+    converter: Option<Converter>,
+    /// Swap buffer: holds the source-rate block while `leftover` receives the
+    /// converted output.
+    convert_in: Vec<f32>,
+}
+
+/// Puts the converter in the state a new run for `w.current` needs. A track at
+/// the output rate gets none, so its samples reach the ring untouched.
+fn reset_converter(w: &mut WorkerState) {
+    let rate = w.current.info().sample_rate;
+    if rate == w.output_rate {
+        w.converter = None;
+        return;
+    }
+
+    match &mut w.converter {
+        Some(c) if c.in_rate() == rate => c.reset(),
+        slot => {
+            *slot = Some(Converter::new(
+                rate,
+                w.output_rate,
+                usize::from(w.current.info().channels),
+            ));
+        }
+    }
 }
 
 fn worker_loop(
@@ -626,6 +658,7 @@ fn worker_loop(
     // Empty out whatever the previous session left in the rings, then
     // announce this track.
     flush(&shared);
+    reset_converter(&mut w);
     start_track(&mut w, &mut tags, &mut events, &ring, TAG_TRACK_START, None);
 
     loop {
@@ -649,6 +682,8 @@ fn worker_loop(
                         w.at_eof = false;
                         w.queue_empty_sent = false;
                         shared.ended_signaled.store(false, Ordering::Release);
+                        // The ring is discarded, so the filter's tail goes too.
+                        reset_converter(&mut w);
                         flush(&shared);
                         start_track(&mut w, &mut tags, &mut events, &ring, TAG_TRACK_START, None);
                     }
@@ -669,6 +704,18 @@ fn worker_loop(
         }
 
         if w.at_eof {
+            // Samples still inside the filter belong to the ending track: push
+            // them before announcing the next track or the end of the queue.
+            if w.converter.as_ref().is_some_and(|c| c.pending_frames() > 0) {
+                w.leftover.clear();
+                w.leftover_pos = 0;
+                if let Some(c) = w.converter.as_mut() {
+                    c.flush(&mut w.leftover);
+                }
+
+                continue;
+            }
+
             if let Some(boxed) = w.next.take() {
                 // Auto-advance: same stream, boundary tag marks the switch.
                 let (decoder, params) = *boxed;
@@ -677,6 +724,7 @@ fn worker_loop(
                 w.params = params;
                 w.at_eof = false;
                 w.queue_empty_sent = false;
+                reset_converter(&mut w);
                 start_track(&mut w, &mut tags, &mut events, &ring, TAG_TRACK_START, None);
             } else {
                 if !w.queue_empty_sent {
@@ -734,6 +782,13 @@ fn worker_loop(
                 w.at_eof = true;
             }
         }
+
+        // Convert after the trim above, which counts in source frames.
+        if got_block && let Some(c) = w.converter.as_mut() {
+            std::mem::swap(&mut w.leftover, &mut w.convert_in);
+            w.leftover.clear();
+            c.process(&w.convert_in, &mut w.leftover);
+        }
     }
 }
 
@@ -758,6 +813,7 @@ fn handle_seek(
             w.queue_empty_sent = false;
             shared.eof_no_next.store(false, Ordering::Release);
             shared.ended_signaled.store(false, Ordering::Release);
+            reset_converter(w);
             flush(shared);
             start_track(w, tags, events, ring, TAG_REBASE, Some(target));
         }
@@ -951,7 +1007,7 @@ fn render_callback(
 mod tests {
     use super::*;
     use crate::output::OutputStream;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::Instant;
 
     fn fixture(name: &str) -> PathBuf {
@@ -1332,9 +1388,26 @@ mod tests {
         (Engine::new(config, Box::new(backend)), opened)
     }
 
-    /// Writes a 32-bit float WAV with a unique name under the temp directory
-    /// and returns its path. Samples are interleaved.
-    fn write_wav(rate: u32, channels: u16, samples: &[f32]) -> PathBuf {
+    /// A WAV file in the temp directory that is deleted on drop. Declare it
+    /// before the engine that plays it: on Windows the file cannot be removed
+    /// while the engine's decoder still holds it open.
+    struct TempWav(PathBuf);
+
+    impl TempWav {
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempWav {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    /// Writes a 32-bit float WAV with a unique name under the temp directory.
+    /// Samples are interleaved.
+    fn write_wav(rate: u32, channels: u16, samples: &[f32]) -> TempWav {
         use std::sync::atomic::AtomicUsize;
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -1363,11 +1436,11 @@ mod tests {
             COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::write(&path, bytes).unwrap();
-        path
+        TempWav(path)
     }
 
     /// A short test tone: `frames` frames of `channels` identical samples.
-    fn tone(rate: u32, channels: u16, frames: usize) -> PathBuf {
+    fn tone(rate: u32, channels: u16, frames: usize) -> TempWav {
         let samples: Vec<f32> = (0..frames)
             .flat_map(|n| {
                 let s = (n as f32 * 0.05).sin() * 0.5;
@@ -1377,9 +1450,9 @@ mod tests {
         write_wav(rate, channels, &samples)
     }
 
-    fn params_for(path: PathBuf, token: u64) -> LoadParams {
+    fn params_for(wav: &TempWav, token: u64) -> LoadParams {
         LoadParams {
-            path,
+            path: wav.path().to_path_buf(),
             start_frame: 0,
             end_frame: -1,
             gain_db: 0.0,
@@ -1401,6 +1474,7 @@ mod tests {
 
     #[test]
     fn fixed_rate_opens_the_stream_at_that_rate_and_source_channels() {
+        let (low, mid, stereo) = (tone(22_050, 1, 2205), tone(32_000, 1, 2205), tone(44_100, 2, 2205));
         let (mut e, opened) = recording_engine(EngineConfig::default());
         let returned = e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
         assert_eq!(
@@ -1413,11 +1487,10 @@ mod tests {
         // The channel count is only known at load, so nothing opens yet.
         assert!(opened.lock().unwrap().is_empty());
 
-        let mono = |rate, token| params_for(tone(rate, 1, 2205), token);
-        e.load(Slot::Current, mono(22_050, 1)).unwrap();
+        e.load(Slot::Current, params_for(&low, 1)).unwrap();
         // A different source rate with the same channels reuses the stream.
-        e.load(Slot::Current, mono(32_000, 2)).unwrap();
-        e.load(Slot::Current, params_for(tone(44_100, 2, 2205), 3)).unwrap();
+        e.load(Slot::Current, params_for(&mid, 2)).unwrap();
+        e.load(Slot::Current, params_for(&stereo, 3)).unwrap();
 
         let want = |channels| StreamFormat {
             sample_rate: 48_000,
@@ -1442,27 +1515,30 @@ mod tests {
 
     #[test]
     fn fixed_rate_accepts_a_next_slot_of_a_different_source_rate() {
+        let (current, next) = (tone(44_100, 1, 2205), tone(22_050, 1, 2205));
         let (mut e, _) = recording_engine(EngineConfig::default());
         e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
-        e.load(Slot::Current, params_for(tone(44_100, 1, 2205), 1)).unwrap();
-        e.load(Slot::Next, params_for(tone(22_050, 1, 2205), 2)).unwrap();
+        e.load(Slot::Current, params_for(&current, 1)).unwrap();
+        e.load(Slot::Next, params_for(&next, 2)).unwrap();
     }
 
     #[test]
     fn fixed_rate_still_refuses_a_next_slot_channel_change() {
+        let (current, stereo) = (tone(44_100, 1, 2205), tone(44_100, 2, 2205));
         let (mut e, _) = recording_engine(EngineConfig::default());
         e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
-        e.load(Slot::Current, params_for(tone(44_100, 1, 2205), 1)).unwrap();
-        let next = e.load(Slot::Next, params_for(tone(44_100, 2, 2205), 2));
+        e.load(Slot::Current, params_for(&current, 1)).unwrap();
+        let next = e.load(Slot::Next, params_for(&stereo, 2));
         assert!(matches!(next, Err(EngineError::Unsupported(_))), "{next:?}");
     }
 
     #[test]
     fn fixed_rate_absent_still_refuses_a_next_slot_rate_change() {
+        let (current, next) = (tone(44_100, 1, 2205), tone(22_050, 1, 2205));
         let (mut e, _) = recording_engine(EngineConfig::default());
         e.open_device(None, None, ShareMode::Shared).unwrap();
-        e.load(Slot::Current, params_for(tone(44_100, 1, 2205), 1)).unwrap();
-        let next = e.load(Slot::Next, params_for(tone(22_050, 1, 2205), 2));
+        e.load(Slot::Current, params_for(&current, 1)).unwrap();
+        let next = e.load(Slot::Next, params_for(&next, 2));
         assert!(matches!(next, Err(EngineError::Unsupported(_))), "{next:?}");
     }
 
@@ -1472,30 +1548,254 @@ mod tests {
             allow_resample: false,
             ..EngineConfig::default()
         };
+        let (low, equal) = (tone(22_050, 1, 2205), tone(48_000, 1, 2205));
         let (mut e, _) = recording_engine(config);
         e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
 
-        let rejected = e.load(Slot::Current, params_for(tone(22_050, 1, 2205), 1));
+        let rejected = e.load(Slot::Current, params_for(&low, 1));
         assert!(matches!(rejected, Err(EngineError::Format(_))), "{rejected:?}");
 
-        e.load(Slot::Current, params_for(tone(48_000, 1, 2205), 2)).unwrap();
-        let rejected = e.load(Slot::Next, params_for(tone(22_050, 1, 2205), 3));
+        e.load(Slot::Current, params_for(&equal, 2)).unwrap();
+        let rejected = e.load(Slot::Next, params_for(&low, 3));
         assert!(matches!(rejected, Err(EngineError::Format(_))), "{rejected:?}");
 
         // Without a fixed rate nothing is converted, so any rate loads.
         e.open_device(None, None, ShareMode::Shared).unwrap();
-        e.load(Slot::Current, params_for(tone(22_050, 1, 2205), 4)).unwrap();
+        e.load(Slot::Current, params_for(&low, 4)).unwrap();
     }
 
     #[test]
     fn fixed_rate_position_reports_the_source_rate_after_load() {
+        let (low, mid) = (tone(22_050, 1, 2205), tone(32_000, 1, 2205));
         let (mut e, _) = recording_engine(EngineConfig::default());
         e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
-        e.load(Slot::Current, params_for(tone(22_050, 1, 2205), 1)).unwrap();
+        e.load(Slot::Current, params_for(&low, 1)).unwrap();
         assert_eq!(e.position().sample_rate, 22_050);
 
         // The stream is reused here, so the rate must come from `load`.
-        e.load(Slot::Current, params_for(tone(32_000, 1, 2205), 2)).unwrap();
+        e.load(Slot::Current, params_for(&mid, 2)).unwrap();
         assert_eq!(e.position().sample_rate, 32_000);
+    }
+
+    // ---- resampling on the decode worker ---------------------------------
+
+    type Sink = Arc<std::sync::Mutex<Vec<f32>>>;
+
+    const FREQ: f64 = 997.0;
+
+    /// Mono `0.5 * cos` at `FREQ`, so the first sample is non-zero and the
+    /// silence around a capture can be trimmed.
+    fn cosine(rate: u32, frames: usize) -> Vec<f32> {
+        (0..frames)
+            .map(|n| (0.5 * (std::f64::consts::TAU * FREQ * n as f64 / f64::from(rate)).cos()) as f32)
+            .collect()
+    }
+
+    /// The same sine at the 48 kHz output, `m` frames after the output frame
+    /// that is aligned with source frame `first`.
+    fn ideal(first: usize, in_rate: u32, m: usize) -> f32 {
+        let t = first as f64 / f64::from(in_rate) + m as f64 / 48_000.0;
+        (0.5 * (std::f64::consts::TAU * FREQ * t).cos()) as f32
+    }
+
+    /// Output frames a converted run of `frames` source frames owes.
+    fn out_for(frames: usize, in_rate: u32) -> usize {
+        (frames * 48_000).div_ceil(in_rate as usize)
+    }
+
+    /// An engine whose stream renders into a sink, with the output fixed at
+    /// 48 kHz. The mock device is mono, so sources are mono too.
+    fn fixed_capturing_engine(config: EngineConfig) -> (Engine, Sink) {
+        let sink = Sink::default();
+        let backend = CapturingBackend { sink: sink.clone() };
+        let mut e = Engine::new(config, Box::new(backend));
+        e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
+        (e, sink)
+    }
+
+    /// Waits until the engine has played everything and gone idle.
+    fn wait_for_idle(e: &Engine) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while e.position().state != State::Idle {
+            assert!(Instant::now() < deadline, "engine never went idle");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    /// Everything the stream rendered from the first non-zero sample on. The
+    /// stream runs before `play`, so the leading silence has no fixed length.
+    /// Stops the stream first, so the capture is complete.
+    fn rendered_from_first_sound(e: Engine, sink: &Sink) -> Vec<f32> {
+        drop(e);
+        let captured = sink.lock().unwrap();
+        let start = captured.iter().position(|&s| s != 0.0).unwrap();
+        captured[start..].to_vec()
+    }
+
+    /// `rendered_from_first_sound` without the trailing silence. An interior
+    /// stall would leave zeros inside and show up as extra length.
+    fn rendered_sound(e: Engine, sink: &Sink) -> Vec<f32> {
+        let mut sound = rendered_from_first_sound(e, sink);
+        let end = sound.iter().rposition(|&s| s != 0.0).unwrap() + 1;
+        sound.truncate(end);
+        sound
+    }
+
+    /// Asserts that `out[margin..len - margin]` follows the ideal 48 kHz sine
+    /// of a source that started at source frame `first`. The margins stay
+    /// clear of the filter's start and end transients.
+    fn assert_follows_ideal(out: &[f32], first: usize, in_rate: u32) {
+        let margin = 4_000;
+        for (m, got) in out.iter().enumerate().take(out.len() - margin).skip(margin) {
+            let want = ideal(first, in_rate, m);
+            assert!((got - want).abs() < 1e-3, "frame {m}: {got} vs {want}");
+        }
+    }
+
+    /// Waits until the whole queue is decoded into the ring, before `play`.
+    fn prefill(e: &mut Engine, seen: &mut Vec<EngineEvent>) {
+        assert!(wait_for_event(e, seen, EventKind::QueueEmpty, Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn resampled_track_has_exact_length_and_is_aligned() {
+        let frames = 20_000;
+        let wav = write_wav(44_100, 1, &cosine(44_100, frames));
+        let (mut e, sink) = fixed_capturing_engine(EngineConfig::default());
+        let mut seen = Vec::new();
+        e.load(Slot::Current, params_for(&wav, 1)).unwrap();
+        prefill(&mut e, &mut seen);
+        e.play().unwrap();
+        wait_for_idle(&e);
+
+        let out = rendered_sound(e, &sink);
+        assert_eq!(out.len(), out_for(frames, 44_100));
+        assert_follows_ideal(&out, 0, 44_100);
+    }
+
+    #[test]
+    fn resampled_track_end_is_not_cut() {
+        let frames = 20_000;
+        let wav = write_wav(44_100, 1, &cosine(44_100, frames));
+        let (mut e, sink) = fixed_capturing_engine(EngineConfig::default());
+        let mut seen = Vec::new();
+        e.load(Slot::Current, params_for(&wav, 1)).unwrap();
+        prefill(&mut e, &mut seen);
+        e.play().unwrap();
+
+        assert!(wait_for_event(&mut e, &mut seen, EventKind::TrackEnded, Duration::from_secs(10)));
+        wait_for_idle(&e);
+        // The last callback publishes its position after going idle.
+        std::thread::sleep(Duration::from_millis(20));
+        let pos = e.position();
+        assert_eq!(pos.total_frames, frames as i64);
+        assert_eq!(pos.sample_rate, 44_100);
+        assert!(
+            (frames as i64 - 1..=frames as i64).contains(&pos.frame),
+            "final position {}",
+            pos.frame
+        );
+
+        // Every converted frame reached the device, including the filter tail.
+        assert_eq!(rendered_sound(e, &sink).len(), out_for(frames, 44_100));
+    }
+
+    #[test]
+    fn resampled_rate_change_join_is_gapless() {
+        let b: Vec<f32> = cosine(48_000, 6_000).iter().map(|s| s * 0.5 + 0.1).collect();
+        let a_frames = 6_000;
+        let a_wav = write_wav(44_100, 1, &cosine(44_100, a_frames));
+        let b_wav = write_wav(48_000, 1, &b);
+        let (mut e, sink) = fixed_capturing_engine(EngineConfig::default());
+        let mut seen = Vec::new();
+        e.load(Slot::Current, params_for(&a_wav, 1)).unwrap();
+        e.load(Slot::Next, params_for(&b_wav, 2)).unwrap();
+        prefill(&mut e, &mut seen);
+        e.play().unwrap();
+        wait_for_idle(&e);
+
+        // B passes through, so it must follow the converted A with neither a
+        // gap nor an overlap.
+        let out = rendered_from_first_sound(e, &sink);
+        let join = out_for(a_frames, 44_100);
+        assert_eq!(out[join..join + b.len()], b[..]);
+        assert!(out[join + b.len()..].iter().all(|&s| s == 0.0));
+    }
+
+    #[test]
+    fn resampled_seek_restarts_aligned() {
+        let frames = 30_000;
+        let target = 5_000;
+        let wav = write_wav(44_100, 1, &cosine(44_100, frames));
+        let (mut e, sink) = fixed_capturing_engine(EngineConfig::default());
+        let mut seen = Vec::new();
+        e.load(Slot::Current, params_for(&wav, 1)).unwrap();
+        prefill(&mut e, &mut seen);
+
+        // The seek discards the first run; a fresh QueueEmpty means the rest
+        // of the track is in the ring.
+        seen.clear();
+        e.seek(target as i64).unwrap();
+        prefill(&mut e, &mut seen);
+        e.play().unwrap();
+        wait_for_idle(&e);
+
+        let out = rendered_sound(e, &sink);
+        assert_eq!(out.len(), out_for(frames - target, 44_100));
+        assert_follows_ideal(&out, target, 44_100);
+    }
+
+    #[test]
+    fn resampled_end_frame_trims_in_source_frames() {
+        let end_frame = 20_000;
+        let wav = write_wav(44_100, 1, &cosine(44_100, 30_000));
+        let (mut e, sink) = fixed_capturing_engine(EngineConfig::default());
+        let mut seen = Vec::new();
+        let params = LoadParams {
+            end_frame: end_frame as i64,
+            ..params_for(&wav, 1)
+        };
+        e.load(Slot::Current, params).unwrap();
+        prefill(&mut e, &mut seen);
+        e.play().unwrap();
+        wait_for_idle(&e);
+
+        let out = rendered_sound(e, &sink);
+        assert_eq!(out.len(), out_for(end_frame, 44_100));
+        assert_follows_ideal(&out, 0, 44_100);
+    }
+
+    #[test]
+    fn resampled_skip_to_next_discards_the_pending_tail() {
+        // The three next rates cover a reused converter, a rebuilt one, and
+        // none at all.
+        for next_rate in [44_100, 22_050, 48_000] {
+            // Longer than the ring holds, so the worker is stuck mid-track
+            // with a tail inside the filter when the skip arrives.
+            let long = write_wav(44_100, 1, &cosine(44_100, 150_000));
+            let next_frames = 20_000;
+            let next = write_wav(next_rate, 1, &cosine(next_rate, next_frames));
+            let (mut e, sink) = fixed_capturing_engine(EngineConfig::default());
+            let mut seen = Vec::new();
+            e.load(Slot::Current, params_for(&long, 1)).unwrap();
+            e.load(Slot::Next, params_for(&next, 2)).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while e.position().buffer_fill < 0.7 {
+                assert!(Instant::now() < deadline, "ring never filled");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+
+            e.skip_to_next().unwrap();
+            prefill(&mut e, &mut seen);
+            e.play().unwrap();
+            wait_for_idle(&e);
+            assert_eq!(e.position().user_token, 2);
+
+            // Nothing of the first track survives: the output is exactly the
+            // next track's own run.
+            let out = rendered_sound(e, &sink);
+            assert_eq!(out.len(), out_for(next_frames, next_rate), "next rate {next_rate}");
+            assert_follows_ideal(&out, 0, next_rate);
+        }
     }
 }
