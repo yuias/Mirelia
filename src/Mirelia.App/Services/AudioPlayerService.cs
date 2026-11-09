@@ -19,6 +19,10 @@ public sealed class AudioPlayerService : IDisposable
     private AudioEngine? _engine;
     private bool _deviceOpen;
 
+    // The device actually open, which device recovery can leave different
+    // from the configured one.
+    private string? _openDeviceId;
+
     // Output settings the live device was opened for (device, mode and fixed
     // output rate), and the ReplayGain mode the loaded slots were decoded
     // under. A settings save that touches neither (volume, pane visibility,
@@ -737,6 +741,7 @@ public sealed class AudioPlayerService : IDisposable
         try
         {
             _engine!.OpenDevice(deviceId, exclusive, outputSampleRate);
+            _openDeviceId = deviceId;
             _deviceOpen = true;
             ApplyVolume();
             return true;
@@ -771,6 +776,7 @@ public sealed class AudioPlayerService : IDisposable
             PlaybackError?.Invoke($"exclusive mode unavailable, using shared ({ex.Result})");
         }
 
+        _openDeviceId = settings.DeviceId;
         _deviceOpen = true;
         ApplyVolume();
     }
@@ -792,8 +798,7 @@ public sealed class AudioPlayerService : IDisposable
             // expected to repeat for later tracks (a channel-count change can
             // also trigger it); shared mode beats silence. Unsupported is not
             // handled here because an undecodable file reports it too.
-            AppSettings settings = _settings.Current;
-            _engine!.OpenDevice(settings.DeviceId, exclusive: false, settings.OutputSampleRate);
+            _engine!.OpenDevice(_openDeviceId, exclusive: false, _settings.Current.OutputSampleRate);
             ApplyVolume();
             _engine.Load(AudioSlot.Current, path, (ulong)entry.EntryId, gain, startFrame);
             PlaybackError?.Invoke($"exclusive mode unavailable, using shared ({ex.Result})");
