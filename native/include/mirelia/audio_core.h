@@ -93,7 +93,10 @@ typedef struct kn_engine_config {
     uint32_t target_latency_ms;  /* hint; 0 = backend default */
     uint32_t decode_ahead_ms;    /* ring buffer depth, default 2000 */
     int      allow_resample;     /* 0 = fail rather than resample */
-    int      dither_to_int;      /* apply TPDF dither on float->int */
+    int      dither_to_int;      /* TPDF dither on float->int: 0 = off,
+                                    2 = only on tracks the backend had to
+                                    resample, any other value = always.
+                                    Exclusive mode with integer devices only. */
 } kn_engine_config;
 
 kn_result kn_engine_create(const kn_engine_config *cfg, kn_engine **out);

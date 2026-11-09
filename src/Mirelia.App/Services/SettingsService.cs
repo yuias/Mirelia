@@ -111,6 +111,12 @@ public sealed record AppSettings
     /// source rate. Must be one of <see cref="SupportedOutputSampleRates"/>.
     /// </summary>
     public uint? OutputSampleRate { get; init; }
+
+    /// <summary>
+    /// Applies TPDF dither to tracks Mirelia resamples, on integer devices in
+    /// exclusive mode. Tracks played at their own rate are never dithered.
+    /// </summary>
+    public bool DitherResampled { get; init; }
 }
 
 /// <summary>

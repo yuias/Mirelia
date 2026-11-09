@@ -80,6 +80,10 @@ public partial class PreferencesDialog : Window
         ExclusiveCheck.IsEnabled = !noDevices;
         RateBox.IsEnabled = !noDevices;
 
+        DitherCheck.IsChecked = settings.Current.DitherResampled;
+        UpdateDitherEnabled();
+        RateBox.SelectionChanged += (_, _) => UpdateDitherEnabled();
+
         RgBox.ItemsSource = new[] { ReplayGainMode.Off, ReplayGainMode.Track };
         RgBox.SelectedItem = settings.Current.ReplayGain;
 
@@ -99,6 +103,10 @@ public partial class PreferencesDialog : Window
         FontSizeBox.Value = (decimal)settings.Current.FontSize;
     }
 
+    // Only tracks Mirelia resamples are dithered, and that needs a fixed rate.
+    private void UpdateDitherEnabled() =>
+        DitherCheck.IsEnabled = RateBox.IsEnabled && (RateBox.SelectedItem as RateChoice)?.Rate is not null;
+
     private void OnCancel(object? sender, RoutedEventArgs e) => Close(false);
 
     private void OnSave(object? sender, RoutedEventArgs e)
@@ -116,6 +124,7 @@ public partial class PreferencesDialog : Window
             DeviceId = (DeviceBox.SelectedItem as DeviceChoice)?.Id,
             Exclusive = ExclusiveCheck.IsChecked == true,
             OutputSampleRate = (RateBox.SelectedItem as RateChoice)?.Rate,
+            DitherResampled = DitherCheck.IsChecked == true,
             ReplayGain = RgBox.SelectedItem as ReplayGainMode? ?? ReplayGainMode.Off,
             Theme = ThemeBox.SelectedItem as AppTheme? ?? AppTheme.Auto,
             FontFamily = (FontFamilyBox.SelectedItem as FontChoice)?.Name,

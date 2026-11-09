@@ -130,6 +130,21 @@ static void test_lifecycle_and_idle_contract(void) {
     printf("ok   destroy(NULL) is a no-op\n");
 }
 
+static void test_dither_modes(void) {
+    /* 0 = off, 1 = always (unchanged), 2 = resampled tracks only. */
+    for (int mode = 0; mode <= 2; mode++) {
+        kn_engine_config cfg = default_config();
+        cfg.dither_to_int = mode;
+        kn_engine *e = NULL;
+        char msg[64];
+        snprintf(msg, sizeof(msg), "create succeeds with dither_to_int = %d", mode);
+        CHECK(p_create(&cfg, &e) == KN_OK && e != NULL, msg);
+        if (e != NULL) {
+            p_destroy(e);
+        }
+    }
+}
+
 static void test_probe(const char *fixtures_dir) {
     char path[1024];
     snprintf(path, sizeof(path), "%s/fixture.flac", fixtures_dir);
@@ -243,6 +258,7 @@ int main(int argc, char **argv) {
     test_version_negotiation();
     test_argument_validation();
     test_lifecycle_and_idle_contract();
+    test_dither_modes();
     test_device_open();
     if (argc == 3) {
         test_probe(argv[2]);

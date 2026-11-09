@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use mirelia_audio::engine::{EngineError, LoadParams, Slot};
 use mirelia_audio::events::EngineEvent;
 use mirelia_audio::output::{OutputBackend, StreamFormat};
-use mirelia_audio::{Engine, EngineConfig, State};
+use mirelia_audio::{DitherMode, Engine, EngineConfig, State};
 
 // ---- kn_result ---------------------------------------------------------
 
@@ -281,7 +281,13 @@ pub unsafe extern "C" fn kn_engine_create(
                 cfg.decode_ahead_ms
             },
             allow_resample: cfg.allow_resample != 0,
-            dither_to_int: cfg.dither_to_int != 0,
+            // 0 = off, 2 = resampled tracks only, anything else = always, so
+            // hosts that passed 1 for "on" keep their behavior.
+            dither: match cfg.dither_to_int {
+                0 => DitherMode::Off,
+                2 => DitherMode::Resampled,
+                _ => DitherMode::Always,
+            },
         },
         make_backend(),
     );
@@ -785,6 +791,24 @@ mod tests {
         assert!(e.is_null());
         let msg = unsafe { CStr::from_ptr(kn_engine_last_error(e)) };
         assert!(msg.to_str().unwrap().contains("ABI"));
+    }
+
+    #[test]
+    fn dither_to_int_maps_to_a_mode() {
+        for (value, expected) in [
+            (0, DitherMode::Off),
+            (1, DitherMode::Always),
+            (2, DitherMode::Resampled),
+            (-1, DitherMode::Always),
+            (7, DitherMode::Always),
+        ] {
+            let mut cfg = config(KN_ABI_VERSION);
+            cfg.dither_to_int = value;
+            let mut e: *mut KnEngine = ptr::null_mut();
+            assert_eq!(unsafe { kn_engine_create(&cfg, &mut e) }, KN_OK);
+            assert_eq!(unsafe { &*e }.engine.config().dither, expected, "value {value}");
+            unsafe { kn_engine_destroy(e) };
+        }
     }
 
     #[test]

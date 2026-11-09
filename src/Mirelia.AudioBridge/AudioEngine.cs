@@ -28,7 +28,7 @@ public sealed class AudioEngine : IDisposable
             TargetLatencyMs = config.TargetLatencyMs,
             DecodeAheadMs = config.DecodeAheadMs,
             AllowResample = config.AllowResample ? 1 : 0,
-            DitherToInt = config.DitherToInt ? 1 : 0,
+            DitherToInt = (int)config.Dither,
         };
 
         KnResult result;

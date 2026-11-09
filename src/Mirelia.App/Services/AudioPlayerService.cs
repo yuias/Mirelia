@@ -23,11 +23,12 @@ public sealed class AudioPlayerService : IDisposable
     // from the configured one.
     private string? _openDeviceId;
 
-    // Output settings the live device was opened for (device, mode and fixed
-    // output rate), and the ReplayGain mode the loaded slots were decoded
-    // under. A settings save that touches neither (volume, pane visibility,
-    // window geometry, fonts…) must leave playback alone.
-    private (string? DeviceId, bool Exclusive, uint? OutputSampleRate) _deviceConfig;
+    // Output settings the live device was opened for (device, mode, fixed
+    // output rate and resampled-track dither), and the ReplayGain mode the
+    // loaded slots were decoded under. A settings save that touches neither
+    // (volume, pane visibility, window geometry, fonts…) must leave playback
+    // alone.
+    private (string? DeviceId, bool Exclusive, uint? OutputSampleRate, bool DitherResampled) _deviceConfig;
     private ReplayGainMode _replayGain;
 
     // Volume lives here, not on the engine, because the engine is created
@@ -89,7 +90,7 @@ public sealed class AudioPlayerService : IDisposable
             TimeSpan.FromMilliseconds(200), DispatcherPriority.Background, (_, _) => Poll());
 
         AppSettings current = settings.Current;
-        _deviceConfig = (current.DeviceId, current.Exclusive, current.OutputSampleRate);
+        _deviceConfig = (current.DeviceId, current.Exclusive, current.OutputSampleRate, current.DitherResampled);
         _replayGain = current.ReplayGain;
         _volume = ClampVolume(current.Volume);
         _repeat = current.Repeat;
@@ -110,16 +111,18 @@ public sealed class AudioPlayerService : IDisposable
             _ = ReconcilePreloadAsync();
         }
 
-        if (_deviceConfig == (settings.DeviceId, settings.Exclusive, settings.OutputSampleRate))
+        var deviceConfig = (settings.DeviceId, settings.Exclusive, settings.OutputSampleRate, settings.DitherResampled);
+        if (_deviceConfig == deviceConfig)
         {
             return;
         }
 
-        // Device, mode and output rate changes take effect on the next play;
-        // live playback stops so the old stream does not linger on the old
-        // device. The queue itself is left intact — only the "what's audible"
-        // pointer resets, mirroring the previous _index = -1 behavior.
-        _deviceConfig = (settings.DeviceId, settings.Exclusive, settings.OutputSampleRate);
+        // Device, mode, output rate and dither changes take effect on the next
+        // play; live playback stops so the old stream does not linger on the
+        // old device. The queue itself is left intact — only the "what's
+        // audible" pointer resets, mirroring the previous _index = -1 behavior.
+        bool ditherChanged = _deviceConfig.DitherResampled != settings.DitherResampled;
+        _deviceConfig = deviceConfig;
         try
         {
             _engine?.Stop();
@@ -128,6 +131,13 @@ public sealed class AudioPlayerService : IDisposable
         catch (AudioEngineException)
         {
             // Old device may already be gone; the reopen handles it.
+        }
+
+        if (ditherChanged)
+        {
+            // The dither mode is fixed when the engine is created.
+            _engine?.Dispose();
+            _engine = null;
         }
 
         _deviceOpen = false;
@@ -755,8 +765,11 @@ public sealed class AudioPlayerService : IDisposable
     private void EnsureEngine()
     {
         // The engine must be allowed to convert, or a fixed output rate
-        // would fail every track whose source rate differs.
-        _engine ??= AudioEngine.Create(new AudioEngineConfig(AllowResample: true, DitherToInt: false));
+        // would fail every track whose source rate differs. Dither is off
+        // for tracks that play at their own rate, which keeps them bit-perfect.
+        _engine ??= AudioEngine.Create(new AudioEngineConfig(
+            AllowResample: true,
+            Dither: _settings.Current.DitherResampled ? DitherMode.Resampled : DitherMode.Off));
         if (_deviceOpen)
         {
             return;

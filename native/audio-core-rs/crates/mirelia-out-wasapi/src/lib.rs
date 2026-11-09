@@ -43,8 +43,8 @@ use windows::core::{PCWSTR, implement};
 use convert::{DeviceFormat, Dither};
 use mirelia_audio::events::{EventKind, EventSink};
 use mirelia_audio::output::{
-    DeviceInfo, OutputBackend, OutputError, OutputStream, RenderCallback, RenderInfo, ShareMode,
-    StreamFormat, StreamOptions,
+    DeviceInfo, DitherControl, OutputBackend, OutputError, OutputStream, RenderCallback,
+    RenderInfo, ShareMode, StreamFormat, StreamOptions,
 };
 
 /// WASAPI render backend. Create one per engine.
@@ -209,6 +209,8 @@ struct ConvertState<'a> {
     channels: usize,
     scratch: &'a mut [f32],
     dither: &'a mut Dither,
+    /// The engine's per-block decision, applied to `dither` after each callback.
+    dither_control: &'a DitherControl,
 }
 
 fn device_for(
@@ -529,9 +531,9 @@ impl OutputBackend for WasapiBackend {
                         let _ = result_tx.send(Ok(s.event.0 as isize));
                         let mut scratch =
                             vec![0.0f32; s.buffer_frames as usize * channels];
-                        let mut dither = Dither::new(
-                            options.dither && s.device_format != DeviceFormat::F32,
-                        );
+                        // Off until the render loop applies the engine's
+                        // decision for the first block.
+                        let mut dither = Dither::new(false);
                         // Registered for this stream's lifetime; dropped
                         // (and unregistered) when the render loop returns.
                         let watch = DeviceWatch::register();
@@ -543,6 +545,7 @@ impl OutputBackend for WasapiBackend {
                             channels,
                             scratch: &mut scratch,
                             dither: &mut dither,
+                            dither_control: &options.dither,
                         };
                         unsafe {
                             render_loop(
@@ -649,6 +652,9 @@ unsafe fn render_loop(
                 _ => {
                     let buf = &mut conv.scratch[..samples];
                     callback(buf, &info);
+                    // Only this arm converts to integers: shared mode and F32
+                    // devices never reach it, so they are never dithered.
+                    conv.dither.set_enabled(conv.dither_control.is_enabled());
                     convert::write_samples(buf, ptr, s.device_format, conv.dither);
                 }
             }

@@ -42,6 +42,11 @@ impl Dither {
         }
     }
 
+    /// Turns dithering on or off without reseeding the generator.
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
     #[inline]
     fn next_uniform(&mut self) -> f32 {
         // xorshift32; cheap, RT-safe, quality is ample for dither noise.
@@ -163,6 +168,29 @@ mod tests {
         for chunk in out.as_chunks::<2>().0 {
             let v = i16::from_le_bytes(*chunk);
             assert!((v - expected).abs() <= 1, "dithered value {v} vs {expected}");
+        }
+    }
+
+    #[test]
+    fn disabling_after_enabling_yields_undithered_output() {
+        let src = vec![0.25f32; 4096];
+        let expected = (0.25f64 * 32_768.0).round() as i16;
+        let mut dither = Dither::new(true);
+        let mut out = vec![0u8; src.len() * DeviceFormat::S16.bytes_per_sample()];
+
+        unsafe { write_samples(&src, out.as_mut_ptr(), DeviceFormat::S16, &mut dither) };
+        assert!(
+            out.as_chunks::<2>()
+                .0
+                .iter()
+                .any(|c| i16::from_le_bytes(*c) != expected),
+            "enabled dither should move some samples off the rounded value"
+        );
+
+        dither.set_enabled(false);
+        unsafe { write_samples(&src, out.as_mut_ptr(), DeviceFormat::S16, &mut dither) };
+        for chunk in out.as_chunks::<2>().0 {
+            assert_eq!(i16::from_le_bytes(*chunk), expected);
         }
     }
 }

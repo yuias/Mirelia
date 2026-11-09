@@ -32,6 +32,23 @@ public sealed class SettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void DitherResampledDefaultsToOff()
+    {
+        var service = new SettingsService(Path.Combine(_root, "settings.json"));
+
+        Assert.False(service.Current.DitherResampled);
+    }
+
+    [Fact]
+    public void ADitherResampledChoiceSurvivesAReload()
+    {
+        string path = Path.Combine(_root, "settings.json");
+        new SettingsService(path).Save(new AppSettings { DitherResampled = true });
+
+        Assert.True(new SettingsService(path).Current.DitherResampled);
+    }
+
+    [Fact]
     public void AnUnsupportedOutputSampleRateLoadsAsSameAsSource()
     {
         string path = Path.Combine(_root, "settings.json");

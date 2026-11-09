@@ -66,3 +66,4 @@ user-facing setting for it.
 |---|---|---|
 | 1 | 2026-08-08 | Initial freeze |
 | 1 | 2026-11-10 | No layout or signature change. A non-NULL `desired` in `kn_engine_open_device` fixes the output rate (`sample_rate == 0` is `KN_ERR_INVALID_ARG`, `channels == 0` follows the source). `kn_position` is in source frames, not device frames. |
+| 1 | 2026-11-10 | No layout or signature change. `kn_engine_config.dither_to_int` is a mode: `0` off, `2` dither only tracks the backend resampled, any other non-zero value (including the former `1`) always. A track that passes through at its own rate is never dithered in mode `2`, so it stays bit-perfect. |

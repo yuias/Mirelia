@@ -23,12 +23,12 @@ use mirelia_decode::{DecodeError, Decoder};
 
 use crate::events::{EngineEvent, EventKind, EventSink};
 use crate::output::{
-    DeviceInfo, OutputBackend, OutputError, OutputStream, RenderInfo, ShareMode, StreamFormat,
-    StreamOptions,
+    DeviceInfo, DitherControl, OutputBackend, OutputError, OutputStream, RenderInfo, ShareMode,
+    StreamFormat, StreamOptions,
 };
 use crate::resample::Converter;
 use crate::spsc::{self, Consumer, Producer, SpscCore};
-use crate::{EngineConfig, Position, State, host_time_ns};
+use crate::{DitherMode, EngineConfig, Position, State, host_time_ns};
 
 /// Engine failure classification, mirroring `kn_result`.
 #[derive(Debug)]
@@ -547,6 +547,18 @@ impl Engine {
         let ring = SpscCore::<f32>::new((samples_per_sec * depth_ms / 1000).max(8192));
         let tags = SpscCore::<Tag>::new(16);
 
+        // Starts on only for `Always`; under `Resampled` the render callback
+        // switches it per block once it knows which track is audible.
+        let dither = DitherOutput {
+            mode: self.config.dither,
+            control: DitherControl::new(self.config.dither == DitherMode::Always),
+        };
+
+        let options = StreamOptions {
+            mode: request.mode,
+            dither: dither.control.clone(),
+        };
+
         let callback = render_callback(
             spsc::consumer(ring.clone()),
             spsc::consumer(tags.clone()),
@@ -554,14 +566,11 @@ impl Engine {
             self.shared.clone(),
             fmt,
             ring.capacity(),
+            dither,
         );
 
         let events = EventSink::new(spsc::producer(self.ev_device.clone()));
 
-        let options = StreamOptions {
-            mode: request.mode,
-            dither: self.config.dither_to_int,
-        };
         let stream = self
             .backend
             .open_stream(request.id.as_deref(), fmt, options, callback, events)?;
@@ -920,6 +929,14 @@ fn push_event(events: &mut Producer<EngineEvent>, kind: EventKind, token: u64, c
 
 // ---- render callback ---------------------------------------------------
 
+/// The dither policy and the flag that carries each block's decision to the
+/// backend. One parameter for `render_callback`, which is at clippy's
+/// argument limit otherwise.
+struct DitherOutput {
+    mode: DitherMode,
+    control: DitherControl,
+}
+
 /// Builds the RT callback. Everything it needs is owned or atomic;
 /// the body allocates nothing and takes no locks.
 fn render_callback(
@@ -929,6 +946,7 @@ fn render_callback(
     shared: Arc<Shared>,
     fmt: StreamFormat,
     ring_capacity: usize,
+    dither: DitherOutput,
 ) -> crate::output::RenderCallback {
     let channels = usize::from(fmt.channels);
     let mut volume = f32::from_bits(shared.volume_bits.load(Ordering::Acquire));
@@ -953,6 +971,9 @@ fn render_callback(
 
         let playing = shared.playing.load(Ordering::Acquire);
         if !playing {
+            // Only `Always` dithers silence; the other modes keep it digital
+            // silence.
+            dither.control.set_enabled(dither.mode == DitherMode::Always);
             buf.fill(0.0);
             shared.pub_fill_permille.store(
                 (samples.len() * 1000 / ring_capacity) as u32,
@@ -961,6 +982,11 @@ fn render_callback(
             return;
         }
 
+        // Whether this block holds audio, and whether any of it is a
+        // pass-through track. Tracking every pop (not just the first and last)
+        // keeps a short pass-through track between two resampled ones undithered.
+        let mut has_audio = false;
+        let mut has_pass_through = false;
         let mut filled = 0usize;
         while filled < buf.len() {
             // Apply a control tag once its sample index is reached.
@@ -990,6 +1016,10 @@ fn render_callback(
             let got = samples.pop_slice(&mut buf[filled..filled + want]);
             filled += got;
             track_frames += (got / channels) as i64;
+            if got > 0 {
+                has_audio = true;
+                has_pass_through |= source_rate == output_rate;
+            }
 
             if got < want {
                 // Ring is dry: either the track is over or we are stalling.
@@ -1015,6 +1045,12 @@ fn render_callback(
         }
 
         buf[filled..].fill(0.0);
+
+        dither.control.set_enabled(match dither.mode {
+            DitherMode::Off => false,
+            DitherMode::Always => true,
+            DitherMode::Resampled => has_audio && !has_pass_through,
+        });
 
         // Smoothed volume over the delivered audio.
         let target = f32::from_bits(shared.volume_bits.load(Ordering::Acquire));
@@ -1344,6 +1380,10 @@ mod tests {
             shared.clone(),
             fmt,
             ring.capacity(),
+            DitherOutput {
+                mode: DitherMode::Off,
+                control: DitherControl::default(),
+            },
         );
 
         tags.push_slice(&[Tag {
@@ -1361,6 +1401,149 @@ mod tests {
 
         assert_eq!(shared.pub_frame.load(Ordering::Acquire), 1441);
         assert_eq!(shared.pub_rate.load(Ordering::Acquire), 44_100);
+    }
+
+    /// One 48 kHz stereo render callback fed by hand, for the dither decision.
+    struct DitherRig {
+        control: DitherControl,
+        shared: Arc<Shared>,
+        samples: Producer<f32>,
+        tags: Producer<Tag>,
+        callback: crate::output::RenderCallback,
+    }
+
+    const RIG_FRAMES: usize = 480;
+
+    impl DitherRig {
+        fn new(mode: DitherMode) -> Self {
+            let shared = Shared::new();
+            shared.playing.store(true, Ordering::Release);
+            let ring = SpscCore::<f32>::new(8192);
+            let tag_ring = SpscCore::<Tag>::new(16);
+            let control = DitherControl::default();
+            let callback = render_callback(
+                spsc::consumer(ring.clone()),
+                spsc::consumer(tag_ring.clone()),
+                spsc::producer(SpscCore::<EngineEvent>::new(64)),
+                shared.clone(),
+                StreamFormat {
+                    sample_rate: 48_000,
+                    channels: 2,
+                },
+                ring.capacity(),
+                DitherOutput {
+                    mode,
+                    control: control.clone(),
+                },
+            );
+            Self {
+                control,
+                shared,
+                samples: spsc::producer(ring),
+                tags: spsc::producer(tag_ring),
+                callback,
+            }
+        }
+
+        /// Queues a track start at a sample index of the producer stream.
+        fn start_track(&mut self, at_sample: usize, source_rate: u32) {
+            self.tags.push_slice(&[Tag {
+                kind: TAG_TRACK_START,
+                at_sample,
+                token: 1,
+                base_frame: 0,
+                total_frames: 100_000,
+                source_rate,
+            }]);
+        }
+
+        /// Renders one block of `RIG_FRAMES` frames and returns whether it was
+        /// to be dithered. Refills the ring so the block is always full audio.
+        fn render(&mut self) -> bool {
+            self.samples.push_slice(&[0.25; RIG_FRAMES * 2]);
+            let mut buf = [0.0f32; RIG_FRAMES * 2];
+            (self.callback)(&mut buf, &RenderInfo::default());
+            self.control.is_enabled()
+        }
+    }
+
+    #[test]
+    fn dither_off_never_dithers() {
+        let mut rig = DitherRig::new(DitherMode::Off);
+        rig.start_track(0, 44_100);
+        assert!(!rig.render());
+        rig.start_track(RIG_FRAMES * 2, 48_000);
+        assert!(!rig.render());
+    }
+
+    #[test]
+    fn dither_always_dithers_every_block_even_when_paused() {
+        let mut rig = DitherRig::new(DitherMode::Always);
+        rig.start_track(0, 48_000);
+        assert!(rig.render());
+        rig.start_track(RIG_FRAMES * 2, 44_100);
+        assert!(rig.render());
+
+        rig.shared.playing.store(false, Ordering::Release);
+        assert!(rig.render());
+    }
+
+    #[test]
+    fn dither_resampled_follows_the_audible_track() {
+        let mut rig = DitherRig::new(DitherMode::Resampled);
+
+        // 44.1 kHz source on a 48 kHz stream is converted.
+        rig.start_track(0, 44_100);
+        assert!(rig.render());
+
+        // A 48 kHz source passes through untouched.
+        rig.start_track(RIG_FRAMES * 2, 48_000);
+        assert!(!rig.render());
+    }
+
+    #[test]
+    fn dither_resampled_leaves_a_block_straddling_a_boundary_undithered() {
+        // Resampled to pass-through, boundary in the middle of the block.
+        let mut rig = DitherRig::new(DitherMode::Resampled);
+        rig.start_track(0, 44_100);
+        assert!(rig.render());
+        rig.start_track(RIG_FRAMES * 2 + RIG_FRAMES, 48_000);
+        assert!(!rig.render());
+        // The next block is wholly pass-through.
+        assert!(!rig.render());
+
+        // Pass-through to resampled, boundary in the middle of the block.
+        let mut rig = DitherRig::new(DitherMode::Resampled);
+        rig.start_track(0, 48_000);
+        assert!(!rig.render());
+        rig.start_track(RIG_FRAMES * 2 + RIG_FRAMES, 44_100);
+        assert!(!rig.render());
+        // The next block is wholly resampled and dithers again.
+        assert!(rig.render());
+    }
+
+    #[test]
+    fn dither_resampled_skips_a_pass_through_track_between_resampled_ones() {
+        let mut rig = DitherRig::new(DitherMode::Resampled);
+        rig.start_track(0, 44_100);
+        rig.start_track(RIG_FRAMES / 2, 48_000);
+        rig.start_track(RIG_FRAMES, 44_100);
+        assert!(!rig.render());
+    }
+
+    #[test]
+    fn dither_resampled_leaves_silence_and_pause_undithered() {
+        let mut rig = DitherRig::new(DitherMode::Resampled);
+        rig.start_track(0, 44_100);
+        assert!(rig.render());
+
+        // An empty ring renders silence.
+        let mut buf = [0.0f32; RIG_FRAMES * 2];
+        (rig.callback)(&mut buf, &RenderInfo::default());
+        assert!(!rig.control.is_enabled());
+
+        rig.shared.playing.store(false, Ordering::Release);
+        assert!(!rig.render());
     }
 
     #[test]

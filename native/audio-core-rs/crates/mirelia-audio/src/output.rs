@@ -2,6 +2,8 @@
 //! render callback; WASAPI and CoreAudio implement this in their own crates.
 
 use std::fmt;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::events::EventSink;
 
@@ -24,14 +26,37 @@ pub enum ShareMode {
     Exclusive,
 }
 
+/// Whether the backend should dither the block it is about to convert. The
+/// render callback sets it once per call and the backend reads it after the
+/// callback returns, so dither can follow the audible track.
+#[derive(Debug, Clone, Default)]
+pub struct DitherControl(Arc<AtomicBool>);
+
+impl DitherControl {
+    /// Creates a control holding `enabled`.
+    pub fn new(enabled: bool) -> Self {
+        Self(Arc::new(AtomicBool::new(enabled)))
+    }
+
+    /// Sets whether the next block is dithered.
+    pub fn set_enabled(&self, enabled: bool) {
+        self.0.store(enabled, Ordering::Release);
+    }
+
+    /// Whether the most recently rendered block is to be dithered.
+    pub fn is_enabled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
 /// Per-stream options beyond the PCM format.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct StreamOptions {
     /// Access mode to open the device with.
     pub mode: ShareMode,
-    /// Apply TPDF dither when the device takes integer samples
+    /// Applies TPDF dither per block when the device takes integer samples
     /// (exclusive mode only; shared mode stays float end to end).
-    pub dither: bool,
+    pub dither: DitherControl,
 }
 
 /// One playback device, as reported by a backend.

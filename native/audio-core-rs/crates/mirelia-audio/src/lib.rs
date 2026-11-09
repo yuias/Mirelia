@@ -15,6 +15,19 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 pub use engine::{Engine, EngineError, LoadParams, Slot};
+/// When TPDF dither is applied on float-to-int conversion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DitherMode {
+    /// Never.
+    Off,
+    /// Every block, whatever the track.
+    #[default]
+    Always,
+    /// Only blocks made up entirely of tracks that Mirelia's resampler
+    /// converted. A track that passes through at its own rate is never
+    /// dithered, which keeps it bit-perfect.
+    Resampled,
+}
 
 /// Engine configuration, mirroring `kn_engine_config` minus the ABI version
 /// (version negotiation is the ABI layer's concern, not the engine's).
@@ -28,8 +41,8 @@ pub struct EngineConfig {
     /// (a fixed output rate that differs from the source's) fails with a
     /// format error instead.
     pub allow_resample: bool,
-    /// Apply TPDF dither on float-to-int conversion.
-    pub dither_to_int: bool,
+    /// When to apply TPDF dither on float-to-int conversion.
+    pub dither: DitherMode,
 }
 
 impl Default for EngineConfig {
@@ -38,7 +51,7 @@ impl Default for EngineConfig {
             target_latency_ms: 0,
             decode_ahead_ms: 2000,
             allow_resample: true,
-            dither_to_int: true,
+            dither: DitherMode::Always,
         }
     }
 }
