@@ -718,9 +718,20 @@ fn worker_loop(
         }
 
         if w.at_eof {
-            // Samples still inside the filter belong to the ending track: push
-            // them before announcing the next track or the end of the queue.
-            if w.converter.as_ref().is_some_and(|c| c.pending_frames() > 0) {
+            // Same source rate and the next track is already queued: keep the
+            // filter running so the join stays gapless. The tail of the ending
+            // track is then emitted as the next track's samples push through.
+            let continues = w.converter.as_ref().is_some_and(|c| {
+                c.pending_frames() > 0
+                    && w.next
+                        .as_ref()
+                        .is_some_and(|n| n.0.info().sample_rate == c.in_rate())
+            });
+
+            // Otherwise the samples still inside the filter belong to the
+            // ending track: push them before announcing the next track or the
+            // end of the queue.
+            if !continues && w.converter.as_ref().is_some_and(|c| c.pending_frames() > 0) {
                 w.leftover.clear();
                 w.leftover_pos = 0;
                 if let Some(c) = w.converter.as_mut() {
@@ -738,7 +749,10 @@ fn worker_loop(
                 w.params = params;
                 w.at_eof = false;
                 w.queue_empty_sent = false;
-                reset_converter(&mut w);
+                if !continues {
+                    reset_converter(&mut w);
+                }
+
                 start_track(&mut w, &mut tags, &mut events, &ring, TAG_TRACK_START, None);
             } else {
                 if !w.queue_empty_sent {
@@ -865,12 +879,20 @@ fn start_track(
         .total_frames
         .map(|t| t as i64)
         .unwrap_or(-1);
+    // On a join that kept the filter running, the first sample of the new track
+    // comes out after the tail the filter still owes the previous one. Every
+    // other path has no pending frames (flushed, reset, or no converter).
+    let head = w
+        .converter
+        .as_ref()
+        .map_or(0, |c| c.pending_frames() as usize)
+        * usize::from(w.current.info().channels);
     // A 16-slot tag ring cannot overflow in practice (tags are rare); if it
     // ever is full the tag is dropped and positions stay on the old base,
     // which is survivable — never block here.
     let _ = tags.push_slice(&[Tag {
         kind,
-        at_sample: ring.write_index(),
+        at_sample: ring.write_index() + head,
         token: w.params.user_token,
         base_frame: base,
         total_frames: total,
@@ -1821,5 +1843,263 @@ mod tests {
             assert_eq!(out.len(), out_for(next_frames, next_rate), "next rate {next_rate}");
             assert_follows_ideal(&out, 0, next_rate);
         }
+    }
+
+    #[test]
+    fn resampled_two_converted_tracks_join_at_different_rates() {
+        let (a_frames, b_frames) = (10_000, 10_000);
+        let a_wav = write_wav(44_100, 1, &cosine(44_100, a_frames));
+        let b_wav = write_wav(22_050, 1, &cosine(22_050, b_frames));
+        let (mut e, step) = stepped_engine(EngineConfig::default(), fixed(48_000));
+        e.load(Slot::Current, params_for(&a_wav, 1)).unwrap();
+        e.load(Slot::Next, params_for(&b_wav, 2)).unwrap();
+        e.play().unwrap();
+
+        let join = out_for(a_frames, 44_100);
+        render(&e, &step, join + out_for(b_frames, 22_050));
+        let out = step.sink.lock().unwrap().clone();
+
+        // Each track is its own run, so B's first frame follows A's last one
+        // directly and is aligned with B's first source frame.
+        assert_follows_ideal(&out[..join], 0, 44_100);
+        assert_follows_ideal(&out[join..], 0, 22_050);
+    }
+
+    // ---- gapless joins with a running converter ---------------------------
+
+    /// A backend whose render thread pulls frames only against `permits`, so a
+    /// test decides exactly how much audio is rendered and when. With no permit
+    /// it still calls the callback with an empty buffer, which keeps the flush
+    /// protocol acknowledged. Mono, like `CapturingBackend`.
+    #[derive(Default)]
+    struct Stepper {
+        /// Frames the render thread may still pull.
+        permits: std::sync::atomic::AtomicUsize,
+        /// Everything rendered so far.
+        sink: std::sync::Mutex<Vec<f32>>,
+    }
+
+    struct SteppedBackend {
+        step: Arc<Stepper>,
+    }
+
+    impl OutputBackend for SteppedBackend {
+        fn name(&self) -> &'static str {
+            "stepped"
+        }
+
+        fn enumerate(&mut self) -> Result<Vec<DeviceInfo>, OutputError> {
+            Ok(vec![self.probe_device(None)?])
+        }
+
+        fn probe_device(&mut self, _id: Option<&str>) -> Result<DeviceInfo, OutputError> {
+            Ok(DeviceInfo {
+                id: "stepped".into(),
+                name: "Stepped".into(),
+                is_default: true,
+                native_rate: 44_100,
+                native_channels: 1,
+            })
+        }
+
+        fn open_stream(
+            &mut self,
+            _device_id: Option<&str>,
+            format: StreamFormat,
+            _options: StreamOptions,
+            mut callback: crate::output::RenderCallback,
+            _events: EventSink,
+        ) -> Result<Box<dyn OutputStream>, OutputError> {
+            let stop = Arc::new(AtomicBool::new(false));
+            let stop2 = stop.clone();
+            let step = self.step.clone();
+            let channels = usize::from(format.channels);
+            let join = std::thread::spawn(move || {
+                let mut buf = vec![0.0f32; 256 * channels];
+                while !stop2.load(Ordering::Acquire) {
+                    let frames = step.permits.load(Ordering::Acquire).min(256);
+                    callback(&mut buf[..frames * channels], &RenderInfo::default());
+                    if frames > 0 {
+                        step.sink
+                            .lock()
+                            .unwrap()
+                            .extend_from_slice(&buf[..frames * channels]);
+                        // Released after the callback has published its
+                        // position, so `permits == 0` means "rendered".
+                        step.permits.fetch_sub(frames, Ordering::AcqRel);
+                    }
+
+                    std::thread::sleep(Duration::from_micros(100));
+                }
+            });
+            Ok(Box::new(MockStream {
+                stop,
+                join: Some(join),
+                format,
+            }))
+        }
+    }
+
+    /// An engine on the stepped backend, with the output rate set as `desired`.
+    fn stepped_engine(config: EngineConfig, desired: Option<StreamFormat>) -> (Engine, Arc<Stepper>) {
+        let step = Arc::new(Stepper::default());
+        let backend = SteppedBackend { step: step.clone() };
+        let mut e = Engine::new(config, Box::new(backend));
+        e.open_device(None, desired, ShareMode::Shared).unwrap();
+        (e, step)
+    }
+
+    fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !done() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn ring_len(e: &Engine) -> usize {
+        e.device.as_ref().unwrap().ring.len()
+    }
+
+    /// Renders `frames` frames in small steps, each only once the ring holds
+    /// it, so a slow decode worker never makes the render thread insert zeros.
+    /// Stops waiting for data once the worker has announced the end of the
+    /// queue. The stream is mono, so ring samples are frames.
+    fn render(e: &Engine, step: &Stepper, frames: usize) {
+        let mut left = frames;
+        while left > 0 {
+            let now = left.min(256);
+            wait_until("the ring to fill", || {
+                ring_len(e) >= now || e.shared.eof_no_next.load(Ordering::Acquire)
+            });
+            step.permits.fetch_add(now, Ordering::AcqRel);
+            wait_until("the render thread", || {
+                step.permits.load(Ordering::Acquire) == 0
+            });
+            left -= now;
+        }
+    }
+
+    fn decode_all(name: &str) -> (Vec<f32>, u32) {
+        let mut d = Decoder::open(&fixture(name)).unwrap();
+        let rate = d.info().sample_rate;
+        assert_eq!(d.info().channels, 1, "{name}");
+        let mut all = Vec::new();
+        while let Some(block) = d.next_block().unwrap() {
+            all.extend_from_slice(block);
+        }
+
+        (all, rate)
+    }
+
+    #[test]
+    fn gapless_resampled_same_rate_join_matches_one_continuous_run() {
+        let (master, rate) = decode_all("gapless-master.wav");
+        assert_eq!(rate, 44_100);
+        let mut expected = Vec::new();
+        let mut converter = Converter::new(rate, 48_000, 1);
+        converter.process(&master, &mut expected);
+        converter.flush(&mut expected);
+
+        let (mut e, step) = stepped_engine(EngineConfig::default(), fixed(48_000));
+        e.load(Slot::Current, load_params("gapless-a.flac", 1)).unwrap();
+        e.load(Slot::Next, load_params("gapless-b.flac", 2)).unwrap();
+        e.play().unwrap();
+        render(&e, &step, expected.len());
+
+        // Restarting the filter at the join would change the samples around it.
+        let out = step.sink.lock().unwrap().clone();
+        assert_eq!(out.len(), expected.len());
+        for (n, (got, want)) in out.iter().zip(&expected).enumerate() {
+            assert!((got - want).abs() <= 1e-6, "frame {n}: {got} vs {want}");
+        }
+    }
+
+    #[test]
+    fn gapless_resampled_track_start_lands_on_the_boundary_sample() {
+        let a_frames = {
+            let d = Decoder::open(&fixture("gapless-a.flac")).unwrap();
+            assert_eq!(d.info().sample_rate, 44_100);
+            d.info().total_frames.unwrap() as usize
+        };
+        let boundary = out_for(a_frames, 44_100);
+
+        let (mut e, step) = stepped_engine(EngineConfig::default(), fixed(48_000));
+        e.load(Slot::Current, load_params("gapless-a.flac", 1)).unwrap();
+        e.load(Slot::Next, load_params("gapless-b.flac", 2)).unwrap();
+        e.play().unwrap();
+
+        render(&e, &step, boundary - 16);
+        assert_eq!(e.position().user_token, 1);
+
+        // 16 output frames into B are 14 source frames at 44.1 kHz.
+        render(&e, &step, 32);
+        let pos = e.position();
+        assert_eq!(pos.user_token, 2);
+        assert_eq!(pos.frame, 14);
+    }
+
+    #[test]
+    fn resampled_filter_tail_is_pushed_before_the_queue_is_announced_empty() {
+        // 22.05 to 44.1 kHz: the filter delay and one chunk are 2048 and 4096
+        // output frames. The ring holds 8820 samples, so with nothing rendered
+        // the non-tail output fits and the tail does not.
+        let frames = 2 * 2048 + 2000;
+        let wav = write_wav(22_050, 1, &cosine(22_050, frames));
+        let mut expected = Vec::new();
+        let mut converter = Converter::new(22_050, 44_100, 1);
+        converter.process(&cosine(22_050, frames), &mut expected);
+        let tail = converter.pending_frames() as usize;
+        converter.flush(&mut expected);
+
+        let config = EngineConfig {
+            decode_ahead_ms: 200,
+            ..EngineConfig::default()
+        };
+        let (mut e, step) = stepped_engine(config, fixed(44_100));
+        e.load(Slot::Current, params_for(&wav, 1)).unwrap();
+        let capacity = e.device.as_ref().unwrap().ring.capacity();
+        // The worker only decodes while 2048 samples are free, so it reaches
+        // the end of the file only if the non-tail output leaves that much.
+        assert!(expected.len() > capacity, "the whole output must not fit");
+        assert!(expected.len() - tail + 2048 <= capacity, "the worker must reach EOF");
+
+        // Not playing, so nothing drains: the ring is full and the worker is
+        // stuck pushing the rest of the tail, so the queue is not empty yet.
+        let mut seen = Vec::new();
+        assert!(!wait_for_event(&mut e, &mut seen, EventKind::QueueEmpty, Duration::from_millis(300)));
+        assert_eq!(ring_len(&e), capacity);
+
+        e.play().unwrap();
+        render(&e, &step, expected.len());
+        assert!(wait_for_event(&mut e, &mut seen, EventKind::QueueEmpty, Duration::from_secs(10)));
+
+        let out = step.sink.lock().unwrap().clone();
+        assert_eq!(out.len(), expected.len());
+        for (n, (got, want)) in out.iter().zip(&expected).enumerate() {
+            assert!((got - want).abs() <= 1e-6, "frame {n}: {got} vs {want}");
+        }
+    }
+
+    #[test]
+    fn resampled_seek_in_the_middle_of_a_run_restarts_aligned() {
+        let frames = 60_000;
+        let target = 25_000;
+        let wav = write_wav(44_100, 1, &cosine(44_100, frames));
+        let (mut e, step) = stepped_engine(EngineConfig::default(), fixed(48_000));
+        e.load(Slot::Current, params_for(&wav, 1)).unwrap();
+        e.play().unwrap();
+
+        // Mid-run: output has been rendered, the ring is full, and the filter
+        // and its input FIFO hold samples of the first position.
+        render(&e, &step, 3_000);
+        wait_until("the ring to refill", || ring_len(&e) > 8_000);
+        e.seek(target as i64).unwrap();
+        wait_until("the seek flush", || e.shared.flush_ack.load(Ordering::Acquire) >= 2);
+        let mark = step.sink.lock().unwrap().len();
+
+        render(&e, &step, out_for(frames - target, 44_100));
+        let out = step.sink.lock().unwrap()[mark..].to_vec();
+        assert_follows_ideal(&out, target, 44_100);
     }
 }
