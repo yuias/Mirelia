@@ -7,7 +7,8 @@ using Mirelia.AudioBridge;
 namespace Mirelia.App.Dialogs;
 
 /// <summary>
-/// Playback settings (output device, exclusive mode, ReplayGain) and
+/// Playback settings (output device, exclusive mode, output sample rate,
+/// ReplayGain) and
 /// appearance settings (theme, font), grouped into tabs. Device enumeration
 /// runs on a throwaway engine instance so the dialog never touches the
 /// playback engine.
@@ -20,6 +21,11 @@ public partial class PreferencesDialog : Window
     }
 
     private sealed record FontChoice(string? Name, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    private sealed record RateChoice(uint? Rate, string Label)
     {
         public override string ToString() => Label;
     }
@@ -59,12 +65,20 @@ public partial class PreferencesDialog : Window
             choices.FirstOrDefault(c => c.Id == settings.Current.DeviceId) ?? choices[0];
         ExclusiveCheck.IsChecked = settings.Current.Exclusive;
 
+        var rateChoices = new List<RateChoice> { new(null, "Same as source") };
+        rateChoices.AddRange(AppSettings.SupportedOutputSampleRates
+            .Select(rate => new RateChoice(rate, $"{rate} Hz")));
+        RateBox.ItemsSource = rateChoices;
+        RateBox.SelectedItem =
+            rateChoices.FirstOrDefault(c => c.Rate == settings.Current.OutputSampleRate) ?? rateChoices[0];
+
         // Only the "(System default)" entry means nothing was enumerated, so
         // say so rather than offering controls that cannot do anything.
         bool noDevices = choices.Count == 1;
         NoDeviceNote.IsVisible = noDevices;
         DeviceBox.IsEnabled = !noDevices;
         ExclusiveCheck.IsEnabled = !noDevices;
+        RateBox.IsEnabled = !noDevices;
 
         RgBox.ItemsSource = new[] { ReplayGainMode.Off, ReplayGainMode.Track };
         RgBox.SelectedItem = settings.Current.ReplayGain;
@@ -101,6 +115,7 @@ public partial class PreferencesDialog : Window
         {
             DeviceId = (DeviceBox.SelectedItem as DeviceChoice)?.Id,
             Exclusive = ExclusiveCheck.IsChecked == true,
+            OutputSampleRate = (RateBox.SelectedItem as RateChoice)?.Rate,
             ReplayGain = RgBox.SelectedItem as ReplayGainMode? ?? ReplayGainMode.Off,
             Theme = ThemeBox.SelectedItem as AppTheme? ?? AppTheme.Auto,
             FontFamily = (FontFamilyBox.SelectedItem as FontChoice)?.Name,
