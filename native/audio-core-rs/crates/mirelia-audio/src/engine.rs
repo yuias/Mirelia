@@ -169,6 +169,8 @@ struct Tag {
     token: u64,
     base_frame: i64,
     total_frames: i64,
+    /// Rate of `base_frame` and `total_frames`, and of the published position.
+    source_rate: u32,
 }
 
 const TAG_TRACK_START: u8 = 1;
@@ -519,10 +521,20 @@ impl Engine {
         let events = spsc::producer(self.ev_decode.clone());
         let shared = self.shared.clone();
         let (tx, rx) = mpsc::channel();
+        let state = WorkerState {
+            gain: db_to_linear(params.gain_db),
+            current: decoder,
+            params,
+            next: None,
+            at_eof: false,
+            queue_empty_sent: false,
+            leftover: Vec::new(),
+            leftover_pos: 0,
+        };
 
         let handle = std::thread::Builder::new()
             .name("mirelia-decode".into())
-            .spawn(move || worker_loop(decoder, params, ring, tags, events, shared, rx))
+            .spawn(move || worker_loop(state, ring, tags, events, shared, rx))
             .expect("spawn decode worker");
 
         self.session = Some(Session {
@@ -558,25 +570,13 @@ struct WorkerState {
 }
 
 fn worker_loop(
-    current: Decoder,
-    params: LoadParams,
+    mut w: WorkerState,
     mut ring: Producer<f32>,
     mut tags: Producer<Tag>,
     mut events: Producer<EngineEvent>,
     shared: Arc<Shared>,
     cmd: mpsc::Receiver<Cmd>,
 ) {
-    let mut w = WorkerState {
-        gain: db_to_linear(params.gain_db),
-        current,
-        params,
-        next: None,
-        at_eof: false,
-        queue_empty_sent: false,
-        leftover: Vec::new(),
-        leftover_pos: 0,
-    };
-
     // Empty out whatever the previous session left in the rings, then
     // announce this track.
     flush(&shared);
@@ -758,6 +758,7 @@ fn start_track(
         token: w.params.user_token,
         base_frame: base,
         total_frames: total,
+        source_rate: w.current.info().sample_rate,
     }]);
 }
 
@@ -796,6 +797,8 @@ fn render_callback(
     let mut token = 0u64;
     let mut base_frame = 0i64;
     let mut track_frames = 0i64;
+    let output_rate = i64::from(fmt.sample_rate);
+    let mut source_rate = output_rate;
 
     Box::new(move |buf: &mut [f32], info: &RenderInfo| {
         // Everything below runs under the no-allocation guard; a debug
@@ -835,8 +838,10 @@ fn render_callback(
                     token = tag.token;
                     base_frame = tag.base_frame;
                     track_frames = 0;
+                    source_rate = i64::from(tag.source_rate);
                     shared.pub_token.store(token, Ordering::Release);
                     shared.pub_total.store(tag.total_frames, Ordering::Release);
+                    shared.pub_rate.store(tag.source_rate, Ordering::Release);
                     continue;
                 }
                 Some(tag) => tag.at_sample - samples.read_index(),
@@ -882,9 +887,12 @@ fn render_callback(
             }
         }
 
-        // Publish the audible position: consumed minus what the device still
-        // has queued ahead of the speaker.
-        let audible = base_frame + (track_frames - i64::from(info.device_queued_frames)).max(0);
+        // Publish the audible position in source frames: consumed minus what
+        // the device still has queued ahead of the speaker. Both counters are
+        // at the output rate, so subtract first and scale the result.
+        let audible = base_frame
+            + (track_frames - i64::from(info.device_queued_frames)).max(0) * source_rate
+                / output_rate;
         shared.pub_frame.store(audible, Ordering::Release);
         shared.pub_fill_permille.store(
             (samples.len() * 1000 / ring_capacity) as u32,
@@ -1171,6 +1179,46 @@ mod tests {
 
         assert_eq!(trimmed.len(), master.len());
         assert_eq!(trimmed, &master[..]);
+    }
+
+    /// The render callback counts output frames but publishes source frames:
+    /// 480 frames at 48 kHz are 441 frames of a 44.1 kHz source.
+    #[test]
+    fn position_is_published_in_source_frames() {
+        let shared = Shared::new();
+        shared.playing.store(true, Ordering::Release);
+        let ring = SpscCore::<f32>::new(8192);
+        let tag_ring = SpscCore::<Tag>::new(16);
+        let mut samples = spsc::producer(ring.clone());
+        let mut tags = spsc::producer(tag_ring.clone());
+        let fmt = StreamFormat {
+            sample_rate: 48_000,
+            channels: 2,
+        };
+        let mut callback = render_callback(
+            spsc::consumer(ring.clone()),
+            spsc::consumer(tag_ring),
+            spsc::producer(SpscCore::<EngineEvent>::new(64)),
+            shared.clone(),
+            fmt,
+            ring.capacity(),
+        );
+
+        tags.push_slice(&[Tag {
+            kind: TAG_TRACK_START,
+            at_sample: 0,
+            token: 1,
+            base_frame: 1000,
+            total_frames: 100_000,
+            source_rate: 44_100,
+        }]);
+        samples.push_slice(&[0.25; 480 * 2]);
+
+        let mut buf = [0.0f32; 480 * 2];
+        callback(&mut buf, &RenderInfo::default());
+
+        assert_eq!(shared.pub_frame.load(Ordering::Acquire), 1441);
+        assert_eq!(shared.pub_rate.load(Ordering::Acquire), 44_100);
     }
 
     #[test]
