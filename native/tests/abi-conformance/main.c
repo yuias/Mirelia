@@ -178,6 +178,23 @@ static void test_device_open(void) {
         CHECK(0, "open_device returned an unexpected error");
     }
 
+    /* Rejected at the ABI boundary, so this needs no audio endpoint. */
+    kn_stream_format zero_rate = {0, 2, KN_FMT_F32, 0};
+    CHECK(p_open_device(e, NULL, KN_SHARE_SHARED, &zero_rate, &actual) == KN_ERR_INVALID_ARG,
+          "open_device rejects a desired sample rate of 0 with KN_ERR_INVALID_ARG");
+
+    /* channels == 0 fixes the rate only; the stream opens at the first load. */
+    kn_stream_format fixed_rate = {48000, 0, KN_FMT_F32, 0};
+    memset(&actual, 0, sizeof(actual));
+    rc = p_open_device(e, NULL, KN_SHARE_SHARED, &fixed_rate, &actual);
+    if (rc == KN_OK) {
+        CHECK(actual.sample_rate == 48000, "open_device with a fixed rate reports that rate");
+    } else if (rc == KN_ERR_DEVICE_LOST || rc == KN_ERR_UNSUPPORTED) {
+        printf("skip fixed-rate open_device: no usable device here (%d)\n", (int)rc);
+    } else {
+        CHECK(0, "fixed-rate open_device returned an unexpected error");
+    }
+
     p_destroy(e);
 }
 

@@ -102,6 +102,20 @@ void      kn_engine_destroy(kn_engine *e);
 /* Human-readable detail for the most recent failure on this thread. */
 const char *kn_engine_last_error(kn_engine *e);
 
+/*
+ * `desired` selects the output format of every stream until the device is
+ * closed:
+ *   - NULL: follow the source's sample rate and channels. out_actual is the
+ *     device's native format.
+ *   - non-NULL: sample_rate is the fixed output rate; sources at another rate
+ *     are resampled to it (KN_ERR_FORMAT on load if cfg.allow_resample is 0).
+ *     sample_rate must be non-zero, otherwise KN_ERR_INVALID_ARG is returned
+ *     before the device is touched.
+ *     channels == 0 follows the source's channel count, and the stream then
+ *     opens at the first load; out_actual carries the desired rate and the
+ *     device's native channel count. A non-zero channels opens the stream
+ *     now. format and channel_mask are ignored.
+ */
 kn_result kn_engine_open_device(kn_engine *e,
                                 const char *device_id,   /* NULL = system default */
                                 kn_share_mode mode,
@@ -149,7 +163,7 @@ typedef struct kn_position {
     uint64_t user_token;      /* what is audible right now */
     int64_t  frame;           /* position within the current source */
     int64_t  total_frames;    /* -1 if unknown */
-    uint32_t sample_rate;
+    uint32_t sample_rate;     /* rate of the source; frame and total_frames use it */
     uint64_t host_time_ns;    /* monotonic, for client-side interpolation */
     float    buffer_fill;     /* 0..1, for the stall indicator */
 } kn_position;

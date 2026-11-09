@@ -424,6 +424,9 @@ pub unsafe extern "C" fn kn_engine_open_device(
         None
     } else {
         let d = unsafe { &*desired };
+        if d.sample_rate == 0 {
+            return fail(KN_ERR_INVALID_ARG, "kn_engine_open_device: desired sample rate is 0");
+        }
         Some(StreamFormat {
             sample_rate: d.sample_rate,
             channels: d.channels,

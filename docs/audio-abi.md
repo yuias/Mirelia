@@ -14,8 +14,10 @@ it; the header wins on any disagreement about the letter.
    SPSC queue; the host drains it with `kn_engine_poll_event()` from a normal
    thread. This makes GC pauses, managed exceptions, and reentrancy
    structurally impossible on the RT path.
-3. **Position is reported in frames** at the device sample rate, plus a
-   monotonic host timestamp for interpolation. Never in milliseconds.
+3. **Position is reported in frames** at the source sample rate of the audible
+   track (`kn_position.sample_rate`), plus a monotonic host timestamp for
+   interpolation. When the output runs at a different rate, the engine
+   converts before publishing. Never in milliseconds.
 4. **Explicit gapless.** The host loads what plays next into `KN_SLOT_NEXT`;
    the engine preloads and splices. The host is never asked to react at the
    moment of transition. `KN_EV_QUEUE_EMPTY` is the engine's request for a
@@ -63,3 +65,4 @@ user-facing setting for it.
 | ABI | Date | Change |
 |---|---|---|
 | 1 | 2026-08-08 | Initial freeze |
+| 1 | 2026-11-10 | No layout or signature change. A non-NULL `desired` in `kn_engine_open_device` fixes the output rate (`sample_rate == 0` is `KN_ERR_INVALID_ARG`, `channels == 0` follows the source). `kn_position` is in source frames, not device frames. |
