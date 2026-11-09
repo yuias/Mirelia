@@ -86,8 +86,21 @@ public static class TrackLayouts
         TrackSortOrder.AlbumByYear,
         "Unknown Album");
 
+    /// <summary>Artist blocks: one block per album artist, divided by album.</summary>
+    public static readonly LayoutSpec Artists = new(
+        "artists",
+        "Artists",
+        TrackGroupField.AlbumArtist,
+        [
+            SortChoice.Of(TrackSortOrder.AlbumArtist, "Artist Name"),
+            SortChoice.Of(TrackSortOrder.AlbumByYear, "Release"),
+            SortChoice.Of(TrackSortOrder.AlbumByRecentlyAdded, "Added"),
+        ],
+        TrackSortOrder.AlbumArtist,
+        "Unknown Artist");
+
     /// <summary>All layouts, in display order.</summary>
-    public static readonly IReadOnlyList<LayoutSpec> All = [Tracks, Albums];
+    public static readonly IReadOnlyList<LayoutSpec> All = [Tracks, Albums, Artists];
 
     /// <summary>
     /// Looks up a layout by key, falling back to <see cref="Tracks"/> — a key

@@ -46,6 +46,18 @@ public sealed class TrackGroupBlockTests
     }
 
     [Fact]
+    public void AnAlbumSectionIsCaptionedWithItsAlbum()
+    {
+        VirtualTrackList tracks = MakeList(2, out _);
+        TrackGroupRun run = Run(0, 2, [new DiscSpan(null, 0, 2, "Debut")]);
+
+        DiscSection section = Assert.Single(
+            TrackGroupBlocks.Build(tracks, [run], TrackLayouts.Artists, _ => { })[0].Discs);
+
+        Assert.Equal("Debut", section.Caption);
+    }
+
+    [Fact]
     public void NotifyVisibleHydratesEveryPageTheBlockTouches()
     {
         int size = (VirtualTrackList.PageSize * 2) + 10;

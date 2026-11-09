@@ -128,6 +128,14 @@ public static class SortCompiler
             parts.Add(term.Descending ? $"{expression} DESC" : expression);
         }
 
+        // Two groups can share every key (same release date, same import
+        // second, same name); without this the tail would interleave their
+        // rows and cut both into pieces.
+        if (groupPartition is not null)
+        {
+            parts.Add(groupPartition);
+        }
+
         foreach (string tie in Tail)
         {
             if (used.Add(tie))
@@ -160,6 +168,7 @@ public static class SortPresets
         TrackSortOrder.Year => SortSpec.Of("date"),
         TrackSortOrder.AlbumByYear => SortSpec.Of("albumdate"),
         TrackSortOrder.AlbumByRecentlyAdded => SortSpec.Of("albumadded", descending: true),
+        TrackSortOrder.AlbumArtist => SortSpec.Of("albumartist"),
         _ => null,
     };
 }

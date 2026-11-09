@@ -13,11 +13,12 @@ public enum TrackGroupField
     AlbumArtist,
 }
 
-/// <summary>One disc's row range inside a run.</summary>
-/// <param name="DiscNo">Disc number, or null when the tracks carry none.</param>
+/// <summary>One section's row range inside a run: a disc, or an album in an artist group.</summary>
+/// <param name="DiscNo">Disc number, or null when the tracks carry none or the run is an artist's.</param>
 /// <param name="StartIndex">Index into the id array the run was built from.</param>
 /// <param name="Count">Number of rows in the span.</param>
-public sealed record DiscSpan(int? DiscNo, int StartIndex, int Count);
+/// <param name="AlbumTitle">The album this span covers in an artist group; otherwise null.</param>
+public sealed record DiscSpan(int? DiscNo, int StartIndex, int Count, string? AlbumTitle = null);
 
 /// <summary>
 /// A contiguous run of rows belonging to one group, with the aggregates a
@@ -95,6 +96,9 @@ public static class TrackGrouper
         Dictionary<long, string> artists =
             LoadArtistNames(db, runs.Select(r => r.TopArtistId));
         Dictionary<long, string> genres = LoadGenreNames(db);
+        Dictionary<long, (string? Title, string? Subtitle)> albums = field == TrackGroupField.AlbumArtist
+            ? LoadGroupNames(db, runs.SelectMany(r => r.SectionAlbumIds), TrackGroupField.Album)
+            : [];
 
         var result = new List<TrackGroupRun>(runs.Count);
         foreach (RunBuilder run in runs)
@@ -112,7 +116,7 @@ public static class TrackGrouper
                 run.DurationMs,
                 run.MaxAddedUnix,
                 run.CoverTrackId,
-                run.Discs));
+                run.BuildDiscs(albums)));
         }
 
         return result;
@@ -218,7 +222,7 @@ public static class TrackGrouper
 
         string sql = $"""
             SELECT {idColumn}, t.id, COALESCE({groupColumn}, 0), t.disc_no, t.duration_ms,
-                   t.added_unix, t.date_key, t.year, t.genre_id, t.artist_id
+                   t.added_unix, t.date_key, t.year, t.genre_id, t.artist_id, t.album_id
             {source}{joins}
             ORDER BY {orderBy}
             """;
@@ -243,10 +247,14 @@ public static class TrackGrouper
                 runs.Add(current);
             }
 
+            // An artist's block is divided by album. Disc numbers repeat from
+            // one album to the next, so they cannot divide it.
+            bool byAlbum = field == TrackGroupField.AlbumArtist;
             current.Add(
                 trackId: reader.IsDBNull(1) ? null : reader.GetInt64(1),
                 index: index,
-                discNo: reader.IsDBNull(3) ? null : reader.GetInt32(3),
+                discNo: byAlbum || reader.IsDBNull(3) ? null : reader.GetInt32(3),
+                sectionAlbumId: !byAlbum || reader.IsDBNull(10) ? null : reader.GetInt64(10),
                 durationMs: reader.IsDBNull(4) ? 0 : reader.GetInt64(4),
                 addedUnix: reader.IsDBNull(5) ? null : reader.GetInt64(5),
                 dateKey: reader.IsDBNull(6) ? null : reader.GetInt64(6),
@@ -377,10 +385,11 @@ public static class TrackGrouper
     {
         private readonly TopCounter _genres = new();
         private readonly TopCounter _artists = new();
-        private readonly List<DiscSpan> _discs = [];
+        private readonly List<(DiscSpan Span, long? AlbumId)> _discs = [];
         private int _discStart = startIndex;
         private int _discCount;
         private int? _discNo;
+        private long? _discAlbumId;
         private bool _discOpen;
         private long? _maxDateKey;
         private int? _maxYear;
@@ -401,19 +410,28 @@ public static class TrackGrouper
 
         public long? TopArtistId => _artists.TopId;
 
-        public IReadOnlyList<DiscSpan> Discs => _discs;
+        public IEnumerable<long> SectionAlbumIds => _discs.Select(d => d.AlbumId).OfType<long>();
+
+        public List<DiscSpan> BuildDiscs(Dictionary<long, (string? Title, string? Subtitle)> albums)
+            =>
+            [
+                .. _discs.Select(d => d.AlbumId is { } albumId
+                    ? d.Span with { AlbumTitle = albums.GetValueOrDefault(albumId).Title }
+                    : d.Span),
+            ];
 
         /// <summary>The run's release year: its latest date, matching how AlbumByYear ranks it.</summary>
         public int? Year => _maxDateKey is { } key ? (int)(key / 10000) : _maxYear;
 
         public void Add(
-            long? trackId, int index, int? discNo, long durationMs,
+            long? trackId, int index, int? discNo, long? sectionAlbumId, long durationMs,
             long? addedUnix, long? dateKey, int? year, long? genreId, long? artistId)
         {
-            if (!_discOpen || discNo != _discNo)
+            if (!_discOpen || discNo != _discNo || sectionAlbumId != _discAlbumId)
             {
                 CloseDisc();
                 _discNo = discNo;
+                _discAlbumId = sectionAlbumId;
                 _discStart = index;
                 _discCount = 0;
                 _discOpen = true;
@@ -454,7 +472,7 @@ public static class TrackGrouper
         {
             if (_discOpen && _discCount > 0)
             {
-                _discs.Add(new DiscSpan(_discNo, _discStart, _discCount));
+                _discs.Add((new DiscSpan(_discNo, _discStart, _discCount), _discAlbumId));
             }
 
             _discOpen = false;

@@ -29,6 +29,9 @@ public enum TrackSortOrder
 
     /// <summary>The playlist's own entry order (static playlists / smart DSL order).</summary>
     PlaylistOrder,
+
+    /// <summary>Album artist sort key, then album, disc, track.</summary>
+    AlbumArtist,
 }
 
 /// <summary>A header-click column sort: grid column key plus direction.</summary>

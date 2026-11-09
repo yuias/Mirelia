@@ -5,16 +5,16 @@ using Mirelia.Library.Querying;
 
 namespace Mirelia.App.Models;
 
-/// <summary>One disc's rows inside a block, with the caption above them.</summary>
+/// <summary>One section's rows inside a block, with the caption above them.</summary>
 public sealed class DiscSection
 {
-    internal DiscSection(int? discNo, IReadOnlyList<TrackRow> rows)
+    internal DiscSection(int? discNo, string? albumTitle, IReadOnlyList<TrackRow> rows)
     {
-        Caption = discNo is { } no ? $"Disc {no}" : string.Empty;
+        Caption = albumTitle ?? (discNo is { } no ? $"Disc {no}" : string.Empty);
         Rows = rows;
     }
 
-    /// <summary>"Disc 2", or empty when the tracks carry no disc number.</summary>
+    /// <summary>The album in an artist block, "Disc 2" in an album block, or empty when untagged.</summary>
     public string Caption { get; }
 
     /// <summary>False for untagged discs, so the caption row stays out of the way.</summary>
@@ -78,6 +78,7 @@ public sealed partial class TrackGroupBlock : ObservableObject
         [
             .. run.Discs.Select(disc => new DiscSection(
                 disc.DiscNo,
+                disc.AlbumTitle,
                 Slice(tracks, disc.StartIndex, disc.Count, run.StartIndex))),
         ];
     }
@@ -199,7 +200,8 @@ public sealed partial class TrackGroupBlock : ObservableObject
 
     private static string FormatSubtitle(TrackGroupRun run)
     {
-        string?[] parts = [run.Year?.ToString(), run.Genre, run.Artist];
+        // An artist group's title already names the artist.
+        string?[] parts = [run.Year?.ToString(), run.Genre, run.Artist == run.Title ? null : run.Artist];
         return string.Join(" · ", parts.Where(p => !string.IsNullOrEmpty(p)));
     }
 

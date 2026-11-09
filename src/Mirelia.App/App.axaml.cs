@@ -104,6 +104,11 @@ public class App : Application
         await Task.Delay(TimeSpan.FromSeconds(2));
         healthy &= Report(viewModel, Models.TrackLayouts.Albums);
 
+        await Dispatcher.UIThread.InvokeAsync(
+            () => viewModel.SelectedLayout = Models.TrackLayouts.Artists);
+        await Task.Delay(TimeSpan.FromSeconds(2));
+        healthy &= Report(viewModel, Models.TrackLayouts.Artists);
+
         // The layout is persisted per view, so put it back rather than leaving
         // the library this ran against switched over.
         await Dispatcher.UIThread.InvokeAsync(

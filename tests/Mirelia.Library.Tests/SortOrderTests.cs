@@ -127,6 +127,29 @@ public sealed class SortOrderTests : IDisposable
     }
 
     [Fact]
+    public void GroupsWithEqualKeysStayInOnePiece()
+    {
+        long alice = InsertArtist("Alice", "alice");
+        long bob = InsertArtist("Bob", "bob");
+        long aliceAlbum = InsertAlbum("Same", "same", alice);
+        long bobAlbum = InsertAlbum("Same", "same", bob);
+        long a1 = InsertTrack("A1", aliceAlbum, alice, 2000, 1);
+        long b1 = InsertTrack("B1", bobAlbum, bob, 2000, 1);
+        long a2 = InsertTrack("A2", aliceAlbum, alice, 2000, 2);
+        long b2 = InsertTrack("B2", bobAlbum, bob, 2000, 2);
+
+        // Equal release date and equal album name: nothing in the spec or
+        // the tail separates the groups before the track numbers would.
+        (_, List<TrackGroupRun> albums) = TrackGrouper.LoadOrderedRuns(
+            _db, [a1, b1, a2, b2], TrackSortOrder.AlbumByYear, TrackGroupField.Album);
+        Assert.Equal([aliceAlbum, bobAlbum], albums.Select(r => r.GroupId));
+
+        (_, List<TrackGroupRun> artists) = TrackGrouper.LoadOrderedRuns(
+            _db, [a1, b1, a2, b2], TrackSortOrder.AlbumByYear, TrackGroupField.AlbumArtist);
+        Assert.Equal([alice, bob], artists.Select(r => r.GroupId));
+    }
+
+    [Fact]
     public void UnknownFieldsAreSkippedRatherThanBreakingTheView()
     {
         long artist = InsertArtist("A", "a");
@@ -163,6 +186,30 @@ public sealed class SortOrderTests : IDisposable
             TrackPager.SortIds(_db, ids, SortPresets.SpecFor(TrackSortOrder.RecentlyAdded)!));
         // Playlist order is the input order, not an ordering over fields.
         Assert.Null(SortPresets.SpecFor(TrackSortOrder.PlaylistOrder));
+    }
+
+    [Fact]
+    public void ArtistGroupsSortByNameAndDivideByAlbum()
+    {
+        long zed = InsertArtist("Zed", "zed");
+        long amy = InsertArtist("Amy", "amy");
+        long zedAlbum = InsertAlbum("Zed One", "zed one", zed);
+        long amyLater = InsertAlbum("Later", "later", amy);
+        long amyDebut = InsertAlbum("Debut", "debut", amy);
+        long z1 = InsertTrack("Z1", zedAlbum, zed, 2020, 1);
+        long l1 = InsertTrack("L1", amyLater, amy, 2010, 1);
+        long d1 = InsertTrack("D1", amyDebut, amy, 2000, 1);
+        long d2 = InsertTrack("D2", amyDebut, amy, 2000, 2);
+
+        (long[] ordered, List<TrackGroupRun> runs) = TrackGrouper.LoadOrderedRuns(
+            _db, [z1, l1, d1, d2], TrackSortOrder.AlbumArtist, TrackGroupField.AlbumArtist);
+
+        Assert.Equal([d1, d2, l1, z1], ordered);
+        Assert.Equal([amy, zed], runs.Select(r => r.GroupId));
+        Assert.Equal("Amy", runs[0].Title);
+        Assert.Equal(
+            [new DiscSpan(null, 0, 2, "Debut"), new DiscSpan(null, 2, 1, "Later")],
+            runs[0].Discs);
     }
 
     private long InsertArtist(string name, string sort)
