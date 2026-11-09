@@ -174,6 +174,9 @@ struct Tag {
     source_rate: u32,
 }
 
+const MIN_CONVERTIBLE_RATE: u32 = 1_000;
+const MAX_CONVERTIBLE_RATE: u32 = 768_000;
+
 const TAG_TRACK_START: u8 = 1;
 const TAG_REBASE: u8 = 2;
 
@@ -327,6 +330,17 @@ impl Engine {
             return Err(EngineError::Format(format!(
                 "source is {} Hz but the output is fixed at {} Hz and resampling is disabled",
                 source.sample_rate, fmt.sample_rate
+            )));
+        }
+
+        // The rate comes from the file and the filter's size scales with the
+        // ratio: a corrupt 1 Hz header would ask for gigabytes per channel.
+        if fmt.sample_rate != source.sample_rate
+            && !(MIN_CONVERTIBLE_RATE..=MAX_CONVERTIBLE_RATE).contains(&source.sample_rate)
+        {
+            return Err(EngineError::Format(format!(
+                "cannot convert a source rate of {} Hz",
+                source.sample_rate
             )));
         }
 
@@ -1562,6 +1576,16 @@ mod tests {
         // Without a fixed rate nothing is converted, so any rate loads.
         e.open_device(None, None, ShareMode::Shared).unwrap();
         e.load(Slot::Current, params_for(&low, 4)).unwrap();
+    }
+
+    #[test]
+    fn fixed_rate_rejects_a_source_rate_it_cannot_convert() {
+        let absurd = tone(1, 1, 8);
+        let (mut e, _) = recording_engine(EngineConfig::default());
+        e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
+
+        let rejected = e.load(Slot::Current, params_for(&absurd, 1));
+        assert!(matches!(rejected, Err(EngineError::Format(_))), "{rejected:?}");
     }
 
     #[test]
