@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 mirelia-decode.workspace = true
+rubato = "5.0.1"
 
 [lints]
 workspace = true
