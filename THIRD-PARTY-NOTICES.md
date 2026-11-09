@@ -66,6 +66,17 @@ Linked into `audio_core_rs`, the native audio backend.
 | --- | --- | --- |
 | symphonia and its format/codec crates | 0.6.0 | MPL-2.0 (see above) |
 | ebur128 | 0.1.10 | MIT |
+| rubato | 5.0.1 | MIT OR Apache-2.0 |
+| audioadapter | 5.0.0 | MIT OR Apache-2.0 |
+| audioadapter-buffers, audioadapter-sample | 5.2.0 | MIT OR Apache-2.0 |
+| audio-codec-algorithms | 0.8.1 | 0BSD OR Apache-2.0 |
+| realfft | 3.5.1 | MIT |
+| rustfft | 6.4.1 | MIT OR Apache-2.0 |
+| windowfunctions | 0.1.1 | MIT |
+| num-integer | 0.1.47 | MIT OR Apache-2.0 |
+| primal-check | 0.3.4 | MIT OR Apache-2.0 |
+| strength_reduce | 0.2.4 | MIT OR Apache-2.0 |
+| transpose | 0.2.3 | MIT OR Apache-2.0 |
 | extended | 0.1.0 | MIT |
 | bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT |
 | dasp_frame, dasp_sample | 0.11.0 | MIT OR Apache-2.0 |
@@ -79,13 +90,14 @@ Linked into `audio_core_rs`, the native audio backend.
 | windows, windows-core, windows-collections, windows-future, windows-link, windows-numerics, windows-result, windows-strings, windows-threading | 0.62.2 and companions | MIT OR Apache-2.0 |
 
 Where a crate offers a choice of licenses, Mirelia takes it under the MIT
+option, or under Apache-2.0 for `audio-codec-algorithms`, which offers no MIT
 option; the Zlib text is included for bytemuck's benefit at
 [licenses/Zlib.txt](licenses/Zlib.txt).
 
-`autocfg`, `proc-macro2`, `quote`, `syn`, `unicode-ident`, `windows-implement`
-and `windows-interface` (all MIT OR Apache-2.0, `unicode-ident` additionally
-Unicode-3.0) run at build time only and contribute no code to the shipped
-library. `Microsoft.Windows.CsWin32` (MIT) is the same case on the managed
+`autocfg`, `proc-macro2`, `quote`, `syn`, `unicode-ident`, `visibility`,
+`windows-implement` and `windows-interface` (all MIT OR Apache-2.0,
+`unicode-ident` additionally Unicode-3.0, `visibility` additionally Zlib) run
+at build time only and contribute no code to the shipped library. `Microsoft.Windows.CsWin32` (MIT) is the same case on the managed
 side: it generates the WPD interop used by MTP sync and ships nothing.
 
 ## Runtime
