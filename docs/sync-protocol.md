@@ -26,7 +26,7 @@ COM API (see below).
 ## Strategy
 
 The network transport ships an OpenSubsonic-compatible HTTP server
-(`Mirelia.Sync`, ASP.NET Core minimal APIs). Mature third-party clients on
+(a future project on ASP.NET Core minimal APIs). Mature third-party clients on
 both mobile platforms give immediate usability with offline caching solved,
 and validate the protocol layer before any first-party mobile code is
 written.

@@ -5,7 +5,6 @@
     <Project Path="src/Mirelia.Cli/Mirelia.Cli.csproj" />
     <Project Path="src/Mirelia.Library/Mirelia.Library.csproj" />
     <Project Path="src/Mirelia.Query/Mirelia.Query.csproj" />
-    <Project Path="src/Mirelia.Sync/Mirelia.Sync.csproj" />
     <Project Path="src/Mirelia.Sync.Mtp/Mirelia.Sync.Mtp.csproj" />
   </Folder>
   <Folder Name="/tests/">
