@@ -328,7 +328,13 @@ public sealed class AudioPlayerService : IDisposable
         try
         {
             PlaybackPosition pos = _engine.GetPosition();
-            if (pos.State == PlaybackState.Playing || pos.State == PlaybackState.Stalled)
+            if (pos.State == PlaybackState.Idle && _queue.Current is { } finished)
+            {
+                // The track played out, so the engine has nothing left to
+                // resume; Play on it would report Playing over silence.
+                _ = StartAtEntryAsync(finished);
+            }
+            else if (pos.State == PlaybackState.Playing || pos.State == PlaybackState.Stalled)
             {
                 _engine.Pause();
             }
