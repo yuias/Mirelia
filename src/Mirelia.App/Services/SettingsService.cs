@@ -98,6 +98,19 @@ public sealed record AppSettings
     /// since gone.
     /// </summary>
     public string? LibraryPath { get; init; }
+
+    /// <summary>
+    /// The sample rates the output can be fixed to, in Hz. Anything else is
+    /// treated as "same as source".
+    /// </summary>
+    public static IReadOnlyList<uint> SupportedOutputSampleRates { get; } =
+        [44100, 48000, 88200, 96000, 176400, 192000];
+
+    /// <summary>
+    /// Fixed output sample rate in Hz, or null to play each track at its
+    /// source rate. Must be one of <see cref="SupportedOutputSampleRates"/>.
+    /// </summary>
+    public uint? OutputSampleRate { get; init; }
 }
 
 /// <summary>
@@ -130,6 +143,13 @@ public sealed class SettingsService
         catch (Exception ex) when (ex is JsonException or IOException)
         {
             Current = new AppSettings();
+        }
+
+        // The file is the one place a rate can arrive that the UI never offered.
+        if (Current.OutputSampleRate is { } rate
+            && !AppSettings.SupportedOutputSampleRates.Contains(rate))
+        {
+            Current = Current with { OutputSampleRate = null };
         }
     }
 

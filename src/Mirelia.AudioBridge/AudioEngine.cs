@@ -79,16 +79,28 @@ public sealed class AudioEngine : IDisposable
     /// negotiated sample rate and channel count. Exclusive mode is
     /// bit-perfect (no OS mixer) but can fail with
     /// <see cref="KnResult.DeviceBusy"/> or <see cref="KnResult.Format"/>.
+    /// A non-null <paramref name="outputSampleRate"/> makes the engine convert
+    /// every track to that rate and keep the channel count of the source;
+    /// null plays each track at its own rate.
     /// </summary>
-    public (uint SampleRate, ushort Channels) OpenDevice(
-        string? deviceId = null, bool exclusive = false)
+    public unsafe (uint SampleRate, ushort Channels) OpenDevice(
+        string? deviceId = null, bool exclusive = false, uint? outputSampleRate = null)
     {
         ThrowIfDisposed();
+
+        // Channels 0 means "follow the source's channels"; Format 3 is f32.
+        NativeMethods.KnStreamFormat desired = new()
+        {
+            SampleRate = outputSampleRate.GetValueOrDefault(),
+            Channels = 0,
+            Format = 3,
+            ChannelMask = 0,
+        };
         Check(NativeMethods.kn_engine_open_device(
             _handle,
             deviceId,
             mode: exclusive ? 1 : 0,
-            desired: nint.Zero,
+            desired: outputSampleRate is null ? nint.Zero : (nint)(&desired),
             out NativeMethods.KnStreamFormat actual));
         return (actual.SampleRate, actual.Channels);
     }
