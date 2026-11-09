@@ -159,8 +159,11 @@ public partial class MainWindow : Window
         // Drag source: selected grid rows. The DataGrid marks pointer events
         // handled for its own selection gestures, so observe them anyway.
         Grid.AddHandler(PointerPressedEvent, OnGridPointerPressed, RoutingStrategies.Tunnel);
-        Grid.AddHandler(PointerMovedEvent, OnGridPointerMoved, RoutingStrategies.Tunnel);
+        Grid.AddHandler(PointerMovedEvent, OnTrackListPointerMoved, RoutingStrategies.Tunnel);
         Grid.AddHandler(PointerReleasedEvent, OnGridPointerReleased, RoutingStrategies.Tunnel);
+        BlockList.AddHandler(PointerPressedEvent, OnBlockListPointerPressed, RoutingStrategies.Tunnel);
+        BlockList.AddHandler(PointerMovedEvent, OnTrackListPointerMoved, RoutingStrategies.Tunnel);
+        BlockList.AddHandler(PointerReleasedEvent, OnBlockListPointerReleased, RoutingStrategies.Tunnel);
 
         // Tunnel so Delete is seen before the list's own key handling.
         Grid.AddHandler(KeyDownEvent, OnTrackListKeyDown, RoutingStrategies.Tunnel);
@@ -174,7 +177,7 @@ public partial class MainWindow : Window
 
         // The grid is also a drop target on itself: a static playlist in
         // "Playlist Order" accepts its own drag-selected row back to
-        // reorder it (see OnGridPointerMoved for the gate).
+        // reorder it (see OnTrackListPointerMoved for the gate).
         Grid.AddHandler(DragDrop.DragOverEvent, OnGridDragOver);
         Grid.AddHandler(DragDrop.DropEvent, OnGridDrop);
 
@@ -1315,9 +1318,23 @@ public partial class MainWindow : Window
 
         // A right-click inside an existing selection opens the menu for all
         // of it rather than collapsing it to the row under the pointer.
-        if (e.GetCurrentPoint(control).Properties.IsRightButtonPressed
-            && vm.IsBlockRowSelected(row.Index))
+        PointerPointProperties button = e.GetCurrentPoint(control).Properties;
+        if (button.IsRightButtonPressed && vm.IsBlockRowSelected(row.Index))
         {
+            return;
+        }
+
+        ArmBlockDrag(e, row);
+
+        // As in the flat grid: collapsing on press would leave a drag of
+        // several rows carrying only one, so a plain press inside a
+        // multi-selection collapses on release instead.
+        if (button.IsLeftButtonPressed
+            && (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Shift)) == 0
+            && vm.IsBlockRowSelected(row.Index)
+            && vm.BlockSelectedIds.Length > 1)
+        {
+            _collapseSelectionOnRelease = row;
             return;
         }
 
@@ -1341,7 +1358,15 @@ public partial class MainWindow : Window
         if (ViewModel is { } vm && sender is Control { DataContext: TrackGroupBlock block })
         {
             vm.SelectBlockRange(block.StartIndex, block.Count);
+            ArmBlockDrag(e, row: null);
         }
+    }
+
+    private void ArmBlockDrag(PointerPressedEventArgs e, TrackRow? row)
+    {
+        _dragSourceRow = row;
+        _dragOrigin = e.GetPosition(this);
+        _dragPress = e.GetCurrentPoint(this).Properties.IsLeftButtonPressed ? e : null;
     }
 
     private async void OnBlockHeaderDoubleTapped(object? sender, TappedEventArgs e)
@@ -1679,7 +1704,24 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnGridPointerMoved(object? sender, PointerEventArgs e)
+    // Tunnels ahead of the rows' own press handlers, so a press that lands on
+    // the scrollbar cannot inherit the drag an earlier row press armed.
+    private void OnBlockListPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        _dragPress = null;
+        _collapseSelectionOnRelease = null;
+    }
+
+    private void OnBlockListPointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        if (_collapseSelectionOnRelease is { } row)
+        {
+            _collapseSelectionOnRelease = null;
+            ViewModel?.SelectBlockRow(row.Index, toggle: false, extend: false);
+        }
+    }
+
+    private async void OnTrackListPointerMoved(object? sender, PointerEventArgs e)
     {
         if (_dragPress is null || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
         {
