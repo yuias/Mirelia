@@ -6,6 +6,27 @@
 - If you touched the FFI, run `native/tests/abi-conformance`.
 - If you touched query compilation, run the DSL round-trip test suite.
 
+## Building C and C++ on Windows
+
+clang needs the Windows SDK and MSVC headers and libraries from a Visual Studio
+developer environment. Run this in PowerShell before CMake or Ninja:
+
+```powershell
+# The Windows SDK environment comes from the VS DevShell; skip if already inside one.
+if (-not $env:VSCMD_VER) {
+    if (-not (Get-Module -ListAvailable -Name VSSetup)) {
+        throw "Install-Module VSSetup -Scope CurrentUser"
+    }
+    Import-Module VSSetup
+    $vsInstance = Get-VSSetupInstance | Select-VSSetupInstance -Version '[18.0,19.0)'
+    if ($null -eq $vsInstance) {
+        throw "Visual Studio 18.x (VS 2026) with the Windows SDK was not found."
+    }
+    Import-Module (Join-Path $vsInstance.InstallationPath "Common7/Tools/Microsoft.VisualStudio.DevShell.dll")
+    Enter-VsDevShell $vsInstance.InstanceId -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64"
+}
+```
+
 ## Comment style
 
 - Write code comments in English. Explain why, not what; skip comments on
