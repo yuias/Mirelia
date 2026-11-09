@@ -19,11 +19,11 @@ public sealed class AudioPlayerService : IDisposable
     private AudioEngine? _engine;
     private bool _deviceOpen;
 
-    // Output settings the live device was opened for, and the ReplayGain
-    // mode the loaded slots were decoded under. A settings save that touches
-    // neither (volume, pane visibility, window geometry, fonts…) must leave
-    // playback alone.
-    private (string? DeviceId, bool Exclusive) _deviceConfig;
+    // Output settings the live device was opened for (device, mode and fixed
+    // output rate), and the ReplayGain mode the loaded slots were decoded
+    // under. A settings save that touches neither (volume, pane visibility,
+    // window geometry, fonts…) must leave playback alone.
+    private (string? DeviceId, bool Exclusive, uint? OutputSampleRate) _deviceConfig;
     private ReplayGainMode _replayGain;
 
     // Volume lives here, not on the engine, because the engine is created
@@ -85,7 +85,7 @@ public sealed class AudioPlayerService : IDisposable
             TimeSpan.FromMilliseconds(200), DispatcherPriority.Background, (_, _) => Poll());
 
         AppSettings current = settings.Current;
-        _deviceConfig = (current.DeviceId, current.Exclusive);
+        _deviceConfig = (current.DeviceId, current.Exclusive, current.OutputSampleRate);
         _replayGain = current.ReplayGain;
         _volume = ClampVolume(current.Volume);
         _repeat = current.Repeat;
@@ -106,16 +106,16 @@ public sealed class AudioPlayerService : IDisposable
             _ = ReconcilePreloadAsync();
         }
 
-        if (_deviceConfig == (settings.DeviceId, settings.Exclusive))
+        if (_deviceConfig == (settings.DeviceId, settings.Exclusive, settings.OutputSampleRate))
         {
             return;
         }
 
-        // Device/mode changes take effect on the next play; live playback
-        // stops so the old stream does not linger on the old device. The
-        // queue itself is left intact — only the "what's audible" pointer
-        // resets, mirroring the previous _index = -1 behavior.
-        _deviceConfig = (settings.DeviceId, settings.Exclusive);
+        // Device, mode and output rate changes take effect on the next play;
+        // live playback stops so the old stream does not linger on the old
+        // device. The queue itself is left intact — only the "what's audible"
+        // pointer resets, mirroring the previous _index = -1 behavior.
+        _deviceConfig = (settings.DeviceId, settings.Exclusive, settings.OutputSampleRate);
         try
         {
             _engine?.Stop();
@@ -448,8 +448,8 @@ public sealed class AudioPlayerService : IDisposable
             _pendingStartEntryId = entry.EntryId;
             _trackEndedPending = false;
             _preloadedEntryId = null;
-            _engine!.Load(AudioSlot.Current, path, (ulong)entry.EntryId, gain);
-            _engine.Play();
+            LoadCurrent(path, entry, gain);
+            _engine!.Play();
             _timer.Start();
             NowPlayingChanged?.Invoke(entry.TrackId);
             await PreloadNextAsync();
@@ -498,8 +498,10 @@ public sealed class AudioPlayerService : IDisposable
         }
         catch (AudioEngineException)
         {
-            // Format change: the engine refuses a gapless Next across
-            // formats. QueueEmpty arrives at EOF and we reload as Current.
+            // Format change: the engine refuses a gapless Next across a
+            // channel-count change, and across a sample-rate change too unless
+            // a fixed output rate converts it. QueueEmpty arrives at EOF and
+            // we reload as Current.
         }
     }
 
@@ -554,7 +556,9 @@ public sealed class AudioPlayerService : IDisposable
                         break;
 
                     case AudioEventType.QueueEmpty:
-                        // Auto-advance path for format changes (see above).
+                        // Auto-advance path for format changes (see above): a
+                        // channel-count change under a fixed output rate, or
+                        // any rate or channel change when the rate is not fixed.
                         if (_preloadedEntryId is null && PreloadTarget is { } resume)
                         {
                             _ = StartAtEntryAsync(resume);
@@ -695,9 +699,7 @@ public sealed class AudioPlayerService : IDisposable
                 // rather than resumed in place.
                 PromoteCurrent(entry);
                 _preloadedEntryId = null;
-                _engine.Load(
-                    AudioSlot.Current, path, (ulong)entry.EntryId, await GainForAsync(entry.TrackId),
-                    startFrame: resumeFrame);
+                LoadCurrent(path, entry, await GainForAsync(entry.TrackId), resumeFrame);
                 if (wasPlaying)
                 {
                     _engine.Play();
@@ -721,19 +723,20 @@ public sealed class AudioPlayerService : IDisposable
     private bool TryReopenDevice()
     {
         AppSettings settings = _settings.Current;
-        if (TryOpenDevice(settings.DeviceId, settings.Exclusive))
+        if (TryOpenDevice(settings.DeviceId, settings.Exclusive, settings.OutputSampleRate))
         {
             return true;
         }
 
-        return settings.DeviceId is not null && TryOpenDevice(deviceId: null, settings.Exclusive);
+        return settings.DeviceId is not null
+            && TryOpenDevice(deviceId: null, settings.Exclusive, settings.OutputSampleRate);
     }
 
-    private bool TryOpenDevice(string? deviceId, bool exclusive)
+    private bool TryOpenDevice(string? deviceId, bool exclusive, uint? outputSampleRate)
     {
         try
         {
-            _engine!.OpenDevice(deviceId, exclusive);
+            _engine!.OpenDevice(deviceId, exclusive, outputSampleRate);
             _deviceOpen = true;
             ApplyVolume();
             return true;
@@ -746,7 +749,9 @@ public sealed class AudioPlayerService : IDisposable
 
     private void EnsureEngine()
     {
-        _engine ??= AudioEngine.Create();
+        // The engine must be allowed to convert, or a fixed output rate
+        // would fail every track whose source rate differs.
+        _engine ??= AudioEngine.Create(new AudioEngineConfig(AllowResample: true, DitherToInt: false));
         if (_deviceOpen)
         {
             return;
@@ -755,19 +760,44 @@ public sealed class AudioPlayerService : IDisposable
         AppSettings settings = _settings.Current;
         try
         {
-            _engine.OpenDevice(settings.DeviceId, settings.Exclusive);
+            _engine.OpenDevice(settings.DeviceId, settings.Exclusive, settings.OutputSampleRate);
         }
         catch (AudioEngineException ex) when (settings.Exclusive
             && ex.Result is KnResult.DeviceBusy or KnResult.Format or KnResult.Unsupported)
         {
             // Bit-perfect denied (device busy or format not offered):
             // shared mode beats silence.
-            _engine.OpenDevice(settings.DeviceId, exclusive: false);
+            _engine.OpenDevice(settings.DeviceId, exclusive: false, settings.OutputSampleRate);
             PlaybackError?.Invoke($"exclusive mode unavailable, using shared ({ex.Result})");
         }
 
         _deviceOpen = true;
         ApplyVolume();
+    }
+
+    // Loads into the Current slot. A deferred stream is only probed by
+    // OpenDevice, so with a fixed rate in exclusive mode the device's
+    // rejection of that rate surfaces here, not in EnsureEngine.
+    private void LoadCurrent(string path, QueueEntry entry, float gain, long startFrame = 0)
+    {
+        try
+        {
+            _engine!.Load(AudioSlot.Current, path, (ulong)entry.EntryId, gain, startFrame);
+        }
+        catch (AudioEngineException ex) when (
+            _settings.Current is { Exclusive: true, OutputSampleRate: not null }
+            && ex.Result is KnResult.DeviceBusy or KnResult.Format)
+        {
+            // Every track plays at the same fixed rate, so a rejection is
+            // expected to repeat for later tracks (a channel-count change can
+            // also trigger it); shared mode beats silence. Unsupported is not
+            // handled here because an undecodable file reports it too.
+            AppSettings settings = _settings.Current;
+            _engine!.OpenDevice(settings.DeviceId, exclusive: false, settings.OutputSampleRate);
+            ApplyVolume();
+            _engine.Load(AudioSlot.Current, path, (ulong)entry.EntryId, gain, startFrame);
+            PlaybackError?.Invoke($"exclusive mode unavailable, using shared ({ex.Result})");
+        }
     }
 
     private void StopForQueueEnded()
