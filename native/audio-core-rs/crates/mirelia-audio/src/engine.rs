@@ -188,6 +188,8 @@ enum Cmd {
 struct DeviceRequest {
     id: Option<String>,
     mode: ShareMode,
+    /// Rate every stream must run at; `None` follows each source's rate.
+    output_rate: Option<u32>,
 }
 
 struct DeviceState {
@@ -260,9 +262,15 @@ impl Engine {
         Ok(self.backend.enumerate()?)
     }
 
-    /// Selects a device (None = system default). With no desired format the
-    /// stream itself is opened lazily at the first load, following the
-    /// source format; the returned format is then the device's native one.
+    /// Selects a device (None = system default). `desired` fixes the output
+    /// rate of every stream; its channel count decides when the stream opens:
+    /// - `None`: the stream opens lazily at the first load and follows each
+    ///   source's format; the returned format is the device's native one.
+    /// - `channels == 0`: the rate is fixed and the channel count follows the
+    ///   source, so the stream also opens at the first load (the channel count
+    ///   is not known earlier); the returned format is the desired rate with
+    ///   the device's native channel count.
+    /// - `channels != 0`: the rate is fixed and the stream opens now.
     pub fn open_device(
         &mut self,
         device_id: Option<&str>,
@@ -274,15 +282,21 @@ impl Engine {
         self.request = Some(DeviceRequest {
             id: device_id.map(str::to_owned),
             mode,
+            output_rate: desired.map(|d| d.sample_rate),
         });
-        if let Some(fmt) = desired {
-            self.ensure_stream(fmt)?;
-            Ok(fmt)
-        } else {
-            Ok(StreamFormat {
+        match desired {
+            Some(fmt) if fmt.channels != 0 => {
+                self.ensure_stream(fmt)?;
+                Ok(fmt)
+            }
+            Some(fmt) => Ok(StreamFormat {
+                sample_rate: fmt.sample_rate,
+                channels: probe.native_channels,
+            }),
+            None => Ok(StreamFormat {
                 sample_rate: probe.native_rate,
                 channels: probe.native_channels,
-            })
+            }),
         }
     }
 
@@ -299,10 +313,21 @@ impl Engine {
     /// `Next` queues the follow-up for auto-advance.
     pub fn load(&mut self, slot: Slot, params: LoadParams) -> Result<(), EngineError> {
         let decoder = Decoder::open(&params.path)?;
-        let fmt = StreamFormat {
+        let source = StreamFormat {
             sample_rate: decoder.info().sample_rate,
             channels: decoder.info().channels,
         };
+        if source.sample_rate == 0 {
+            return Err(EngineError::Format("source has no sample rate".into()));
+        }
+
+        let fmt = self.output_format(source);
+        if fmt.sample_rate != source.sample_rate && !self.config.allow_resample {
+            return Err(EngineError::Format(format!(
+                "source is {} Hz but the output is fixed at {} Hz and resampling is disabled",
+                source.sample_rate, fmt.sample_rate
+            )));
+        }
 
         match slot {
             Slot::Current => {
@@ -312,6 +337,11 @@ impl Engine {
 
                 self.shutdown_worker();
                 self.ensure_stream(fmt)?;
+                // A reused stream skips the store in `ensure_stream`, and a
+                // seek before the first track tag is applied scales by this.
+                self.shared
+                    .pub_rate
+                    .store(source.sample_rate, Ordering::Release);
                 self.shared.eof_no_next.store(false, Ordering::Release);
                 self.shared.ended_signaled.store(false, Ordering::Release);
                 self.spawn_worker(decoder, params, fmt);
@@ -321,6 +351,8 @@ impl Engine {
                 let Some(session) = &self.session else {
                     return Err(EngineError::State("load a current track first".into()));
                 };
+                // Both sides are output formats: under a fixed rate only a
+                // channel-count change differs.
                 if fmt != session.format {
                     return Err(EngineError::Unsupported(
                         "gapless across format changes is not supported; reload as CURRENT instead"
@@ -443,6 +475,20 @@ impl Engine {
     }
 
     // ---- internals -----------------------------------------------------
+
+    /// The format the stream must have for this source: the fixed output rate
+    /// when the host asked for one, the source's own rate otherwise. Channels
+    /// always follow the source.
+    fn output_format(&self, source: StreamFormat) -> StreamFormat {
+        StreamFormat {
+            sample_rate: self
+                .request
+                .as_ref()
+                .and_then(|r| r.output_rate)
+                .unwrap_or(source.sample_rate),
+            channels: source.channels,
+        }
+    }
 
     fn reset_transport(&self) {
         let s = &self.shared;
@@ -1135,6 +1181,10 @@ mod tests {
     /// seam (kickoff §5.6's -90 dBFS requirement, tightened to equality).
     #[test]
     fn gapless_splice_reproduces_master_bit_exactly() {
+        gapless_splice_is_bit_exact(None);
+    }
+
+    fn gapless_splice_is_bit_exact(desired: Option<StreamFormat>) {
         let master = {
             let mut d =
                 mirelia_decode::Decoder::open(&fixture("gapless-master.wav")).unwrap();
@@ -1151,7 +1201,7 @@ mod tests {
             Box::new(CapturingBackend { sink: sink.clone() }),
         );
         let mut seen = Vec::new();
-        e.open_device(None, None, ShareMode::Shared).unwrap();
+        e.open_device(None, desired, ShareMode::Shared).unwrap();
         e.load(Slot::Current, load_params("gapless-a.flac", 1)).unwrap();
         e.load(Slot::Next, load_params("gapless-b.flac", 2)).unwrap();
         // Let the decode worker prefill so playback starts without a stall.
@@ -1236,5 +1286,216 @@ mod tests {
         let b = e.position();
         assert_eq!(a.frame, b.frame);
         assert_eq!(b.state, State::Paused);
+    }
+
+    /// Wraps `MockBackend` and remembers the format of every stream opened.
+    struct RecordingBackend {
+        inner: MockBackend,
+        opened: Arc<std::sync::Mutex<Vec<StreamFormat>>>,
+    }
+
+    impl OutputBackend for RecordingBackend {
+        fn name(&self) -> &'static str {
+            "recording"
+        }
+
+        fn enumerate(&mut self) -> Result<Vec<DeviceInfo>, OutputError> {
+            self.inner.enumerate()
+        }
+
+        fn probe_device(&mut self, id: Option<&str>) -> Result<DeviceInfo, OutputError> {
+            self.inner.probe_device(id)
+        }
+
+        fn open_stream(
+            &mut self,
+            device_id: Option<&str>,
+            format: StreamFormat,
+            options: StreamOptions,
+            callback: crate::output::RenderCallback,
+            events: EventSink,
+        ) -> Result<Box<dyn OutputStream>, OutputError> {
+            self.opened.lock().unwrap().push(format);
+            self.inner
+                .open_stream(device_id, format, options, callback, events)
+        }
+    }
+
+    fn recording_engine(
+        config: EngineConfig,
+    ) -> (Engine, Arc<std::sync::Mutex<Vec<StreamFormat>>>) {
+        let opened = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let backend = RecordingBackend {
+            inner: MockBackend,
+            opened: opened.clone(),
+        };
+        (Engine::new(config, Box::new(backend)), opened)
+    }
+
+    /// Writes a 32-bit float WAV with a unique name under the temp directory
+    /// and returns its path. Samples are interleaved.
+    fn write_wav(rate: u32, channels: u16, samples: &[f32]) -> PathBuf {
+        use std::sync::atomic::AtomicUsize;
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+        let data_len = (samples.len() * 4) as u32;
+        let block_align = channels * 4;
+        let mut bytes = Vec::with_capacity(44 + samples.len() * 4);
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + data_len).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&3u16.to_le_bytes()); // IEEE float
+        bytes.extend_from_slice(&channels.to_le_bytes());
+        bytes.extend_from_slice(&rate.to_le_bytes());
+        bytes.extend_from_slice(&(rate * u32::from(block_align)).to_le_bytes());
+        bytes.extend_from_slice(&block_align.to_le_bytes());
+        bytes.extend_from_slice(&32u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&data_len.to_le_bytes());
+        for s in samples {
+            bytes.extend_from_slice(&s.to_le_bytes());
+        }
+
+        let path = std::env::temp_dir().join(format!(
+            "mirelia-audio-test-{}-{}.wav",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    /// A short test tone: `frames` frames of `channels` identical samples.
+    fn tone(rate: u32, channels: u16, frames: usize) -> PathBuf {
+        let samples: Vec<f32> = (0..frames)
+            .flat_map(|n| {
+                let s = (n as f32 * 0.05).sin() * 0.5;
+                std::iter::repeat_n(s, usize::from(channels))
+            })
+            .collect();
+        write_wav(rate, channels, &samples)
+    }
+
+    fn params_for(path: PathBuf, token: u64) -> LoadParams {
+        LoadParams {
+            path,
+            start_frame: 0,
+            end_frame: -1,
+            gain_db: 0.0,
+            user_token: token,
+        }
+    }
+
+    fn fixed(rate: u32) -> Option<StreamFormat> {
+        Some(StreamFormat {
+            sample_rate: rate,
+            channels: 0,
+        })
+    }
+
+    #[test]
+    fn fixed_rate_equal_to_source_stays_bit_exact() {
+        gapless_splice_is_bit_exact(fixed(44_100));
+    }
+
+    #[test]
+    fn fixed_rate_opens_the_stream_at_that_rate_and_source_channels() {
+        let (mut e, opened) = recording_engine(EngineConfig::default());
+        let returned = e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
+        assert_eq!(
+            returned,
+            StreamFormat {
+                sample_rate: 48_000,
+                channels: 2
+            }
+        );
+        // The channel count is only known at load, so nothing opens yet.
+        assert!(opened.lock().unwrap().is_empty());
+
+        let mono = |rate, token| params_for(tone(rate, 1, 2205), token);
+        e.load(Slot::Current, mono(22_050, 1)).unwrap();
+        // A different source rate with the same channels reuses the stream.
+        e.load(Slot::Current, mono(32_000, 2)).unwrap();
+        e.load(Slot::Current, params_for(tone(44_100, 2, 2205), 3)).unwrap();
+
+        let want = |channels| StreamFormat {
+            sample_rate: 48_000,
+            channels,
+        };
+        assert_eq!(*opened.lock().unwrap(), [want(1), want(2)]);
+    }
+
+    #[test]
+    fn fixed_rate_with_channels_opens_the_stream_immediately() {
+        let (mut e, opened) = recording_engine(EngineConfig::default());
+        let desired = StreamFormat {
+            sample_rate: 96_000,
+            channels: 2,
+        };
+        assert_eq!(
+            e.open_device(None, Some(desired), ShareMode::Shared).unwrap(),
+            desired
+        );
+        assert_eq!(*opened.lock().unwrap(), [desired]);
+    }
+
+    #[test]
+    fn fixed_rate_accepts_a_next_slot_of_a_different_source_rate() {
+        let (mut e, _) = recording_engine(EngineConfig::default());
+        e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
+        e.load(Slot::Current, params_for(tone(44_100, 1, 2205), 1)).unwrap();
+        e.load(Slot::Next, params_for(tone(22_050, 1, 2205), 2)).unwrap();
+    }
+
+    #[test]
+    fn fixed_rate_still_refuses_a_next_slot_channel_change() {
+        let (mut e, _) = recording_engine(EngineConfig::default());
+        e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
+        e.load(Slot::Current, params_for(tone(44_100, 1, 2205), 1)).unwrap();
+        let next = e.load(Slot::Next, params_for(tone(44_100, 2, 2205), 2));
+        assert!(matches!(next, Err(EngineError::Unsupported(_))), "{next:?}");
+    }
+
+    #[test]
+    fn fixed_rate_absent_still_refuses_a_next_slot_rate_change() {
+        let (mut e, _) = recording_engine(EngineConfig::default());
+        e.open_device(None, None, ShareMode::Shared).unwrap();
+        e.load(Slot::Current, params_for(tone(44_100, 1, 2205), 1)).unwrap();
+        let next = e.load(Slot::Next, params_for(tone(22_050, 1, 2205), 2));
+        assert!(matches!(next, Err(EngineError::Unsupported(_))), "{next:?}");
+    }
+
+    #[test]
+    fn fixed_rate_with_allow_resample_off_rejects_conversion_but_passes_equal_rates() {
+        let config = EngineConfig {
+            allow_resample: false,
+            ..EngineConfig::default()
+        };
+        let (mut e, _) = recording_engine(config);
+        e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
+
+        let rejected = e.load(Slot::Current, params_for(tone(22_050, 1, 2205), 1));
+        assert!(matches!(rejected, Err(EngineError::Format(_))), "{rejected:?}");
+
+        e.load(Slot::Current, params_for(tone(48_000, 1, 2205), 2)).unwrap();
+        let rejected = e.load(Slot::Next, params_for(tone(22_050, 1, 2205), 3));
+        assert!(matches!(rejected, Err(EngineError::Format(_))), "{rejected:?}");
+
+        // Without a fixed rate nothing is converted, so any rate loads.
+        e.open_device(None, None, ShareMode::Shared).unwrap();
+        e.load(Slot::Current, params_for(tone(22_050, 1, 2205), 4)).unwrap();
+    }
+
+    #[test]
+    fn fixed_rate_position_reports_the_source_rate_after_load() {
+        let (mut e, _) = recording_engine(EngineConfig::default());
+        e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
+        e.load(Slot::Current, params_for(tone(22_050, 1, 2205), 1)).unwrap();
+        assert_eq!(e.position().sample_rate, 22_050);
+
+        // The stream is reused here, so the rate must come from `load`.
+        e.load(Slot::Current, params_for(tone(32_000, 1, 2205), 2)).unwrap();
+        assert_eq!(e.position().sample_rate, 32_000);
     }
 }

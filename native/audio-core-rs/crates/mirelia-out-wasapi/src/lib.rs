@@ -1,10 +1,11 @@
 //! Mirelia WASAPI output backend: shared and exclusive mode.
 //!
 //! Shared streams open event-driven with AUTOCONVERTPCM, so the engine can
-//! always run at the source format and let the OS mixer convert. Exclusive
-//! streams negotiate the device's best integer/float format at the source
-//! rate (bit-perfect: no mixer, no SRC) and convert f32 → device format on
-//! the render thread with optional TPDF dither.
+//! always run at the engine's stream format and let the OS mixer convert.
+//! Exclusive streams negotiate the device's best integer/float format at the
+//! stream's rate (bit-perfect: no mixer, no SRC) and convert f32 → device
+//! format on the render thread with optional TPDF dither. The stream's rate
+//! is the source rate unless the host fixed an output rate.
 //!
 //! The render loop body is the engine's callback; this crate only waits on
 //! the WASAPI event, maps the device buffer, and converts.
@@ -298,7 +299,7 @@ fn make_wfx(format: StreamFormat, device_format: DeviceFormat, valid_bits: u16) 
     }
 }
 
-/// Finds the best exclusive-mode format at the source rate: float first,
+/// Finds the best exclusive-mode format at the stream's rate: float first,
 /// then integer by descending depth (32, 24-in-32, 24 packed, 16).
 fn negotiate_exclusive(
     client: &IAudioClient,

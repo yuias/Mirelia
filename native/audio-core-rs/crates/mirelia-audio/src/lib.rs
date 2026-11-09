@@ -24,7 +24,9 @@ pub struct EngineConfig {
     pub target_latency_ms: u32,
     /// Decode-ahead ring buffer depth in milliseconds.
     pub decode_ahead_ms: u32,
-    /// When false, fail rather than resample.
+    /// When false, a load that needs Mirelia's own sample-rate conversion
+    /// (a fixed output rate that differs from the source's) fails with a
+    /// format error instead.
     pub allow_resample: bool,
     /// Apply TPDF dither on float-to-int conversion.
     pub dither_to_int: bool,

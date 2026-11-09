@@ -20,7 +20,7 @@ pub enum ShareMode {
     /// OS mixer path; format conversion is the mixer's problem.
     #[default]
     Shared,
-    /// Exclusive/hog access: bit-perfect, source-rate, no mixer.
+    /// Exclusive/hog access: bit-perfect at the stream's own rate, no mixer.
     Exclusive,
 }
 
