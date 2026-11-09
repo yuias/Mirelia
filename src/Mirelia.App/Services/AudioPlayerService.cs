@@ -47,6 +47,11 @@ public sealed class AudioPlayerService : IDisposable
     // reads Playing.
     private bool _trackEndedPending;
 
+    // Bumped by every start and by StopAndClear. A start or preload that finds
+    // it changed across an await has been superseded: its queue entry may
+    // belong to the library that was just closed.
+    private int _startGeneration;
+
     private RepeatMode _repeat;
 
     /// <summary>Fires on every poll with the current position.</summary>
@@ -290,6 +295,7 @@ public sealed class AudioPlayerService : IDisposable
     /// </summary>
     public void StopAndClear()
     {
+        _startGeneration++;
         _timer.Stop();
         try
         {
@@ -406,7 +412,13 @@ public sealed class AudioPlayerService : IDisposable
 
     private async Task StartAtEntryAsync(QueueEntry entry)
     {
+        int generation = ++_startGeneration;
         string? path = await _library.GetPathAsync(entry.TrackId);
+        if (generation != _startGeneration)
+        {
+            return;
+        }
+
         if (path is null || !File.Exists(path))
         {
             PlaybackError?.Invoke($"file missing for track {entry.TrackId}");
@@ -421,6 +433,11 @@ public sealed class AudioPlayerService : IDisposable
             // otherwise see the old track's end with the new entry already
             // current and report playback as over.
             float gain = await GainForAsync(entry.TrackId);
+            if (generation != _startGeneration)
+            {
+                return;
+            }
+
             PromoteCurrent(entry);
             _pendingStartEntryId = entry.EntryId;
             _trackEndedPending = false;
@@ -455,6 +472,7 @@ public sealed class AudioPlayerService : IDisposable
             return;
         }
 
+        int generation = _startGeneration;
         string? path = await _library.GetPathAsync(entry.TrackId);
         if (path is null || !File.Exists(path))
         {
@@ -463,7 +481,13 @@ public sealed class AudioPlayerService : IDisposable
 
         try
         {
-            _engine.Load(AudioSlot.Next, path, (ulong)entry.EntryId, await GainForAsync(entry.TrackId));
+            float gain = await GainForAsync(entry.TrackId);
+            if (generation != _startGeneration)
+            {
+                return;
+            }
+
+            _engine.Load(AudioSlot.Next, path, (ulong)entry.EntryId, gain);
             _preloadedEntryId = entry.EntryId;
         }
         catch (AudioEngineException)
