@@ -23,7 +23,7 @@ result is `artifacts/Mirelia-<version>.msix`.
 |---|---|
 | `--output <dir>` | Write somewhere other than `artifacts/` |
 | `--version <x.y.z>` | Override the version from `Directory.Build.props` |
-| `--skip-native` | Reuse the existing `cargo build --release` output |
+| `--skip-native` | Reuse the existing `cargo build --release` output and the built r8brain plugin |
 | `--allow-placeholder-identity` | Build with the placeholder identity, for local testing |
 
 The three identity flags are mandatory. Their defaults are obvious placeholders
@@ -33,7 +33,10 @@ placeholder identity cannot reach a submission by accident.
 
 Requirements beyond the ordinary build: the Windows 10/11 SDK, for
 `makeappx.exe`. The script scans `Windows Kits\10\bin` and takes the newest
-version it finds.
+version it finds. Without `--skip-native` the script also builds the r8brain
+resampler plugin, which needs clang, CMake and Ninja in the developer
+environment described under "Building C and C++ on Windows" in `AGENTS.md`, and
+network access to fetch the r8brain source at configure time.
 
 The manifest template is `packaging/msix/AppxManifest.xml` and uses
 `{{PLACEHOLDER}}` tokens substituted at pack time. Visual assets are generated

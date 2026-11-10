@@ -97,12 +97,19 @@ build/conformance/Release/abi-conformance.exe \
 
 ## Packaging
 
-An archive for the host platform — app, CLI and native backend,
-framework-dependent, so the target machine needs the .NET runtime:
+An archive for the host platform — app, CLI, native backend and, on Windows,
+the r8brain sample resampler plugin — framework-dependent, so the target machine
+needs the .NET runtime:
 
 ```sh
 dotnet run scripts/package.cs
 ```
+
+On Windows the script also builds the plugin with clang, CMake and Ninja, so run
+it from the developer environment described under "Building C and C++ on
+Windows" in [AGENTS.md](AGENTS.md). Configuring the plugin fetches the r8brain
+source, which needs network access. `--skip-native` reuses the backend and the
+plugin already built and needs neither.
 
 Writes `artifacts/Mirelia-<version>-<githash>.zip`. On Windows the archive also
 needs the Visual C++ 2015-2022 redistributable, because the Rust audio backend

@@ -11,6 +11,12 @@
 // Unlike scripts/package.cs this publishes self-contained. Nothing on the Store
 // side supplies the .NET runtime to a packaged desktop app, so the runtime has
 // to travel inside the package.
+//
+// The package also carries the r8brain resampler plugin under plugins/dsp/.
+// Without --skip-native the script builds it with clang and Ninja, which needs
+// the Visual Studio developer environment (see "Building C and C++ on Windows"
+// in AGENTS.md) and network access, because CMake fetches the r8brain source
+// when it configures.
 
 using System.Diagnostics;
 using System.Xml.Linq;
@@ -104,6 +110,15 @@ string manifestTemplate = Path.Combine(root, "packaging", "msix", "AppxManifest.
 // Fail before the publish rather than after it if the SDK is missing.
 string makeAppx = FindMakeAppx();
 
+// Likewise for the compiler environment the r8brain plugin build needs.
+if (!skipNative && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("VSCMD_VER")))
+{
+    Console.Error.WriteLine(
+        "package-msix: building the r8brain plugin needs the Visual Studio developer environment. "
+        + "See \"Building C and C++ on Windows\" in AGENTS.md.");
+    return 1;
+}
+
 Console.WriteLine($"packaging {stem} for {rid}");
 
 // A stale staging directory would smuggle files from an older build into the package.
@@ -117,6 +132,11 @@ Directory.CreateDirectory(staging);
 if (!skipNative)
 {
     Run(root, "cargo", "build", "--release", "--manifest-path", "native/audio-core-rs/Cargo.toml");
+
+    // The plugin is a separate CMake project; configuring it fetches r8brain.
+    Run(root, "cmake", "-S", "native/plugins/r8brain-resampler", "-B", "build/r8brain-resampler",
+        "-G", "Ninja", "-DCMAKE_CXX_COMPILER=clang++", "-DCMAKE_BUILD_TYPE=Release");
+    Run(root, "cmake", "--build", "build/r8brain-resampler");
 }
 
 // ReadyToRun for the same reason as the zip build; trimming stays off because
@@ -138,6 +158,19 @@ if (!File.Exists(nativeSource))
 }
 
 File.Copy(nativeSource, Path.Combine(staging, "audio_core_rs.dll"), overwrite: true);
+
+// The app scans plugins/dsp next to the executable. The package install
+// directory is read-only, so only plugins packaged here can ever be loaded.
+string pluginSource = Path.Combine(root, "build", "r8brain-resampler", "mirelia_r8brain.dll");
+if (!File.Exists(pluginSource))
+{
+    Console.Error.WriteLine($"package-msix: r8brain plugin not built: {pluginSource}");
+    return 1;
+}
+
+string pluginStaging = Path.Combine(staging, "plugins", "dsp");
+Directory.CreateDirectory(pluginStaging);
+File.Copy(pluginSource, Path.Combine(pluginStaging, "mirelia_r8brain.dll"), overwrite: true);
 
 // The MIT text and the notices the LGPL and MPL components require have to
 // travel with the binaries, not just live in the repository.

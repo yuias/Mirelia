@@ -4,8 +4,14 @@
 //   dotnet run scripts/package.cs -- [--output <dir>] [--skip-native]
 //
 // Produces artifacts/Mirelia-<version>-<githash>.zip containing the desktop
-// app, the CLI, and the native audio backend. Framework-dependent: the target
+// app, the CLI, and the native audio backend. On Windows it also contains the
+// r8brain resampler plugin under plugins/dsp/. Framework-dependent: the target
 // machine needs the .NET runtime.
+//
+// Without --skip-native, a Windows run also builds the plugin with clang and
+// Ninja. That needs the Visual Studio developer environment (see "Building C
+// and C++ on Windows" in AGENTS.md) and network access, because CMake fetches
+// the r8brain source when it configures.
 
 using System.Diagnostics;
 using System.IO.Compression;
@@ -39,6 +45,17 @@ string outputDir = Path.GetFullPath(outputOption ?? Path.Combine(root, "artifact
 string staging = Path.Combine(outputDir, stem);
 string zipPath = Path.Combine(outputDir, stem + ".zip");
 
+// Fail before the long cargo and publish steps rather than after them if the
+// compiler environment for the plugin is missing.
+if (!skipNative && OperatingSystem.IsWindows()
+    && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("VSCMD_VER")))
+{
+    Console.Error.WriteLine(
+        "package: building the r8brain plugin needs the Visual Studio developer environment. "
+        + "See \"Building C and C++ on Windows\" in AGENTS.md.");
+    return 1;
+}
+
 Console.WriteLine($"packaging {stem} for {rid}");
 
 // A stale staging directory would smuggle files from an older build into the zip.
@@ -52,6 +69,14 @@ Directory.CreateDirectory(staging);
 if (!skipNative)
 {
     Run(root, "cargo", "build", "--release", "--manifest-path", "native/audio-core-rs/Cargo.toml");
+
+    // The plugin is a separate CMake project; configuring it fetches r8brain.
+    if (OperatingSystem.IsWindows())
+    {
+        Run(root, "cmake", "-S", "native/plugins/r8brain-resampler", "-B", "build/r8brain-resampler",
+            "-G", "Ninja", "-DCMAKE_CXX_COMPILER=clang++", "-DCMAKE_BUILD_TYPE=Release");
+        Run(root, "cmake", "--build", "build/r8brain-resampler");
+    }
 }
 
 // Pinned to the host RID: a portable publish would ship Skia and HarfBuzz for
@@ -84,6 +109,22 @@ if (!File.Exists(nativeSource))
 }
 
 File.Copy(nativeSource, Path.Combine(staging, nativeName), overwrite: true);
+
+// The app scans plugins/dsp next to the executable. The plugin is not ported to
+// macOS, so only the Windows archive carries one.
+if (OperatingSystem.IsWindows())
+{
+    string pluginSource = Path.Combine(root, "build", "r8brain-resampler", "mirelia_r8brain.dll");
+    if (!File.Exists(pluginSource))
+    {
+        Console.Error.WriteLine($"package: r8brain plugin not built: {pluginSource}");
+        return 1;
+    }
+
+    string pluginStaging = Path.Combine(staging, "plugins", "dsp");
+    Directory.CreateDirectory(pluginStaging);
+    File.Copy(pluginSource, Path.Combine(pluginStaging, "mirelia_r8brain.dll"), overwrite: true);
+}
 
 // The MIT text and the notices the LGPL and MPL components require have to
 // travel with the binaries, not just live in the repository.
