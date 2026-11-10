@@ -149,11 +149,11 @@ static void fixtureEmitFrame(const FixtureCtx *c, uint64_t m, float *out_frame) 
     }
 }
 
-static kn_result fixtureCreate(uint32_t in_rate, uint32_t out_rate, uint16_t channels,
-                               void **out_ctx) {
+static MireliaResult fixtureCreate(uint32_t in_rate, uint32_t out_rate, uint16_t channels,
+                                   void **out_ctx) {
     FixtureCtx *c = (FixtureCtx *)calloc(1, sizeof(*c));
     if (c == NULL) {
-        return KN_ERR_OOM;
+        return MireliaErrOom;
     }
     c->in_rate = in_rate;
     c->out_rate = out_rate;
@@ -165,11 +165,11 @@ static kn_result fixtureCreate(uint32_t in_rate, uint32_t out_rate, uint16_t cha
     c->kernels = (double *)malloc(c->phases * (uint64_t)(2 * c->half) * sizeof(double));
     if (c->kernels == NULL) {
         free(c);
-        return KN_ERR_OOM;
+        return MireliaErrOom;
     }
     fixtureBuildKernels(c);
     *out_ctx = c;
-    return KN_OK;
+    return MireliaOk;
 }
 
 static int64_t fixtureProcess(void *ctx, const float *in, int64_t in_frames, float *out,
@@ -177,30 +177,30 @@ static int64_t fixtureProcess(void *ctx, const float *in, int64_t in_frames, flo
     FixtureCtx *c = (FixtureCtx *)ctx;
 #ifdef FIXTURE_FAULT_FAIL_MIDSTREAM
     if (++c->calls >= 64) {
-        return KN_ERR_INTERNAL;
+        return MireliaErrInternal;
     }
 #endif
     if (c->flushed) {
 #ifdef FIXTURE_FAULT_PROCESS_AFTER_FLUSH
         return 0;
 #else
-        return KN_ERR_STATE;
+        return MireliaErrState;
 #endif
     }
     if (in_frames < 0 || out_capacity < 0) {
-        return KN_ERR_INVALID_ARG;
+        return MireliaErrInvalidArg;
     }
     uint64_t new_fed = c->fed + (uint64_t)in_frames;
     if (!fixtureCapacityOk((uint64_t)out_capacity,
                            fixtureOutFrames(c, new_fed) - c->emitted)) {
-        return KN_ERR_INVALID_ARG;
+        return MireliaErrInvalidArg;
     }
 
     if (c->count + (uint64_t)in_frames > c->hist_cap) {
         uint64_t cap = c->count + (uint64_t)in_frames;
         float *grown = (float *)realloc(c->hist, cap * c->channels * sizeof(float));
         if (grown == NULL) {
-            return KN_ERR_OOM;
+            return MireliaErrOom;
         }
         c->hist = grown;
         c->hist_cap = cap;
@@ -247,7 +247,7 @@ static int64_t fixtureFlush(void *ctx, float *out, int64_t out_capacity) {
     FixtureCtx *c = (FixtureCtx *)ctx;
     uint64_t pending = fixtureOutFrames(c, c->fed) - c->emitted;
     if (out_capacity < 0 || !fixtureCapacityOk((uint64_t)out_capacity, pending)) {
-        return KN_ERR_INVALID_ARG;
+        return MireliaErrInvalidArg;
     }
     int64_t written = 0;
     while (c->emitted < fixtureOutFrames(c, c->fed)) {
@@ -269,7 +269,7 @@ static int64_t fixturePendingFrames(void *ctx) {
 #endif
 }
 
-static kn_result fixtureReset(void *ctx) {
+static MireliaResult fixtureReset(void *ctx) {
     FixtureCtx *c = (FixtureCtx *)ctx;
     c->fed = 0;
     c->emitted = 0;
@@ -285,7 +285,7 @@ static kn_result fixtureReset(void *ctx) {
     c->base = 0;
     c->count = 0;
 #endif
-    return KN_OK;
+    return MireliaOk;
 }
 
 static void fixtureDestroy(void *ctx) {
@@ -298,25 +298,25 @@ static void fixtureDestroy(void *ctx) {
     free(c);
 }
 
-static const kn_dsp_resampler_vtable kFixtureVtable = {
+static const MireliaDspResamplerVtable kFixtureVtable = {
     fixtureCreate, fixtureProcess, fixtureFlush,
     fixturePendingFrames, fixtureReset, fixtureDestroy,
 };
 
-static const kn_dsp_capability kFixtureCapabilities[] = {
-    {KN_DSP_KIND_RESAMPLER, &kFixtureVtable},
+static const MireliaDspCapability kFixtureCapabilities[] = {
+    {MireliaDspKindResampler, &kFixtureVtable},
 };
 
-static const kn_dsp_plugin kFixturePlugin = {
-    KN_DSP_ABI_VERSION, "fixture-sinc", "Reference windowed-sinc fixture", 1,
+static const MireliaDspPlugin kFixturePlugin = {
+    MIRELIA_DSP_ABI_VERSION, "fixture-sinc", "Reference windowed-sinc fixture", 1,
     kFixtureCapabilities,
 };
 
-KN_DSP_EXPORT const kn_dsp_plugin *kn_dsp_entry(uint32_t abi_version) {
+MIRELIA_DSP_EXPORT const MireliaDspPlugin *kn_dsp_entry(uint32_t abi_version) {
 #ifdef FIXTURE_FAULT_BAD_VERSION
     (void)abi_version;
     return &kFixturePlugin;
 #else
-    return abi_version == KN_DSP_ABI_VERSION ? &kFixturePlugin : NULL;
+    return abi_version == MIRELIA_DSP_ABI_VERSION ? &kFixturePlugin : NULL;
 #endif
 }

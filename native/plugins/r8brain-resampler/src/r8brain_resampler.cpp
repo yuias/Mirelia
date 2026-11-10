@@ -40,12 +40,12 @@ public:
 
     int64_t process(const float* in, int64_t in_frames, float* out, int64_t out_capacity) {
         if (flushed_) {
-            return KN_ERR_STATE;
+            return MireliaErrState;
         }
         const uint64_t new_fed = fed_ + static_cast<uint64_t>(in_frames);
         const uint64_t limit = outFrames(new_fed) - emitted_;
         if (static_cast<uint64_t>(out_capacity) < limit) {
-            return KN_ERR_INVALID_ARG;
+            return MireliaErrInvalidArg;
         }
 
         fifo_.insert(fifo_.end(), in, in + static_cast<size_t>(in_frames) * channels_);
@@ -66,7 +66,7 @@ public:
     int64_t flush(float* out, int64_t out_capacity) {
         const uint64_t pending = pendingFrames();
         if (static_cast<uint64_t>(out_capacity) < pending) {
-            return KN_ERR_INVALID_ARG;
+            return MireliaErrInvalidArg;
         }
 
         // Treat everything after the last real frame as zeros: pad the partial chunk,
@@ -141,14 +141,14 @@ R8brainResampler* asResampler(void* ctx) {
     return static_cast<R8brainResampler*>(ctx);
 }
 
-kn_result create(uint32_t in_rate, uint32_t out_rate, uint16_t channels, void** out_ctx) {
+MireliaResult create(uint32_t in_rate, uint32_t out_rate, uint16_t channels, void** out_ctx) {
     try {
         *out_ctx = new R8brainResampler(in_rate, out_rate, channels);
-        return KN_OK;
+        return MireliaOk;
     } catch (const std::bad_alloc&) {
-        return KN_ERR_OOM;
+        return MireliaErrOom;
     } catch (...) {
-        return KN_ERR_INTERNAL;
+        return MireliaErrInternal;
     }
 }
 
@@ -156,9 +156,9 @@ int64_t process(void* ctx, const float* in, int64_t in_frames, float* out, int64
     try {
         return asResampler(ctx)->process(in, in_frames, out, out_capacity);
     } catch (const std::bad_alloc&) {
-        return KN_ERR_OOM;
+        return MireliaErrOom;
     } catch (...) {
-        return KN_ERR_INTERNAL;
+        return MireliaErrInternal;
     }
 }
 
@@ -166,9 +166,9 @@ int64_t flush(void* ctx, float* out, int64_t out_capacity) {
     try {
         return asResampler(ctx)->flush(out, out_capacity);
     } catch (const std::bad_alloc&) {
-        return KN_ERR_OOM;
+        return MireliaErrOom;
     } catch (...) {
-        return KN_ERR_INTERNAL;
+        return MireliaErrInternal;
     }
 }
 
@@ -176,18 +176,18 @@ int64_t pendingFrames(void* ctx) {
     try {
         return asResampler(ctx)->pendingFrames();
     } catch (...) {
-        return KN_ERR_INTERNAL;
+        return MireliaErrInternal;
     }
 }
 
-kn_result reset(void* ctx) {
+MireliaResult reset(void* ctx) {
     try {
         asResampler(ctx)->reset();
-        return KN_OK;
+        return MireliaOk;
     } catch (const std::bad_alloc&) {
-        return KN_ERR_OOM;
+        return MireliaErrOom;
     } catch (...) {
-        return KN_ERR_INTERNAL;
+        return MireliaErrInternal;
     }
 }
 
@@ -198,16 +198,16 @@ void destroy(void* ctx) {
     }
 }
 
-const kn_dsp_resampler_vtable kResamplerVtable = {
+const MireliaDspResamplerVtable kResamplerVtable = {
     create, process, flush, pendingFrames, reset, destroy,
 };
 
-const kn_dsp_capability kCapabilities[] = {
-    {KN_DSP_KIND_RESAMPLER, &kResamplerVtable},
+const MireliaDspCapability kCapabilities[] = {
+    {MireliaDspKindResampler, &kResamplerVtable},
 };
 
-const kn_dsp_plugin kPlugin = {
-    KN_DSP_ABI_VERSION,
+const MireliaDspPlugin kPlugin = {
+    MIRELIA_DSP_ABI_VERSION,
     "r8brain",
     "r8brain-free-src",
     sizeof(kCapabilities) / sizeof(kCapabilities[0]),
@@ -216,6 +216,6 @@ const kn_dsp_plugin kPlugin = {
 
 }  // namespace
 
-extern "C" KN_DSP_EXPORT const kn_dsp_plugin* kn_dsp_entry(uint32_t abi_version) {
-    return abi_version == KN_DSP_ABI_VERSION ? &kPlugin : nullptr;
+extern "C" MIRELIA_DSP_EXPORT const MireliaDspPlugin* kn_dsp_entry(uint32_t abi_version) {
+    return abi_version == MIRELIA_DSP_ABI_VERSION ? &kPlugin : nullptr;
 }

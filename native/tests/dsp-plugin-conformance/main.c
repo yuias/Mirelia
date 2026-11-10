@@ -103,7 +103,7 @@ static void *xmalloc(size_t n) {
 
 /* ---- the plugin under test ---------------------------------------------- */
 
-static const kn_dsp_resampler_vtable *vt;
+static const MireliaDspResamplerVtable *vt;
 
 typedef struct RatePair {
     uint32_t in_rate;
@@ -204,7 +204,7 @@ static int64_t runStream(void *ctx, const float *in, int64_t frames, uint16_t ch
 /* Creates a context, reporting a failure as a runtime one. NULL on failure. */
 static void *createCtx(uint32_t in_rate, uint32_t out_rate, uint16_t channels) {
     void *ctx = NULL;
-    kn_result rc = vt->create(in_rate, out_rate, channels, &ctx);
+    MireliaResult rc = vt->create(in_rate, out_rate, channels, &ctx);
     if (!RUNTIME_OK(rc, "create") || ctx == NULL) {
         return NULL;
     }
@@ -279,15 +279,15 @@ static int validUtf8(const unsigned char *s, size_t n) {
 }
 
 /* Returns the plugin, or NULL if its static contents are too broken to test further. */
-static const kn_dsp_plugin *checkEntry(kn_dsp_entry_fn entry) {
+static const MireliaDspPlugin *checkEntry(MireliaDspEntryFn entry) {
     CHECK("entry", entry(0xDEAD) == NULL, "kn_dsp_entry(0xDEAD) must return NULL");
 
-    const kn_dsp_plugin *plugin = entry(KN_DSP_ABI_VERSION);
+    const MireliaDspPlugin *plugin = entry(MIRELIA_DSP_ABI_VERSION);
     if (plugin == NULL) {
-        FAIL("entry", "kn_dsp_entry(%d) returned NULL", KN_DSP_ABI_VERSION);
+        FAIL("entry", "kn_dsp_entry(%d) returned NULL", MIRELIA_DSP_ABI_VERSION);
         return NULL;
     }
-    CHECK("entry", plugin->abi_version == KN_DSP_ABI_VERSION, "abi_version is %u",
+    CHECK("entry", plugin->abi_version == MIRELIA_DSP_ABI_VERSION, "abi_version is %u",
           (unsigned)plugin->abi_version);
     CHECK("entry", validId(plugin->id), "id must be 1..64 bytes of [a-z0-9._-]");
     size_t name_len = plugin->name != NULL ? strlen(plugin->name) : 0;
@@ -307,12 +307,12 @@ static const kn_dsp_plugin *checkEntry(kn_dsp_entry_fn entry) {
 
     unsigned resamplers = 0;
     for (uint32_t i = 0; i < plugin->capability_count; i++) {
-        if (plugin->capabilities[i].kind != KN_DSP_KIND_RESAMPLER) {
+        if (plugin->capabilities[i].kind != MireliaDspKindResampler) {
             continue;
         }
         resamplers++;
-        const kn_dsp_resampler_vtable *v =
-            (const kn_dsp_resampler_vtable *)plugin->capabilities[i].vtable;
+        const MireliaDspResamplerVtable *v =
+            (const MireliaDspResamplerVtable *)plugin->capabilities[i].vtable;
         if (v == NULL || v->create == NULL || v->process == NULL || v->flush == NULL ||
             v->pending_frames == NULL || v->reset == NULL || v->destroy == NULL) {
             FAIL("entry", "resampler capability %u has a NULL vtable or function pointer",
@@ -323,7 +323,7 @@ static const kn_dsp_plugin *checkEntry(kn_dsp_entry_fn entry) {
             vt = v;
         }
     }
-    CHECK("entry", resamplers >= 1, "no KN_DSP_KIND_RESAMPLER capability");
+    CHECK("entry", resamplers >= 1, "no MireliaDspKindResampler capability");
     return vt != NULL ? plugin : NULL;
 }
 
@@ -331,9 +331,9 @@ static void checkCreate(void) {
     for (size_t p = 0; p < PAIR_COUNT; p++) {
         for (size_t c = 0; c < CHANNEL_COUNTS; c++) {
             void *ctx = NULL;
-            kn_result rc = vt->create(kPairs[p].in_rate, kPairs[p].out_rate,
-                                      kChannelCounts[c], &ctx);
-            CHECK("create", rc == KN_OK && ctx != NULL,
+            MireliaResult rc = vt->create(kPairs[p].in_rate, kPairs[p].out_rate,
+                                          kChannelCounts[c], &ctx);
+            CHECK("create", rc == MireliaOk && ctx != NULL,
                   "create(%u -> %u, %u ch) returned %d", (unsigned)kPairs[p].in_rate,
                   (unsigned)kPairs[p].out_rate, (unsigned)kChannelCounts[c], (int)rc);
             if (ctx != NULL) {
@@ -550,7 +550,7 @@ static void checkPending(void) {
                         CHECK("pending", pending == 0,
                               "%u -> %u, %u ch: %lld pending after flush", (unsigned)in_rate,
                               (unsigned)out_rate, (unsigned)ch, (long long)pending);
-                        kn_result rr = vt->reset(ctx);
+                        MireliaResult rr = vt->reset(ctx);
                         if (RUNTIME_OK(rr, "reset")) {
                             pending = vt->pending_frames(ctx);
                             if (RUNTIME_OK(pending, "pending_frames")) {
@@ -647,8 +647,8 @@ static void checkState(void) {
             if (ctx != NULL) {
                 if (runStream(ctx, in, n, ch, in_rate, out_rate, NULL, 0, 0, out) >= 0) {
                     int64_t rc = vt->process(ctx, in, n, out, outFrames(n, in_rate, out_rate));
-                    CHECK("state", rc == KN_ERR_STATE,
-                          "%u -> %u, %u ch: process after flush returned %lld, expected KN_ERR_STATE",
+                    CHECK("state", rc == MireliaErrState,
+                          "%u -> %u, %u ch: process after flush returned %lld, expected MireliaErrState",
                           (unsigned)in_rate, (unsigned)out_rate, (unsigned)ch, (long long)rc);
                     rc = vt->flush(ctx, out, outFrames(n, in_rate, out_rate));
                     CHECK("state", rc == 0,
@@ -693,7 +693,7 @@ static void checkCapacity(void) {
                 /* One frame short: rejected, nothing written beyond the capacity, nothing consumed. */
                 int64_t rc = vt->process(ctx, in, n, buf, required - 1);
                 /* Any other result leaves the context in a state unknown here, so stop. */
-                int ok = rc == KN_ERR_INVALID_ARG;
+                int ok = rc == MireliaErrInvalidArg;
                 CHECK("capacity", ok,
                       "%u -> %u, %u ch: process with a capacity one frame short returned %lld",
                       (unsigned)in_rate, (unsigned)out_rate, (unsigned)ch, (long long)rc);
@@ -716,7 +716,7 @@ static void checkCapacity(void) {
                     /* The same holds for flush. */
                     if (pending > 0) {
                         rc = vt->flush(ctx, buf + emitted * ch, pending - 1);
-                        ok = rc == KN_ERR_INVALID_ARG;
+                        ok = rc == MireliaErrInvalidArg;
                         CHECK("capacity", ok,
                               "%u -> %u, %u ch: flush with a capacity one frame short returned %lld",
                               (unsigned)in_rate, (unsigned)out_rate, (unsigned)ch, (long long)rc);
@@ -849,14 +849,14 @@ int main(int argc, char **argv) {
         FAIL("entry", "cannot load %s", argv[1]);
         return 1;
     }
-    kn_dsp_entry_fn entry = (kn_dsp_entry_fn)libSym(lib, "kn_dsp_entry");
+    MireliaDspEntryFn entry = (MireliaDspEntryFn)libSym(lib, "kn_dsp_entry");
     if (entry == NULL) {
         FAIL("entry", "kn_dsp_entry is not exported");
         return 1;
     }
 
     int before = failures;
-    const kn_dsp_plugin *plugin = checkEntry(entry);
+    const MireliaDspPlugin *plugin = checkEntry(entry);
     if (failures == before) {
         printf("ok   [entry]\n");
     }

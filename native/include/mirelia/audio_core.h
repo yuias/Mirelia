@@ -2,7 +2,7 @@
  * Mirelia audio core ABI, version 1.
  *
  * This header is THE contract between the managed host and any native audio
- * backend. It is hand-written, frozen at v1, and versioned via KN_ABI_VERSION.
+ * backend. It is hand-written, frozen at v1, and versioned via MIRELIA_ABI_VERSION.
  * Changes require an ABI version bump and a matching entry in docs/audio-abi.md.
  *
  * Design constraints (see docs/audio-abi.md for rationale):
@@ -24,73 +24,73 @@
 extern "C" {
 #endif
 
-#define KN_ABI_VERSION 1
+#define MIRELIA_ABI_VERSION 1
 
-typedef enum kn_result {
-    KN_OK                    =  0,
-    KN_ERR_INVALID_ARG       = -1,
-    KN_ERR_UNSUPPORTED       = -2,
-    KN_ERR_DEVICE_LOST       = -3,
-    KN_ERR_DEVICE_BUSY       = -4,   /* exclusive mode denied */
-    KN_ERR_DECODE            = -5,
-    KN_ERR_IO                = -6,
-    KN_ERR_FORMAT            = -7,
-    KN_ERR_STATE             = -8,
-    KN_ERR_OOM               = -9,
-    KN_ERR_ABI_MISMATCH      = -10,
-    KN_ERR_PLUGIN            = -11,  /* a DSP plugin failed; playback continued without it */
-    KN_ERR_INTERNAL          = -99
-} kn_result;
+typedef enum MireliaResult {
+    MireliaOk                =  0,
+    MireliaErrInvalidArg     = -1,
+    MireliaErrUnsupported    = -2,
+    MireliaErrDeviceLost     = -3,
+    MireliaErrDeviceBusy     = -4,   /* exclusive mode denied */
+    MireliaErrDecode         = -5,
+    MireliaErrIo             = -6,
+    MireliaErrFormat         = -7,
+    MireliaErrState          = -8,
+    MireliaErrOom            = -9,
+    MireliaErrAbiMismatch    = -10,
+    MireliaErrPlugin         = -11,  /* a DSP plugin failed; playback continued without it */
+    MireliaErrInternal       = -99
+} MireliaResult;
 
-typedef struct kn_engine kn_engine;
+typedef struct MireliaEngine MireliaEngine;
 
 /* ---- formats --------------------------------------------------------- */
 
-typedef enum kn_sample_format {
-    KN_FMT_S16 = 0,
-    KN_FMT_S24 = 1,     /* packed, 3 bytes */
-    KN_FMT_S32 = 2,
-    KN_FMT_F32 = 3
-} kn_sample_format;
+typedef enum MireliaSampleFormat {
+    MireliaFmtS16 = 0,
+    MireliaFmtS24 = 1,     /* packed, 3 bytes */
+    MireliaFmtS32 = 2,
+    MireliaFmtF32 = 3
+} MireliaSampleFormat;
 
-typedef struct kn_stream_format {
-    uint32_t         sample_rate;
-    uint16_t         channels;
-    kn_sample_format format;
-    uint32_t         channel_mask;   /* WAVEFORMATEXTENSIBLE-compatible; 0 = default */
-} kn_stream_format;
+typedef struct MireliaStreamFormat {
+    uint32_t            sample_rate;
+    uint16_t            channels;
+    MireliaSampleFormat format;
+    uint32_t            channel_mask;   /* WAVEFORMATEXTENSIBLE-compatible; 0 = default */
+} MireliaStreamFormat;
 
 /* ---- device enumeration ---------------------------------------------- */
 
-typedef enum kn_share_mode {
-    KN_SHARE_SHARED    = 0,
-    KN_SHARE_EXCLUSIVE = 1   /* WASAPI exclusive / CoreAudio hog mode */
-} kn_share_mode;
+typedef enum MireliaShareMode {
+    MireliaShareShared    = 0,
+    MireliaShareExclusive = 1   /* WASAPI exclusive / CoreAudio hog mode */
+} MireliaShareMode;
 
-typedef struct kn_device_info {
+typedef struct MireliaDeviceInfo {
     const char *id;              /* stable, opaque, UTF-8, backend-scoped   */
     const char *name;            /* UTF-8, human readable                   */
     const char *backend;         /* "wasapi" | "coreaudio" | "asio" | ...   */
     int         is_default;
     uint32_t    native_rate;
     uint16_t    native_channels;
-    uint32_t    supported_rate_mask;    /* bitfield, see KN_RATE_* */
-    uint32_t    supported_format_mask;  /* 1 << kn_sample_format   */
+    uint32_t    supported_rate_mask;    /* reserved: no bits defined in v1, backends write 0 */
+    uint32_t    supported_format_mask;  /* 1 << MireliaSampleFormat */
     int         supports_exclusive;
     uint32_t    min_period_frames;      /* IAudioClient3 min periodicity */
     uint32_t    default_period_frames;
-} kn_device_info;
+} MireliaDeviceInfo;
 
 /* Snapshot: valid until the next call to kn_devices_free or kn_devices_enumerate. */
-kn_result kn_devices_enumerate(kn_engine *e,
-                               const kn_device_info **out_devices,
-                               size_t *out_count);
-void      kn_devices_free(kn_engine *e);
+MireliaResult kn_devices_enumerate(MireliaEngine *e,
+                                   const MireliaDeviceInfo **out_devices,
+                                   size_t *out_count);
+void          kn_devices_free(MireliaEngine *e);
 
 /* ---- engine lifecycle ------------------------------------------------- */
 
-typedef struct kn_engine_config {
-    uint32_t abi_version;        /* must be KN_ABI_VERSION */
+typedef struct MireliaEngineConfig {
+    uint32_t abi_version;        /* must be MIRELIA_ABI_VERSION */
     uint32_t target_latency_ms;  /* hint; 0 = backend default */
     uint32_t decode_ahead_ms;    /* ring buffer depth, default 2000 */
     int      allow_resample;     /* 0 = fail rather than resample */
@@ -98,13 +98,13 @@ typedef struct kn_engine_config {
                                     2 = only on tracks the backend had to
                                     resample, any other value = always.
                                     Exclusive mode with integer devices only. */
-} kn_engine_config;
+} MireliaEngineConfig;
 
-kn_result kn_engine_create(const kn_engine_config *cfg, kn_engine **out);
-void      kn_engine_destroy(kn_engine *e);
+MireliaResult kn_engine_create(const MireliaEngineConfig *cfg, MireliaEngine **out);
+void          kn_engine_destroy(MireliaEngine *e);
 
 /* Human-readable detail for the most recent failure on this thread. */
-const char *kn_engine_last_error(kn_engine *e);
+const char *kn_engine_last_error(MireliaEngine *e);
 
 /*
  * `desired` selects the output format of every stream until the device is
@@ -112,20 +112,20 @@ const char *kn_engine_last_error(kn_engine *e);
  *   - NULL: follow the source's sample rate and channels. out_actual is the
  *     device's native format.
  *   - non-NULL: sample_rate is the fixed output rate; sources at another rate
- *     are resampled to it (KN_ERR_FORMAT on load if cfg.allow_resample is 0).
- *     sample_rate must be non-zero, otherwise KN_ERR_INVALID_ARG is returned
+ *     are resampled to it (MireliaErrFormat on load if cfg.allow_resample is 0).
+ *     sample_rate must be non-zero, otherwise MireliaErrInvalidArg is returned
  *     before the device is touched.
  *     channels == 0 follows the source's channel count, and the stream then
  *     opens at the first load; out_actual carries the desired rate and the
  *     device's native channel count. A non-zero channels opens the stream
  *     now. format and channel_mask are ignored.
  */
-kn_result kn_engine_open_device(kn_engine *e,
-                                const char *device_id,   /* NULL = system default */
-                                kn_share_mode mode,
-                                const kn_stream_format *desired, /* NULL = follow source */
-                                kn_stream_format *out_actual);
-kn_result kn_engine_close_device(kn_engine *e);
+MireliaResult kn_engine_open_device(MireliaEngine *e,
+                                    const char *device_id,   /* NULL = system default */
+                                    MireliaShareMode mode,
+                                    const MireliaStreamFormat *desired, /* NULL = follow source */
+                                    MireliaStreamFormat *out_actual);
+MireliaResult kn_engine_close_device(MireliaEngine *e);
 
 /* ---- transport -------------------------------------------------------- */
 
@@ -133,9 +133,9 @@ kn_result kn_engine_close_device(kn_engine *e);
  * A "slot" is a decoded source. Two slots exist: current and next.
  * Loading into the next slot is what makes gapless work.
  */
-typedef enum kn_slot { KN_SLOT_CURRENT = 0, KN_SLOT_NEXT = 1 } kn_slot;
+typedef enum MireliaSlot { MireliaSlotCurrent = 0, MireliaSlotNext = 1 } MireliaSlot;
 
-typedef struct kn_load_params {
+typedef struct MireliaLoadParams {
     const char *path;             /* UTF-8. Backends must widen on Windows. */
     int64_t     start_frame;      /* trim head (encoder delay applied on top) */
     int64_t     end_frame;        /* -1 = to end */
@@ -144,64 +144,64 @@ typedef struct kn_load_params {
     float       gain_db;          /* ReplayGain, already resolved by host */
     float       peak;             /* for clipping prevention; 0 = unknown */
     uint64_t    user_token;       /* echoed back in events. Host's track id. */
-} kn_load_params;
+} MireliaLoadParams;
 
-kn_result kn_load(kn_engine *e, kn_slot slot, const kn_load_params *p);
-kn_result kn_clear(kn_engine *e, kn_slot slot);
+MireliaResult kn_load(MireliaEngine *e, MireliaSlot slot, const MireliaLoadParams *p);
+MireliaResult kn_clear(MireliaEngine *e, MireliaSlot slot);
 
-kn_result kn_play(kn_engine *e);
-kn_result kn_pause(kn_engine *e);
-kn_result kn_stop(kn_engine *e);          /* clears both slots */
-kn_result kn_seek(kn_engine *e, int64_t frame);
-kn_result kn_skip_to_next(kn_engine *e);  /* immediate, not gapless */
+MireliaResult kn_play(MireliaEngine *e);
+MireliaResult kn_pause(MireliaEngine *e);
+MireliaResult kn_stop(MireliaEngine *e);          /* clears both slots */
+MireliaResult kn_seek(MireliaEngine *e, int64_t frame);
+MireliaResult kn_skip_to_next(MireliaEngine *e);  /* immediate, not gapless */
 
 /* Linear gain, 0.0 .. 1.0+. Applied after ReplayGain. Smoothed internally. */
-kn_result kn_set_volume(kn_engine *e, float gain);
+MireliaResult kn_set_volume(MireliaEngine *e, float gain);
 
-typedef enum kn_state {
-    KN_STATE_IDLE = 0, KN_STATE_PLAYING, KN_STATE_PAUSED, KN_STATE_STALLED
-} kn_state;
+typedef enum MireliaState {
+    MireliaStateIdle = 0, MireliaStatePlaying, MireliaStatePaused, MireliaStateStalled
+} MireliaState;
 
-typedef struct kn_position {
-    kn_state state;
-    uint64_t user_token;      /* what is audible right now */
-    int64_t  frame;           /* position within the current source */
-    int64_t  total_frames;    /* -1 if unknown */
-    uint32_t sample_rate;     /* rate of the source; frame and total_frames use it */
-    uint64_t host_time_ns;    /* monotonic, for client-side interpolation */
-    float    buffer_fill;     /* 0..1, for the stall indicator */
-} kn_position;
+typedef struct MireliaPosition {
+    MireliaState state;
+    uint64_t     user_token;      /* what is audible right now */
+    int64_t      frame;           /* position within the current source */
+    int64_t      total_frames;    /* -1 if unknown */
+    uint32_t     sample_rate;     /* rate of the source; frame and total_frames use it */
+    uint64_t     host_time_ns;    /* monotonic, for client-side interpolation */
+    float        buffer_fill;     /* 0..1, for the stall indicator */
+} MireliaPosition;
 
-kn_result kn_get_position(kn_engine *e, kn_position *out);
+MireliaResult kn_get_position(MireliaEngine *e, MireliaPosition *out);
 
 /* ---- events (polled) --------------------------------------------------- */
 
-typedef enum kn_event_type {
-    KN_EV_STATE_CHANGED = 1,
-    KN_EV_TRACK_STARTED,        /* the NEXT slot became CURRENT */
-    KN_EV_TRACK_ENDED,
-    KN_EV_QUEUE_EMPTY,          /* engine needs a next slot NOW */
-    KN_EV_DEVICE_CHANGED,       /* default device switched under us */
-    KN_EV_DEVICE_LOST,
-    KN_EV_ERROR
-} kn_event_type;
+typedef enum MireliaEventType {
+    MireliaEvStateChanged = 1,
+    MireliaEvTrackStarted,        /* the NEXT slot became CURRENT */
+    MireliaEvTrackEnded,
+    MireliaEvQueueEmpty,          /* engine needs a next slot NOW */
+    MireliaEvDeviceChanged,       /* default device switched under us */
+    MireliaEvDeviceLost,
+    MireliaEvError
+} MireliaEventType;
 
-typedef struct kn_event {
-    kn_event_type type;
-    uint64_t      user_token;
-    int32_t       code;         /* kn_result for ERROR */
-    uint64_t      host_time_ns;
-} kn_event;
+typedef struct MireliaEvent {
+    MireliaEventType type;
+    uint64_t         user_token;
+    int32_t          code;         /* MireliaResult for ERROR */
+    uint64_t         host_time_ns;
+} MireliaEvent;
 
 /*
  * Drains up to `capacity` events. Returns the number written.
  * Safe to call from any single thread; must not be called concurrently.
  */
-size_t kn_engine_poll_event(kn_engine *e, kn_event *out, size_t capacity);
+size_t kn_engine_poll_event(MireliaEngine *e, MireliaEvent *out, size_t capacity);
 
 /* ---- metadata probe (no playback) --------------------------------------- */
 
-typedef struct kn_probe_result {
+typedef struct MireliaProbeResult {
     uint32_t sample_rate;
     uint16_t channels;
     uint16_t bit_depth;
@@ -210,44 +210,45 @@ typedef struct kn_probe_result {
     uint32_t encoder_padding;
     uint32_t bitrate_kbps;
     char     codec[16];
-} kn_probe_result;
+} MireliaProbeResult;
 
-kn_result kn_probe(kn_engine *e, const char *path, kn_probe_result *out);
+MireliaResult kn_probe(MireliaEngine *e, const char *path, MireliaProbeResult *out);
 
 /* EBU R128 scan. Blocking; call from a worker thread. */
-kn_result kn_scan_loudness(kn_engine *e, const char *path,
-                           float *out_gain_db, float *out_peak);
+MireliaResult kn_scan_loudness(MireliaEngine *e, const char *path,
+                               float *out_gain_db, float *out_peak);
 
 /* ---- plugins ------------------------------------------------------------ */
 
-kn_result kn_register_decoder_library(kn_engine *e, const char *dll_path);
-kn_result kn_register_output_library (kn_engine *e, const char *dll_path);
+MireliaResult kn_register_decoder_library(MireliaEngine *e, const char *dll_path);
+MireliaResult kn_register_output_library (MireliaEngine *e, const char *dll_path);
 
-typedef enum kn_dsp_kind {
-    KN_DSP_KIND_RESAMPLER = 1
-} kn_dsp_kind;
+typedef enum MireliaDspKind {
+    MireliaDspKindResampler = 1
+} MireliaDspKind;
 
-typedef struct kn_dsp_info {
-    const char  *id;
-    const char  *name;
-    kn_dsp_kind  kind;
-} kn_dsp_info;
+typedef struct MireliaDspInfo {
+    const char     *id;
+    const char     *name;
+    MireliaDspKind  kind;
+} MireliaDspInfo;
 
 /* dll_path is an absolute UTF-8 path. Loads the library and validates it, on the
- * calling thread. KN_ERR_UNSUPPORTED where plugins are not implemented, or for
+ * calling thread. MireliaErrUnsupported where plugins are not implemented, or for
  * a plugin offering no kind this backend knows. */
-kn_result kn_register_dsp_library(kn_engine *e, const char *dll_path);
+MireliaResult kn_register_dsp_library(MireliaEngine *e, const char *dll_path);
 
 /* Snapshot of one entry per registered plugin: valid until the next call to
  * kn_dsp_free or kn_dsp_enumerate. Only the first resampler capability of a
  * plugin is registered, because one id selects one resampler. */
-kn_result kn_dsp_enumerate(kn_engine *e, const kn_dsp_info **out_infos, size_t *out_count);
-void      kn_dsp_free(kn_engine *e);
+MireliaResult kn_dsp_enumerate(MireliaEngine *e, const MireliaDspInfo **out_infos,
+                               size_t *out_count);
+void          kn_dsp_free(MireliaEngine *e);
 
 /* Selects the resampler plugin by id; NULL selects the built-in resampler. Takes
- * effect at the next kn_load into KN_SLOT_CURRENT. KN_ERR_INVALID_ARG for an id
+ * effect at the next kn_load into MireliaSlotCurrent. MireliaErrInvalidArg for an id
  * that is not registered. */
-kn_result kn_engine_set_resampler(kn_engine *e, const char *plugin_id);
+MireliaResult kn_engine_set_resampler(MireliaEngine *e, const char *plugin_id);
 
 #ifdef __cplusplus
 }

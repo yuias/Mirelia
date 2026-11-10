@@ -3,7 +3,7 @@
  *
  * A decoder plugin is a shared library exporting a single entry point:
  *
- *     const kn_decoder_vtable *kn_decoder_entry(uint32_t abi_version);
+ *     const MireliaDecoderVtable *mireliaDecoderEntry(uint32_t abi_version);
  *
  * The entry point returns NULL if it does not implement `abi_version`.
  * Decoders always output interleaved f32; format negotiation is the
@@ -22,7 +22,7 @@
 extern "C" {
 #endif
 
-typedef struct kn_decoder_vtable {
+typedef struct MireliaDecoderVtable {
     uint32_t    abi_version;
     const char *name;
     const char *extensions;      /* semicolon-separated, e.g. "opus;spx;tak" */
@@ -30,16 +30,16 @@ typedef struct kn_decoder_vtable {
     /* Probe by content, not extension. Returns 0..100 confidence. */
     int  (*probe)(const uint8_t *head, size_t head_len, const char *path);
 
-    kn_result (*open)(const char *path, void **out_ctx, kn_probe_result *out_info);
-    /* Returns frames written. 0 = EOF, negative = kn_result error.
+    MireliaResult (*open)(const char *path, void **out_ctx, MireliaProbeResult *out_info);
+    /* Returns frames written. 0 = EOF, negative = MireliaResult error.
      * Must not block indefinitely. */
-    int64_t   (*read_f32)(void *ctx, float *interleaved, int64_t max_frames);
-    kn_result (*seek)(void *ctx, int64_t frame);
-    void      (*close)(void *ctx);
-} kn_decoder_vtable;
+    int64_t       (*read_f32)(void *ctx, float *interleaved, int64_t max_frames);
+    MireliaResult (*seek)(void *ctx, int64_t frame);
+    void          (*close)(void *ctx);
+} MireliaDecoderVtable;
 
 /* The single required export. Returns NULL on ABI version mismatch. */
-typedef const kn_decoder_vtable *(*kn_decoder_entry_fn)(uint32_t abi_version);
+typedef const MireliaDecoderVtable *(*MireliaDecoderEntryFn)(uint32_t abi_version);
 
 #ifdef __cplusplus
 }

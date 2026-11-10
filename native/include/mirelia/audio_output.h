@@ -3,7 +3,7 @@
  *
  * An output plugin is a shared library exporting a single entry point:
  *
- *     const kn_output_vtable *kn_output_entry(uint32_t abi_version);
+ *     const MireliaOutputVtable *mireliaOutputEntry(uint32_t abi_version);
  *
  * The entry point returns NULL if it does not implement `abi_version`.
  *
@@ -25,38 +25,38 @@
 extern "C" {
 #endif
 
-typedef struct kn_output_vtable {
+typedef struct MireliaOutputVtable {
     uint32_t    abi_version;
     const char *name;            /* backend id, e.g. "asio". Shown in device UI. */
 
     /* Snapshot semantics identical to kn_devices_enumerate: the returned
      * array is owned by the plugin and valid until the next enumerate or
      * enumerate_free call. */
-    kn_result (*enumerate)(const kn_device_info **out_devices, size_t *out_count);
-    void      (*enumerate_free)(void);
+    MireliaResult (*enumerate)(const MireliaDeviceInfo **out_devices, size_t *out_count);
+    void          (*enumerate_free)(void);
 
-    kn_result (*open)(const char *device_id,
-                      kn_share_mode mode,
-                      const kn_stream_format *desired,
-                      kn_stream_format *out_actual,
-                      void **out_ctx);
-    kn_result (*start)(void *ctx);
-    kn_result (*stop)(void *ctx);
+    MireliaResult (*open)(const char *device_id,
+                          MireliaShareMode mode,
+                          const MireliaStreamFormat *desired,
+                          MireliaStreamFormat *out_actual,
+                          void **out_ctx);
+    MireliaResult (*start)(void *ctx);
+    MireliaResult (*stop)(void *ctx);
 
     /* Writes interleaved frames in the format negotiated at open.
      * Blocks until the device has consumed the data or an error occurs.
-     * Returns frames written, or a negative kn_result on error.
+     * Returns frames written, or a negative MireliaResult on error.
      * RT-safe: no allocation, no locks beyond the device's own buffer wait. */
-    int64_t   (*write)(void *ctx, const void *interleaved, int64_t frames);
+    int64_t       (*write)(void *ctx, const void *interleaved, int64_t frames);
 
     /* Current device+driver latency in frames, for position reporting. */
-    int64_t   (*latency_frames)(void *ctx);
+    int64_t       (*latency_frames)(void *ctx);
 
-    void      (*close)(void *ctx);
-} kn_output_vtable;
+    void          (*close)(void *ctx);
+} MireliaOutputVtable;
 
 /* The single required export. Returns NULL on ABI version mismatch. */
-typedef const kn_output_vtable *(*kn_output_entry_fn)(uint32_t abi_version);
+typedef const MireliaOutputVtable *(*MireliaOutputEntryFn)(uint32_t abi_version);
 
 #ifdef __cplusplus
 }
