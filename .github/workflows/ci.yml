@@ -46,6 +46,37 @@ jobs:
       - name: Native smoke test
         run: dotnet run --project src/Mirelia.Cli --no-build -- native-smoke
 
+      - name: Configure DSP plugin conformance suite
+        run: cmake -S native/tests/dsp-plugin-conformance -B build/dsp-conformance
+
+      - name: Build DSP plugin conformance suite
+        run: cmake --build build/dsp-conformance --config Release
+
+      - name: Run DSP plugin conformance suite
+        run: ctest --test-dir build/dsp-conformance -C Release --output-on-failure
+
+      # The runner's Visual Studio version is not ours to choose, so the
+      # developer environment comes from whatever vswhere finds. The developer
+      # environment does not outlive a step, so the plugin build and its
+      # conformance run share this one. Configuring the plugin fetches the
+      # r8brain source from GitHub. The harness runs last so its exit code is
+      # the step's.
+      - name: Build and test the r8brain plugin (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $installPath = & $vswhere -latest -products '*' -property installationPath
+          if (-not $installPath) { throw 'Visual Studio was not found.' }
+          Import-Module (Join-Path $installPath 'Common7/Tools/Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $installPath -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
+
+          cmake -S native/plugins/r8brain-resampler -B build/r8brain-resampler -G Ninja -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build/r8brain-resampler
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          build/dsp-conformance/Release/dsp-plugin-conformance.exe build/r8brain-resampler/mirelia_r8brain.dll
+
       - name: Configure ABI conformance suite
         run: cmake -S native/tests/abi-conformance -B build/conformance
 
@@ -54,7 +85,7 @@ jobs:
 
       - name: Run ABI conformance suite (Windows)
         if: runner.os == 'Windows'
-        run: build/conformance/Release/abi-conformance.exe native/audio-core-rs/target/release/audio_core_rs.dll tests/fixtures
+        run: build/conformance/Release/abi-conformance.exe native/audio-core-rs/target/release/audio_core_rs.dll tests/fixtures build/dsp-conformance/Release/fixture_resampler_good.dll
 
       - name: Run ABI conformance suite (macOS)
         if: runner.os == 'macOS'
