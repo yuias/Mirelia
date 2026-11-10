@@ -164,6 +164,27 @@ internal static partial class NativeMethods
     [LibraryImport(LibraryName)]
     internal static partial void kn_devices_free(nint engine);
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct KnDspInfo
+    {
+        public nint Id;
+        public nint Name;
+        public int Kind;
+    }
+
+    [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial KnResult kn_register_dsp_library(nint engine, string? dllPath);
+
+    [LibraryImport(LibraryName)]
+    internal static partial KnResult kn_dsp_enumerate(
+        nint engine, out nint infos, out nuint count);
+
+    [LibraryImport(LibraryName)]
+    internal static partial void kn_dsp_free(nint engine);
+
+    [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial KnResult kn_engine_set_resampler(nint engine, string? pluginId);
+
     [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
     internal static partial KnResult kn_scan_loudness(
         nint engine, string path, out float gainDb, out float peak);

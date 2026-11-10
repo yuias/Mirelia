@@ -238,6 +238,58 @@ public sealed class AudioEngine : IDisposable
     }
 
     /// <summary>
+    /// Loads and validates a DSP plugin library. Registering does not select
+    /// it; see <see cref="SetResampler"/>. <paramref name="path"/> must be
+    /// absolute. Throws <see cref="AudioEngineException"/> with
+    /// <see cref="KnResult.Unsupported"/> where plugins are not implemented.
+    /// </summary>
+    public void RegisterDspLibrary(string path)
+    {
+        ThrowIfDisposed();
+        Check(NativeMethods.kn_register_dsp_library(_handle, path));
+    }
+
+    /// <summary>Lists the registered DSP plugin capabilities, one entry each.</summary>
+    public IReadOnlyList<DspPluginInfo> EnumerateDsp()
+    {
+        ThrowIfDisposed();
+        Check(NativeMethods.kn_dsp_enumerate(_handle, out nint infos, out nuint count));
+        try
+        {
+            var result = new List<DspPluginInfo>((int)count);
+            int size = System.Runtime.InteropServices.Marshal
+                .SizeOf<NativeMethods.KnDspInfo>();
+            for (nuint i = 0; i < count; i++)
+            {
+                NativeMethods.KnDspInfo native = System.Runtime.InteropServices.Marshal
+                    .PtrToStructure<NativeMethods.KnDspInfo>(infos + (nint)i * size);
+                result.Add(new DspPluginInfo(
+                    System.Runtime.InteropServices.Marshal.PtrToStringUTF8(native.Id) ?? string.Empty,
+                    System.Runtime.InteropServices.Marshal.PtrToStringUTF8(native.Name) ?? string.Empty,
+                    (DspKind)native.Kind));
+            }
+
+            return result;
+        }
+        finally
+        {
+            NativeMethods.kn_dsp_free(_handle);
+        }
+    }
+
+    /// <summary>
+    /// Selects the resampler plugin by id; null selects the built-in resampler.
+    /// Takes effect at the next load into <see cref="AudioSlot.Current"/>.
+    /// Throws <see cref="AudioEngineException"/> with
+    /// <see cref="KnResult.InvalidArg"/> for an id that is not registered.
+    /// </summary>
+    public void SetResampler(string? pluginId)
+    {
+        ThrowIfDisposed();
+        Check(NativeMethods.kn_engine_set_resampler(_handle, pluginId));
+    }
+
+    /// <summary>
     /// EBU R128 scan: ReplayGain 2 track gain (dB) and true peak (linear).
     /// Blocking — call from a worker thread.
     /// </summary>

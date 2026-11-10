@@ -39,6 +39,9 @@ public enum KnResult
     /// <summary>The backend does not implement the requested ABI version.</summary>
     AbiMismatch = -10,
 
+    /// <summary>A DSP plugin failed; playback continued without it.</summary>
+    Plugin = -11,
+
     /// <summary>Unspecified internal failure.</summary>
     Internal = -99,
 }
