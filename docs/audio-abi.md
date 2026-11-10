@@ -1,8 +1,8 @@
 # Audio ABI — prose companion to `audio_core.h`
 
 The contract itself is `native/include/mirelia/audio_core.h`, hand-written and
-frozen at **v1** (`KN_ABI_VERSION 1`). This document explains the intent behind
-it; the header wins on any disagreement about the letter.
+frozen at **v1** (`MIRELIA_ABI_VERSION 1`). This document explains the intent
+behind it; the header wins on any disagreement about the letter.
 
 ## Design constraints
 
@@ -11,19 +11,19 @@ it; the header wins on any disagreement about the letter.
    both `audio-core-rs` (Rust) and a future `audio-core-cpp` (clang/C++20)
    without any MSVC-specific ABI.
 2. **Events are polled, not pushed.** The engine pushes state changes onto an
-   SPSC queue; the host drains it with `kn_engine_poll_event()` from a normal
+   SPSC queue; the host drains it with `mireliaEnginePollEvent()` from a normal
    thread. This makes GC pauses, managed exceptions, and reentrancy
    structurally impossible on the RT path.
 3. **Position is reported in frames** at the source sample rate of the audible
-   track (`kn_position.sample_rate`), plus a monotonic host timestamp for
+   track (`MireliaPosition.sample_rate`), plus a monotonic host timestamp for
    interpolation. When the output runs at a different rate, the engine
    converts before publishing. Never in milliseconds.
-4. **Explicit gapless.** The host loads what plays next into `KN_SLOT_NEXT`;
+4. **Explicit gapless.** The host loads what plays next into `MireliaSlotNext`;
    the engine preloads and splices. The host is never asked to react at the
-   moment of transition. `KN_EV_QUEUE_EMPTY` is the engine's request for a
+   moment of transition. `MireliaEvQueueEmpty` is the engine's request for a
    next slot.
-5. **Version negotiation.** `kn_engine_create` rejects an `abi_version` it
-   does not implement with `KN_ERR_ABI_MISMATCH`, so a stale backend fails
+5. **Version negotiation.** `mireliaEngineCreate` rejects an `abi_version` it
+   does not implement with `MireliaErrAbiMismatch`, so a stale backend fails
    loudly at startup instead of corrupting state.
 
 ## The real-time rule
@@ -53,29 +53,29 @@ user-facing setting for it.
 ## Plugin ABIs
 
 - `audio_decoder.h` — decode plugins. Single export
-  `kn_decoder_entry(uint32_t abi_version)`, returns `NULL` on mismatch.
+  `mireliaDecoderEntry(uint32_t abi_version)`, returns `NULL` on mismatch.
   Decoders always output **interleaved f32**; this removes format
   negotiation from the plugin contract entirely.
 - `audio_output.h` — output plugins, same entry-point pattern
-  (`kn_output_entry`). `write` is the only vtable member called from the RT
+  (`mireliaOutputEntry`). `write` is the only vtable member called from the RT
   thread and is bound by the real-time rule above.
 - `audio_dsp.h` — DSP plugins, in `native/include/mirelia/`. Unlike the two
   above this ABI is implemented. It has its own version,
-  `KN_DSP_ABI_VERSION` (1), so it can change without touching the frozen core
-  ABI. See "DSP plugins" below.
+  `MIRELIA_DSP_ABI_VERSION` (1), so it can change without touching the frozen
+  core ABI. See "DSP plugins" below.
 
 ### DSP plugins
 
 A DSP plugin is a shared library with one export,
-`const kn_dsp_plugin *kn_dsp_entry(uint32_t abi_version)`, which returns `NULL`
-for a version it does not implement. The returned struct is static data: an id
-(stored in settings), a display name, and an array of capabilities. A capability
-is a `{kind, vtable}` pair. Version 1 defines one kind, `KN_DSP_KIND_RESAMPLER`,
-and a host ignores kinds it does not know. A later kind adds an enum value, its
-own vtable struct and contract, and capability records in the plugins that offer
-it; `KN_DSP_ABI_VERSION` stays 1. Changing an existing vtable or contract needs
-version 2. The decision is recorded in
-[ADR 0008](adr/0008-dsp-plugin-abi.md).
+`const MireliaDspPlugin *mireliaDspEntry(uint32_t abi_version)`, which returns
+`NULL` for a version it does not implement. The returned struct is static data:
+an id (stored in settings), a display name, and an array of capabilities. A
+capability is a `{kind, vtable}` pair. Version 1 defines one kind,
+`MireliaDspKindResampler`, and a host ignores kinds it does not know. A later
+kind adds an enum value, its own vtable struct and contract, and capability
+records in the plugins that offer it; `MIRELIA_DSP_ABI_VERSION` stays 1.
+Changing an existing vtable or contract needs version 2. The decision is
+recorded in [ADR 0008](adr/0008-dsp-plugin-abi.md).
 
 **Resampler contract.** The header is the contract; this is a summary.
 
@@ -90,37 +90,37 @@ version 2. The decision is recorded in
 - The output does not depend on how the input is split into `process` calls.
   `reset` restores the state of a fresh context.
 - The host passes enough output capacity. A plugin given less returns
-  `KN_ERR_INVALID_ARG`. After any other negative return the host calls only
+  `MireliaErrInvalidArg`. After any other negative return the host calls only
   `destroy` on that context.
 - Every member runs on the engine's decode worker, never on the real-time
   thread. The real-time rule above is unchanged.
 
-**Registration.** `kn_register_dsp_library(e, path)` takes an absolute UTF-8
+**Registration.** `mireliaRegisterDspLibrary(e, path)` takes an absolute UTF-8
 path, loads the library and validates its contents once, on the calling thread.
-It returns `KN_ERR_INVALID_ARG` for a null or relative path, `KN_ERR_IO` for a
-missing file, `KN_ERR_FORMAT` for a library that does not load, has no
-`kn_dsp_entry`, or has malformed contents, `KN_ERR_ABI_MISMATCH` when the entry
-returns `NULL`, `KN_ERR_UNSUPPORTED` when no capability has a kind this backend
-knows, and `KN_ERR_STATE` for an id that is already registered on the engine.
-On every failure the library is unloaded.
+It returns `MireliaErrInvalidArg` for a null or relative path, `MireliaErrIo`
+for a missing file, `MireliaErrFormat` for a library that does not load, has no
+`mireliaDspEntry`, or has malformed contents, `MireliaErrAbiMismatch` when the
+entry returns `NULL`, `MireliaErrUnsupported` when no capability has a kind this
+backend knows, and `MireliaErrState` for an id that is already registered on
+the engine. On every failure the library is unloaded.
 
 Only the first resampler record of a plugin is registered, because one id
-selects one resampler. `kn_dsp_enumerate` therefore lists one entry per
+selects one resampler. `mireliaDspEnumerate` therefore lists one entry per
 registered plugin. Further resampler records in the same plugin are ignored.
 
-Registering does not select. `kn_engine_set_resampler(e, id)` selects a
+Registering does not select. `mireliaEngineSetResampler(e, id)` selects a
 registered resampler, or the built-in one for `NULL`, and takes effect at the
-next `kn_load` into `KN_SLOT_CURRENT`. An id that is not registered is
-`KN_ERR_INVALID_ARG`. A plugin is used only when the output rate is fixed
-(`kn_engine_open_device` with a non-NULL `desired`), and a track whose source
+next `mireliaLoad` into `MireliaSlotCurrent`. An id that is not registered is
+`MireliaErrInvalidArg`. A plugin is used only when the output rate is fixed
+(`mireliaEngineOpenDevice` with a non-NULL `desired`), and a track whose source
 rate equals the output rate is never given to any resampler, so pass-through
 stays bit-perfect.
 
 **Fallback.** The built-in resampler (rubato) is the default and is never
-removed. If `create` returns `KN_ERR_UNSUPPORTED` for a rate pair or channel
+removed. If `create` returns `MireliaErrUnsupported` for a rate pair or channel
 count, the built-in resampler converts that stream and nothing is reported. If a
 plugin fails during playback, or returns counts that break the contract, the
-engine emits an `Error` event with `KN_ERR_PLUGIN`. Output frames the plugin
+engine emits an `Error` event with `MireliaErrPlugin`. Output frames the plugin
 still owed are replaced by silence, and the built-in resampler converts the rest
 of the session until the host selects a resampler again. Playback does not stop.
 
@@ -132,10 +132,11 @@ A plugin must not let a C++ exception cross the ABI.
 `plugins/dsp/` next to the executable. `MIRELIA_DSP_PLUGIN_DIR` replaces that
 directory for development and tests; like `MIRELIA_AUDIO_CORE`, it is not a
 user-facing setting. Plugins are implemented on Windows only. On other platforms
-`kn_register_dsp_library` returns `KN_ERR_UNSUPPORTED`, `kn_dsp_enumerate` is
-empty, and `kn_engine_set_resampler(e, NULL)` succeeds. The sample plugin
-`mirelia_r8brain.dll`, built from `native/plugins/r8brain-resampler`, is
-packaged into the Windows archives under `plugins/dsp/`.
+`mireliaRegisterDspLibrary` returns `MireliaErrUnsupported`,
+`mireliaDspEnumerate` is empty, and `mireliaEngineSetResampler(e, NULL)`
+succeeds. The sample plugin `mirelia_r8brain.dll`, built from
+`native/plugins/r8brain-resampler`, is packaged into the Windows archives under
+`plugins/dsp/`.
 
 **Conformance suite.** `native/tests/dsp-plugin-conformance` is a C program that
 loads a plugin by path and checks the contract: entry point, creation, exact
@@ -165,6 +166,7 @@ configures it.
 | ABI | Date | Change |
 |---|---|---|
 | 1 | 2026-08-08 | Initial freeze |
-| 1 | 2026-11-10 | No layout or signature change. A non-NULL `desired` in `kn_engine_open_device` fixes the output rate (`sample_rate == 0` is `KN_ERR_INVALID_ARG`, `channels == 0` follows the source). `kn_position` is in source frames, not device frames. |
-| 1 | 2026-11-10 | No layout or signature change. `kn_engine_config.dither_to_int` is a mode: `0` off, `2` dither only tracks the backend resampled, any other non-zero value (including the former `1`) always. A track that passes through at its own rate is never dithered in mode `2`, so it stays bit-perfect. |
-| 1 | 2026-11-10 | No layout or signature change. Additive: new error code `KN_ERR_PLUGIN` (-11), types `kn_dsp_kind` and `kn_dsp_info`, and the exports `kn_register_dsp_library`, `kn_dsp_enumerate`, `kn_dsp_free` and `kn_engine_set_resampler`. DSP plugins have their own header and version (`audio_dsp.h`, `KN_DSP_ABI_VERSION` 1). `KN_ABI_VERSION` stays 1. |
+| 1 | 2026-11-10 | No layout or signature change. A non-NULL `desired` in `mireliaEngineOpenDevice` fixes the output rate (`sample_rate == 0` is `MireliaErrInvalidArg`, `channels == 0` follows the source). `MireliaPosition` is in source frames, not device frames. |
+| 1 | 2026-11-10 | No layout or signature change. `MireliaEngineConfig.dither_to_int` is a mode: `0` off, `2` dither only tracks the backend resampled, any other non-zero value (including the former `1`) always. A track that passes through at its own rate is never dithered in mode `2`, so it stays bit-perfect. |
+| 1 | 2026-11-10 | No layout or signature change. Additive: new error code `MireliaErrPlugin` (-11), types `MireliaDspKind` and `MireliaDspInfo`, and the exports `mireliaRegisterDspLibrary`, `mireliaDspEnumerate`, `mireliaDspFree` and `mireliaEngineSetResampler`. DSP plugins have their own header and version (`audio_dsp.h`, `MIRELIA_DSP_ABI_VERSION` 1). `MIRELIA_ABI_VERSION` stays 1. |
+| 1 | 2026-11-10 | No layout, value or behaviour change, but every exported symbol changed, so a backend, host or plugin built before this row does not work with one built after it; nothing had been released. Every identifier in `native/include/mirelia/` follows the naming rules in `AGENTS.md`, with the prefix `mirelia` in place of `kn`: functions and plugin entry points in camelCase (`mireliaEngineCreate`, `mireliaDspEntry`), types and enumerators in PascalCase (`MireliaResult`, `MireliaErrInvalidArg`), macros in upper case (`MIRELIA_ABI_VERSION`, `MIRELIA_DSP_ABI_VERSION`). Both ABI versions stay 1. |

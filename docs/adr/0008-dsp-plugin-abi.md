@@ -7,24 +7,24 @@
 
 DSP plugins are shared libraries behind a versioned C ABI,
 `native/include/mirelia/audio_dsp.h`, with its own constant
-`KN_DSP_ABI_VERSION` (1). Version 1 defines one capability kind, sample-rate
-conversion. The built-in resampler (rubato) stays the default. A sample plugin
-built on r8brain-free-src, `mirelia_r8brain.dll`, ships with the Windows
-builds.
+`MIRELIA_DSP_ABI_VERSION` (1). Version 1 defines one capability kind,
+sample-rate conversion. The built-in resampler (rubato) stays the default. A
+sample plugin built on r8brain-free-src, `mirelia_r8brain.dll`, ships with the
+Windows builds.
 
 - **Entry point and capabilities.** A plugin exports
-  `kn_dsp_entry(uint32_t abi_version)`, which returns static data: an id, a
+  `mireliaDspEntry(uint32_t abi_version)`, which returns static data: an id, a
   name, and an array of `{kind, vtable}` capabilities. The entry returns `NULL`
   for a version it does not implement.
-- **Later kinds.** A new kind adds a `kn_dsp_kind` value, its own vtable struct
-  and contract in `audio_dsp.h`, and capability records in the plugins that
-  offer it. `KN_DSP_ABI_VERSION` and the resampler do not change, and older
-  plugins and hosts keep working because a host ignores kinds it does not
+- **Later kinds.** A new kind adds a `MireliaDspKind` value, its own vtable
+  struct and contract in `audio_dsp.h`, and capability records in the plugins
+  that offer it. `MIRELIA_DSP_ABI_VERSION` and the resampler do not change, and
+  older plugins and hosts keep working because a host ignores kinds it does not
   know. Changing an existing vtable or contract needs version 2, with the host
   asking for the newest version it knows first and falling back.
-- **Registration and selection.** `kn_register_dsp_library` registers only the
+- **Registration and selection.** `mireliaRegisterDspLibrary` registers only the
   first resampler record of a plugin, because one id selects one resampler.
-  Registering does not select; `kn_engine_set_resampler` does, and the
+  Registering does not select; `mireliaEngineSetResampler` does, and the
   Preferences dialog stores the id in `settings.json`.
 - **Source of r8brain.** The plugin's `CMakeLists.txt` fetches r8brain-free-src
   with `FetchContent` at a pinned commit. The source is not copied into the
@@ -47,19 +47,19 @@ builds.
   termination and output on stdout or stderr across the boundary.
 - **Fallback to the built-in resampler.** A plugin that is missing, rejected at
   registration, or unsupported for a rate pair never stops playback. When a
-  plugin fails during playback, the engine reports `KN_ERR_PLUGIN`, replaces the
-  output frames the plugin still owed with silence, and continues with rubato
-  until the host selects a resampler again.
+  plugin fails during playback, the engine reports `MireliaErrPlugin`,
+  replaces the output frames the plugin still owed with silence, and continues
+  with rubato until the host selects a resampler again.
 
 ## Rationale
 
 - **Capability array instead of per-kind pointer fields.** A struct that grows a
   field per kind needs a size field and a rule for shorter structs from old
   plugins. An array of `{kind, vtable}` never changes layout.
-- **Separate version number.** `KN_ABI_VERSION` stays at 1, and every addition
-  to `audio_core.h` is additive (one error code, new types, new exports), as in
-  the earlier 2026-11-10 history rows of `docs/audio-abi.md`. The plugin ABI can
-  move to version 2 without touching the frozen core.
+- **Separate version number.** `MIRELIA_ABI_VERSION` stays at 1, and every
+  addition to `audio_core.h` is additive (one error code, new types, new
+  exports), as in the earlier 2026-11-10 history rows of `docs/audio-abi.md`.
+  The plugin ABI can move to version 2 without touching the frozen core.
 - **f32 only.** As in `audio_decoder.h`, this removes format negotiation from the
   contract. The decoder output, gain stage and ring buffer are all f32.
 - **Exact length and alignment in the contract.** The engine's gapless joins and
@@ -86,9 +86,10 @@ builds.
 
 - Only resampling exists. Other DSP kinds (equaliser, effects), parameter
   systems and plugin UI are not part of version 1.
-- macOS has no plugin: `kn_register_dsp_library` returns `KN_ERR_UNSUPPORTED`,
-  the Preferences selector is hidden, and playback uses rubato. A port needs a
-  `dlopen` branch next to the Windows loader and removal of the configure-time
-  error in the plugin's `CMakeLists.txt`. r8brain itself is portable.
+- macOS has no plugin: `mireliaRegisterDspLibrary` returns
+  `MireliaErrUnsupported`, the Preferences selector is hidden, and playback uses
+  rubato. A port needs a `dlopen` branch next to the Windows loader and removal
+  of the configure-time error in the plugin's `CMakeLists.txt`. r8brain itself
+  is portable.
 - Decoder and output plugins are unchanged: their registration functions still
-  return `KN_ERR_UNSUPPORTED`.
+  return `MireliaErrUnsupported`.

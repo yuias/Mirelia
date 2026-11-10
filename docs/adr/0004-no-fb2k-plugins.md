@@ -13,11 +13,11 @@ Hosting foobar2000 input components is rejected for v1.
   `service_base`, `pfc`, `filesystem`, `abort_callback` and friends.
 - Windows-only; licensing is unclear.
 - The format coverage it would buy is obtainable from libopenmpt, vgmstream,
-  game-music-emu, and FFmpeg behind `kn_decoder_vtable`
+  game-music-emu, and FFmpeg behind `MireliaDecoderVtable`
   (`native/include/mirelia/audio_decoder.h`).
 
 ## If ever revisited
 
 The only acceptable shape is an out-of-process 32-bit host streaming PCM
 back over shared memory — which also isolates plugin crashes. That host
-would itself appear to the engine as one more `kn_decoder_vtable`.
+would itself appear to the engine as one more `MireliaDecoderVtable`.
