@@ -88,11 +88,7 @@ mod tests {
         // Sample peak is 0.8, but the fixture starts abruptly at the cosine
         // maximum; the band-limited reconstruction overshoots that onset, so
         // the true peak legitimately reads higher (~0.9 measured).
-        assert!(
-            (0.78..=0.95).contains(&result.peak),
-            "peak {}",
-            result.peak
-        );
+        assert!((0.78..=0.95).contains(&result.peak), "peak {}", result.peak);
     }
 
     #[test]

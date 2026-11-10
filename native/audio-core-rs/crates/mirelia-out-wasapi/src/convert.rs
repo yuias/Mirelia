@@ -141,8 +141,18 @@ mod tests {
     fn s24_packs_three_bytes_little_endian() {
         let out = convert(&[0.5, -0.5], DeviceFormat::S24Packed, false);
         assert_eq!(out.len(), 6);
-        let a = i32::from_le_bytes([out[0], out[1], out[2], if out[2] & 0x80 != 0 { 0xFF } else { 0 }]);
-        let b = i32::from_le_bytes([out[3], out[4], out[5], if out[5] & 0x80 != 0 { 0xFF } else { 0 }]);
+        let a = i32::from_le_bytes([
+            out[0],
+            out[1],
+            out[2],
+            if out[2] & 0x80 != 0 { 0xFF } else { 0 },
+        ]);
+        let b = i32::from_le_bytes([
+            out[3],
+            out[4],
+            out[5],
+            if out[5] & 0x80 != 0 { 0xFF } else { 0 },
+        ]);
         assert_eq!(a, 4_194_304);
         assert_eq!(b, -4_194_304);
     }
@@ -167,7 +177,10 @@ mod tests {
         let expected = (0.25f64 * 32_768.0).round() as i16;
         for chunk in out.as_chunks::<2>().0 {
             let v = i16::from_le_bytes(*chunk);
-            assert!((v - expected).abs() <= 1, "dithered value {v} vs {expected}");
+            assert!(
+                (v - expected).abs() <= 1,
+                "dithered value {v} vs {expected}"
+            );
         }
     }
 

@@ -467,7 +467,9 @@ impl Engine {
             return Err(EngineError::InvalidArg("volume outside 0.0..=4.0".into()));
         }
 
-        self.shared.volume_bits.store(gain.to_bits(), Ordering::Release);
+        self.shared
+            .volume_bits
+            .store(gain.to_bits(), Ordering::Release);
         Ok(())
     }
 
@@ -583,10 +585,12 @@ impl Engine {
 
         let events = EventSink::new(spsc::producer(self.ev_device.clone()));
 
-        let stream = self
-            .backend
-            .open_stream(request.id.as_deref(), fmt, options, callback, events)?;
-        self.shared.pub_rate.store(fmt.sample_rate, Ordering::Release);
+        let stream =
+            self.backend
+                .open_stream(request.id.as_deref(), fmt, options, callback, events)?;
+        self.shared
+            .pub_rate
+            .store(fmt.sample_rate, Ordering::Release);
         self.device = Some(DeviceState {
             format: fmt,
             ring,
@@ -640,7 +644,11 @@ impl Drop for Engine {
 // ---- decode worker -----------------------------------------------------
 
 fn db_to_linear(db: f32) -> f32 {
-    if db == 0.0 { 1.0 } else { 10f32.powf(db / 20.0) }
+    if db == 0.0 {
+        1.0
+    } else {
+        10f32.powf(db / 20.0)
+    }
 }
 
 struct WorkerState {
@@ -716,7 +724,9 @@ fn worker_loop(
                     w.next = next;
                     w.queue_empty_sent = false;
                 }
-                Ok(Cmd::Seek(frame)) => handle_seek(&mut w, &shared, &mut tags, &mut events, &ring, frame),
+                Ok(Cmd::Seek(frame)) => {
+                    handle_seek(&mut w, &shared, &mut tags, &mut events, &ring, frame)
+                }
                 Ok(Cmd::SkipToNext) => {
                     if w.next.is_some() {
                         let (decoder, params) = *w.next.take().unwrap();
@@ -996,7 +1006,9 @@ fn render_callback(
         if !playing {
             // Only `Always` dithers silence; the other modes keep it digital
             // silence.
-            dither.control.set_enabled(dither.mode == DitherMode::Always);
+            dither
+                .control
+                .set_enabled(dither.mode == DitherMode::Always);
             buf.fill(0.0);
             shared.pub_fill_permille.store(
                 (samples.len() * 1000 / ring_capacity) as u32,
@@ -1224,11 +1236,22 @@ mod tests {
         let mut e = engine();
         let mut seen = Vec::new();
         e.open_device(None, None, ShareMode::Shared).unwrap();
-        e.load(Slot::Current, load_params("fixture.wav", 7)).unwrap();
+        e.load(Slot::Current, load_params("fixture.wav", 7))
+            .unwrap();
         e.play().unwrap();
 
-        assert!(wait_for_event(&mut e, &mut seen, EventKind::TrackStarted, Duration::from_secs(5)));
-        assert!(wait_for_event(&mut e, &mut seen, EventKind::TrackEnded, Duration::from_secs(5)));
+        assert!(wait_for_event(
+            &mut e,
+            &mut seen,
+            EventKind::TrackStarted,
+            Duration::from_secs(5)
+        ));
+        assert!(wait_for_event(
+            &mut e,
+            &mut seen,
+            EventKind::TrackEnded,
+            Duration::from_secs(5)
+        ));
 
         let pos = e.position();
         assert_eq!(pos.state, State::Idle);
@@ -1242,12 +1265,23 @@ mod tests {
         let mut e = engine();
         let mut seen = Vec::new();
         e.open_device(None, None, ShareMode::Shared).unwrap();
-        e.load(Slot::Current, load_params("fixture.wav", 1)).unwrap();
+        e.load(Slot::Current, load_params("fixture.wav", 1))
+            .unwrap();
         e.load(Slot::Next, load_params("fixture.flac", 2)).unwrap();
         e.play().unwrap();
 
-        assert!(wait_for_event(&mut e, &mut seen, EventKind::TrackEnded, Duration::from_secs(5)));
-        assert!(wait_for_event(&mut e, &mut seen, EventKind::QueueEmpty, Duration::from_secs(5)));
+        assert!(wait_for_event(
+            &mut e,
+            &mut seen,
+            EventKind::TrackEnded,
+            Duration::from_secs(5)
+        ));
+        assert!(wait_for_event(
+            &mut e,
+            &mut seen,
+            EventKind::QueueEmpty,
+            Duration::from_secs(5)
+        ));
         let pos = e.position();
         assert_eq!(pos.user_token, 2);
     }
@@ -1257,11 +1291,17 @@ mod tests {
         let mut e = engine();
         let mut seen = Vec::new();
         e.open_device(None, None, ShareMode::Shared).unwrap();
-        e.load(Slot::Current, load_params("fixture.flac", 3)).unwrap();
+        e.load(Slot::Current, load_params("fixture.flac", 3))
+            .unwrap();
         e.play().unwrap();
         e.seek(10_000).unwrap();
 
-        assert!(wait_for_event(&mut e, &mut seen, EventKind::TrackEnded, Duration::from_secs(5)));
+        assert!(wait_for_event(
+            &mut e,
+            &mut seen,
+            EventKind::TrackEnded,
+            Duration::from_secs(5)
+        ));
         let pos = e.position();
         assert!(pos.frame >= 17_000, "position after seek {}", pos.frame);
     }
@@ -1338,8 +1378,7 @@ mod tests {
 
     fn gapless_splice_is_bit_exact(desired: Option<StreamFormat>) {
         let master = {
-            let mut d =
-                mirelia_decode::Decoder::open(&fixture("gapless-master.wav")).unwrap();
+            let mut d = mirelia_decode::Decoder::open(&fixture("gapless-master.wav")).unwrap();
             let mut all = Vec::new();
             while let Some(block) = d.next_block().unwrap() {
                 all.extend_from_slice(block);
@@ -1354,13 +1393,20 @@ mod tests {
         );
         let mut seen = Vec::new();
         e.open_device(None, desired, ShareMode::Shared).unwrap();
-        e.load(Slot::Current, load_params("gapless-a.flac", 1)).unwrap();
-        e.load(Slot::Next, load_params("gapless-b.flac", 2)).unwrap();
+        e.load(Slot::Current, load_params("gapless-a.flac", 1))
+            .unwrap();
+        e.load(Slot::Next, load_params("gapless-b.flac", 2))
+            .unwrap();
         // Let the decode worker prefill so playback starts without a stall.
         std::thread::sleep(Duration::from_millis(100));
         e.play().unwrap();
 
-        assert!(wait_for_event(&mut e, &mut seen, EventKind::QueueEmpty, Duration::from_secs(10)));
+        assert!(wait_for_event(
+            &mut e,
+            &mut seen,
+            EventKind::QueueEmpty,
+            Duration::from_secs(10)
+        ));
         let deadline = Instant::now() + Duration::from_secs(10);
         while e.position().state != State::Idle {
             assert!(Instant::now() < deadline, "engine never went idle");
@@ -1575,9 +1621,15 @@ mod tests {
         let mut e = engine();
         let mut seen = Vec::new();
         e.open_device(None, None, ShareMode::Shared).unwrap();
-        e.load(Slot::Current, load_params("fixture.wav", 9)).unwrap();
+        e.load(Slot::Current, load_params("fixture.wav", 9))
+            .unwrap();
         e.play().unwrap();
-        assert!(wait_for_event(&mut e, &mut seen, EventKind::TrackStarted, Duration::from_secs(5)));
+        assert!(wait_for_event(
+            &mut e,
+            &mut seen,
+            EventKind::TrackStarted,
+            Duration::from_secs(5)
+        ));
         e.pause().unwrap();
         std::thread::sleep(Duration::from_millis(10));
         let a = e.position();
@@ -1717,9 +1769,15 @@ mod tests {
 
     #[test]
     fn fixed_rate_opens_the_stream_at_that_rate_and_source_channels() {
-        let (low, mid, stereo) = (tone(22_050, 1, 2205), tone(32_000, 1, 2205), tone(44_100, 2, 2205));
+        let (low, mid, stereo) = (
+            tone(22_050, 1, 2205),
+            tone(32_000, 1, 2205),
+            tone(44_100, 2, 2205),
+        );
         let (mut e, opened) = recording_engine(EngineConfig::default());
-        let returned = e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
+        let returned = e
+            .open_device(None, fixed(48_000), ShareMode::Shared)
+            .unwrap();
         assert_eq!(
             returned,
             StreamFormat {
@@ -1750,7 +1808,8 @@ mod tests {
             channels: 2,
         };
         assert_eq!(
-            e.open_device(None, Some(desired), ShareMode::Shared).unwrap(),
+            e.open_device(None, Some(desired), ShareMode::Shared)
+                .unwrap(),
             desired
         );
         assert_eq!(*opened.lock().unwrap(), [desired]);
@@ -1760,7 +1819,8 @@ mod tests {
     fn fixed_rate_accepts_a_next_slot_of_a_different_source_rate() {
         let (current, next) = (tone(44_100, 1, 2205), tone(22_050, 1, 2205));
         let (mut e, _) = recording_engine(EngineConfig::default());
-        e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
+        e.open_device(None, fixed(48_000), ShareMode::Shared)
+            .unwrap();
         e.load(Slot::Current, params_for(&current, 1)).unwrap();
         e.load(Slot::Next, params_for(&next, 2)).unwrap();
     }
@@ -1769,7 +1829,8 @@ mod tests {
     fn fixed_rate_still_refuses_a_next_slot_channel_change() {
         let (current, stereo) = (tone(44_100, 1, 2205), tone(44_100, 2, 2205));
         let (mut e, _) = recording_engine(EngineConfig::default());
-        e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
+        e.open_device(None, fixed(48_000), ShareMode::Shared)
+            .unwrap();
         e.load(Slot::Current, params_for(&current, 1)).unwrap();
         let next = e.load(Slot::Next, params_for(&stereo, 2));
         assert!(matches!(next, Err(EngineError::Unsupported(_))), "{next:?}");
@@ -1793,14 +1854,21 @@ mod tests {
         };
         let (low, equal) = (tone(22_050, 1, 2205), tone(48_000, 1, 2205));
         let (mut e, _) = recording_engine(config);
-        e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
+        e.open_device(None, fixed(48_000), ShareMode::Shared)
+            .unwrap();
 
         let rejected = e.load(Slot::Current, params_for(&low, 1));
-        assert!(matches!(rejected, Err(EngineError::Format(_))), "{rejected:?}");
+        assert!(
+            matches!(rejected, Err(EngineError::Format(_))),
+            "{rejected:?}"
+        );
 
         e.load(Slot::Current, params_for(&equal, 2)).unwrap();
         let rejected = e.load(Slot::Next, params_for(&low, 3));
-        assert!(matches!(rejected, Err(EngineError::Format(_))), "{rejected:?}");
+        assert!(
+            matches!(rejected, Err(EngineError::Format(_))),
+            "{rejected:?}"
+        );
 
         // Without a fixed rate nothing is converted, so any rate loads.
         e.open_device(None, None, ShareMode::Shared).unwrap();
@@ -1811,17 +1879,22 @@ mod tests {
     fn fixed_rate_rejects_a_source_rate_it_cannot_convert() {
         let absurd = tone(1, 1, 8);
         let (mut e, _) = recording_engine(EngineConfig::default());
-        e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
+        e.open_device(None, fixed(48_000), ShareMode::Shared)
+            .unwrap();
 
         let rejected = e.load(Slot::Current, params_for(&absurd, 1));
-        assert!(matches!(rejected, Err(EngineError::Format(_))), "{rejected:?}");
+        assert!(
+            matches!(rejected, Err(EngineError::Format(_))),
+            "{rejected:?}"
+        );
     }
 
     #[test]
     fn fixed_rate_position_reports_the_source_rate_after_load() {
         let (low, mid) = (tone(22_050, 1, 2205), tone(32_000, 1, 2205));
         let (mut e, _) = recording_engine(EngineConfig::default());
-        e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
+        e.open_device(None, fixed(48_000), ShareMode::Shared)
+            .unwrap();
         e.load(Slot::Current, params_for(&low, 1)).unwrap();
         assert_eq!(e.position().sample_rate, 22_050);
 
@@ -1840,7 +1913,9 @@ mod tests {
     /// silence around a capture can be trimmed.
     fn cosine(rate: u32, frames: usize) -> Vec<f32> {
         (0..frames)
-            .map(|n| (0.5 * (std::f64::consts::TAU * FREQ * n as f64 / f64::from(rate)).cos()) as f32)
+            .map(|n| {
+                (0.5 * (std::f64::consts::TAU * FREQ * n as f64 / f64::from(rate)).cos()) as f32
+            })
             .collect()
     }
 
@@ -1862,7 +1937,8 @@ mod tests {
         let sink = Sink::default();
         let backend = CapturingBackend { sink: sink.clone() };
         let mut e = Engine::new(config, Box::new(backend));
-        e.open_device(None, fixed(48_000), ShareMode::Shared).unwrap();
+        e.open_device(None, fixed(48_000), ShareMode::Shared)
+            .unwrap();
         (e, sink)
     }
 
@@ -1907,7 +1983,12 @@ mod tests {
 
     /// Waits until the whole queue is decoded into the ring, before `play`.
     fn prefill(e: &mut Engine, seen: &mut Vec<EngineEvent>) {
-        assert!(wait_for_event(e, seen, EventKind::QueueEmpty, Duration::from_secs(10)));
+        assert!(wait_for_event(
+            e,
+            seen,
+            EventKind::QueueEmpty,
+            Duration::from_secs(10)
+        ));
     }
 
     #[test]
@@ -1936,7 +2017,12 @@ mod tests {
         prefill(&mut e, &mut seen);
         e.play().unwrap();
 
-        assert!(wait_for_event(&mut e, &mut seen, EventKind::TrackEnded, Duration::from_secs(10)));
+        assert!(wait_for_event(
+            &mut e,
+            &mut seen,
+            EventKind::TrackEnded,
+            Duration::from_secs(10)
+        ));
         wait_for_idle(&e);
         // The last callback publishes its position after going idle.
         std::thread::sleep(Duration::from_millis(20));
@@ -1955,7 +2041,10 @@ mod tests {
 
     #[test]
     fn resampled_rate_change_join_is_gapless() {
-        let b: Vec<f32> = cosine(48_000, 6_000).iter().map(|s| s * 0.5 + 0.1).collect();
+        let b: Vec<f32> = cosine(48_000, 6_000)
+            .iter()
+            .map(|s| s * 0.5 + 0.1)
+            .collect();
         let a_frames = 6_000;
         let a_wav = write_wav(44_100, 1, &cosine(44_100, a_frames));
         let b_wav = write_wav(48_000, 1, &b);
@@ -2047,7 +2136,11 @@ mod tests {
             // Nothing of the first track survives: the output is exactly the
             // next track's own run.
             let out = rendered_sound(e, &sink);
-            assert_eq!(out.len(), out_for(next_frames, next_rate), "next rate {next_rate}");
+            assert_eq!(
+                out.len(),
+                out_for(next_frames, next_rate),
+                "next rate {next_rate}"
+            );
             assert_follows_ideal(&out, 0, next_rate);
         }
     }
@@ -2148,7 +2241,10 @@ mod tests {
     }
 
     /// An engine on the stepped backend, with the output rate set as `desired`.
-    fn stepped_engine(config: EngineConfig, desired: Option<StreamFormat>) -> (Engine, Arc<Stepper>) {
+    fn stepped_engine(
+        config: EngineConfig,
+        desired: Option<StreamFormat>,
+    ) -> (Engine, Arc<Stepper>) {
         let step = Arc::new(Stepper::default());
         let backend = SteppedBackend { step: step.clone() };
         let mut e = Engine::new(config, Box::new(backend));
@@ -2209,8 +2305,10 @@ mod tests {
         converter.flush(&mut expected);
 
         let (mut e, step) = stepped_engine(EngineConfig::default(), fixed(48_000));
-        e.load(Slot::Current, load_params("gapless-a.flac", 1)).unwrap();
-        e.load(Slot::Next, load_params("gapless-b.flac", 2)).unwrap();
+        e.load(Slot::Current, load_params("gapless-a.flac", 1))
+            .unwrap();
+        e.load(Slot::Next, load_params("gapless-b.flac", 2))
+            .unwrap();
         e.play().unwrap();
         render(&e, &step, expected.len());
 
@@ -2232,8 +2330,10 @@ mod tests {
         let boundary = out_for(a_frames, 44_100);
 
         let (mut e, step) = stepped_engine(EngineConfig::default(), fixed(48_000));
-        e.load(Slot::Current, load_params("gapless-a.flac", 1)).unwrap();
-        e.load(Slot::Next, load_params("gapless-b.flac", 2)).unwrap();
+        e.load(Slot::Current, load_params("gapless-a.flac", 1))
+            .unwrap();
+        e.load(Slot::Next, load_params("gapless-b.flac", 2))
+            .unwrap();
         e.play().unwrap();
 
         render(&e, &step, boundary - 16);
@@ -2269,17 +2369,30 @@ mod tests {
         // The worker only decodes while 2048 samples are free, so it reaches
         // the end of the file only if the non-tail output leaves that much.
         assert!(expected.len() > capacity, "the whole output must not fit");
-        assert!(expected.len() - tail + 2048 <= capacity, "the worker must reach EOF");
+        assert!(
+            expected.len() - tail + 2048 <= capacity,
+            "the worker must reach EOF"
+        );
 
         // Not playing, so nothing drains: the ring is full and the worker is
         // stuck pushing the rest of the tail, so the queue is not empty yet.
         let mut seen = Vec::new();
-        assert!(!wait_for_event(&mut e, &mut seen, EventKind::QueueEmpty, Duration::from_millis(300)));
+        assert!(!wait_for_event(
+            &mut e,
+            &mut seen,
+            EventKind::QueueEmpty,
+            Duration::from_millis(300)
+        ));
         assert_eq!(ring_len(&e), capacity);
 
         e.play().unwrap();
         render(&e, &step, expected.len());
-        assert!(wait_for_event(&mut e, &mut seen, EventKind::QueueEmpty, Duration::from_secs(10)));
+        assert!(wait_for_event(
+            &mut e,
+            &mut seen,
+            EventKind::QueueEmpty,
+            Duration::from_secs(10)
+        ));
 
         let out = step.sink.lock().unwrap().clone();
         assert_eq!(out.len(), expected.len());
@@ -2302,7 +2415,9 @@ mod tests {
         render(&e, &step, 3_000);
         wait_until("the ring to refill", || ring_len(&e) > 8_000);
         e.seek(target as i64).unwrap();
-        wait_until("the seek flush", || e.shared.flush_ack.load(Ordering::Acquire) >= 2);
+        wait_until("the seek flush", || {
+            e.shared.flush_ack.load(Ordering::Acquire) >= 2
+        });
         let mark = step.sink.lock().unwrap().len();
 
         render(&e, &step, out_for(frames - target, 44_100));
@@ -2446,7 +2561,10 @@ mod tests {
         drain_events(&mut e, &mut seen);
 
         assert!(factory.creates.load(Ordering::Relaxed) > 0);
-        assert!(!seen.iter().any(|ev| ev.kind == EventKind::Error), "{seen:?}");
+        assert!(
+            !seen.iter().any(|ev| ev.kind == EventKind::Error),
+            "{seen:?}"
+        );
         assert_eq!(rendered_sound(e, &sink), builtin_run(44_100, frames));
     }
 
@@ -2464,7 +2582,12 @@ mod tests {
         e.load(Slot::Current, params_for(&wav, 1)).unwrap();
         prefill(&mut e, &mut seen);
         e.play().unwrap();
-        assert!(wait_for_event(&mut e, &mut seen, EventKind::TrackEnded, Duration::from_secs(10)));
+        assert!(wait_for_event(
+            &mut e,
+            &mut seen,
+            EventKind::TrackEnded,
+            Duration::from_secs(10)
+        ));
         wait_for_idle(&e);
         drain_events(&mut e, &mut seen);
 
@@ -2481,7 +2604,10 @@ mod tests {
         assert!(fed > 0 && fed < frames, "failed after {fed} source frames");
         let out = rendered_from_first_sound(e, &sink);
         let sound_end = out.iter().rposition(|&s| s != 0.0).unwrap() + 1;
-        assert_eq!(sound_end, out_for(fed, 44_100) + out_for(frames - fed, 44_100));
+        assert_eq!(
+            sound_end,
+            out_for(fed, 44_100) + out_for(frames - fed, 44_100)
+        );
         assert_follows_ideal(&out[out_for(fed, 44_100)..sound_end], fed, 44_100);
     }
 
@@ -2503,7 +2629,10 @@ mod tests {
         drain_events(&mut e, &mut seen);
 
         assert!(factory.creates.load(Ordering::Relaxed) > 0);
-        assert!(!seen.iter().any(|ev| ev.kind == EventKind::Error), "{seen:?}");
+        assert!(
+            !seen.iter().any(|ev| ev.kind == EventKind::Error),
+            "{seen:?}"
+        );
         assert_eq!(rendered_sound(e, &sink), builtin_run(44_100, frames));
     }
 
@@ -2529,7 +2658,10 @@ mod tests {
         drop(rendered_from_first_sound(e, &sink));
         let calls = factory.calls.lock().unwrap();
         for what in ["create", "process", "flush", "reset", "drop"] {
-            assert!(calls.iter().any(|(call, _)| *call == what), "no {what} call");
+            assert!(
+                calls.iter().any(|(call, _)| *call == what),
+                "no {what} call"
+            );
         }
         for (what, thread) in calls.iter() {
             assert_eq!(thread.as_deref(), Some("mirelia-decode"), "{what}");

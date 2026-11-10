@@ -371,7 +371,10 @@ pub fn load_plugin(path: &str) -> Result<LoadedPlugin, i32> {
         )
     }
     .map_err(|err| {
-        crate::fail(MIRELIA_ERR_FORMAT, &format!("{path}: cannot load library: {err}"))
+        crate::fail(
+            MIRELIA_ERR_FORMAT,
+            &format!("{path}: cannot load library: {err}"),
+        )
     })?;
     // From here on every early return unloads the library through `Drop`.
     let library = Arc::new(PluginLibrary { module });
@@ -384,9 +387,8 @@ pub fn load_plugin(path: &str) -> Result<LoadedPlugin, i32> {
         ));
     };
     // SAFETY: `audio_dsp.h` defines the signature of `mireliaDspEntry`.
-    let entry = unsafe {
-        std::mem::transmute::<unsafe extern "system" fn() -> isize, EntryFn>(entry)
-    };
+    let entry =
+        unsafe { std::mem::transmute::<unsafe extern "system" fn() -> isize, EntryFn>(entry) };
     // SAFETY: the library stays loaded for the call, and the entry point may be
     // called with any version number.
     let description = unsafe { entry(MIRELIA_DSP_ABI_VERSION) };
@@ -908,7 +910,11 @@ mod tests {
             clear(&mut vtable);
             let caps = [capability(&vtable)];
             let p = plugin(c"fake", c"Fake", &caps);
-            assert_eq!(validate(&p).err(), Some(MIRELIA_ERR_FORMAT), "member {member}");
+            assert_eq!(
+                validate(&p).err(),
+                Some(MIRELIA_ERR_FORMAT),
+                "member {member}"
+            );
         }
 
         let null_vtable = [MireliaDspCapability {

@@ -22,12 +22,12 @@ use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, PROPERTYKEY, WAIT_OBJECT_0};
 use windows::Win32::Media::Audio::{
     AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED, AUDCLNT_E_DEVICE_IN_USE, AUDCLNT_E_DEVICE_INVALIDATED,
-    AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED, AUDCLNT_E_UNSUPPORTED_FORMAT, AUDCLNT_SHAREMODE_EXCLUSIVE,
-    AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-    AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, DEVICE_STATE, DEVICE_STATE_ACTIVE, EDataFlow, ERole,
-    IAudioClient, IAudioRenderClient, IMMDevice, IMMDeviceEnumerator, IMMNotificationClient,
-    IMMNotificationClient_Impl, MMDeviceEnumerator, WAVEFORMATEX, WAVEFORMATEXTENSIBLE,
-    WAVEFORMATEXTENSIBLE_0, eConsole, eRender,
+    AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED, AUDCLNT_E_UNSUPPORTED_FORMAT,
+    AUDCLNT_SHAREMODE_EXCLUSIVE, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
+    AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, DEVICE_STATE,
+    DEVICE_STATE_ACTIVE, EDataFlow, ERole, IAudioClient, IAudioRenderClient, IMMDevice,
+    IMMDeviceEnumerator, IMMNotificationClient, IMMNotificationClient_Impl, MMDeviceEnumerator,
+    WAVEFORMATEX, WAVEFORMATEXTENSIBLE, WAVEFORMATEXTENSIBLE_0, eConsole, eRender,
 };
 use windows::Win32::Media::KernelStreaming::{
     KSDATAFORMAT_SUBTYPE_PCM, SPEAKER_FRONT_CENTER, SPEAKER_FRONT_LEFT, SPEAKER_FRONT_RIGHT,
@@ -174,9 +174,16 @@ impl DeviceWatch {
     fn register() -> Option<Self> {
         let changed = Arc::new(AtomicBool::new(false));
         let enumerator = enumerator().ok()?;
-        let client: IMMNotificationClient = DeviceNotifier { changed: changed.clone() }.into();
+        let client: IMMNotificationClient = DeviceNotifier {
+            changed: changed.clone(),
+        }
+        .into();
         unsafe { enumerator.RegisterEndpointNotificationCallback(&client) }.ok()?;
-        Some(Self { enumerator, client, changed })
+        Some(Self {
+            enumerator,
+            client,
+            changed,
+        })
     }
 
     /// True (and reset) if the default render device switched since the
@@ -277,7 +284,11 @@ fn channel_mask(channels: u16) -> u32 {
 }
 
 /// Builds a WAVEFORMATEXTENSIBLE for one candidate device format.
-fn make_wfx(format: StreamFormat, device_format: DeviceFormat, valid_bits: u16) -> WAVEFORMATEXTENSIBLE {
+fn make_wfx(
+    format: StreamFormat,
+    device_format: DeviceFormat,
+    valid_bits: u16,
+) -> WAVEFORMATEXTENSIBLE {
     let bytes = device_format.bytes_per_sample() as u16;
     let sub_format = match device_format {
         DeviceFormat::F32 => KSDATAFORMAT_SUBTYPE_IEEE_FLOAT,
@@ -316,9 +327,8 @@ fn negotiate_exclusive(
     ];
     for (device_format, valid_bits) in candidates {
         let wfx = make_wfx(format, device_format, valid_bits);
-        let hr = unsafe {
-            client.IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, &wfx.Format, None)
-        };
+        let hr =
+            unsafe { client.IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, &wfx.Format, None) };
         if hr.is_ok() {
             return Ok((device_format, wfx));
         }
@@ -406,10 +416,7 @@ fn setup_exclusive(
     }
 }
 
-fn setup_shared(
-    device: &IMMDevice,
-    format: StreamFormat,
-) -> Result<ExclusiveSetup, OutputError> {
+fn setup_shared(device: &IMMDevice, format: StreamFormat) -> Result<ExclusiveSetup, OutputError> {
     unsafe {
         let client: IAudioClient = device
             .Activate(CLSCTX_ALL, None)
@@ -529,8 +536,7 @@ impl OutputBackend for WasapiBackend {
                 match setup {
                     Ok(s) => {
                         let _ = result_tx.send(Ok(s.event.0 as isize));
-                        let mut scratch =
-                            vec![0.0f32; s.buffer_frames as usize * channels];
+                        let mut scratch = vec![0.0f32; s.buffer_frames as usize * channels];
                         // Off until the render loop applies the engine's
                         // decision for the first block.
                         let mut dither = Dither::new(false);
@@ -579,7 +585,9 @@ impl OutputBackend for WasapiBackend {
             }
             Err(_) => {
                 let _ = join.join();
-                Err(OutputError::Internal("render thread died during setup".into()))
+                Err(OutputError::Internal(
+                    "render thread died during setup".into(),
+                ))
             }
         }
     }

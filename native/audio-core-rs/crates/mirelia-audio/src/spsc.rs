@@ -28,7 +28,9 @@ impl<T: Copy + Default> SpscCore<T> {
     pub fn new(capacity: usize) -> Arc<Self> {
         assert!(capacity > 0);
         Arc::new(Self {
-            buf: (0..capacity).map(|_| UnsafeCell::new(T::default())).collect(),
+            buf: (0..capacity)
+                .map(|_| UnsafeCell::new(T::default()))
+                .collect(),
             read: AtomicUsize::new(0),
             write: AtomicUsize::new(0),
         })
@@ -203,8 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn clear_discards_queued_items()
-    {
+    fn clear_discards_queued_items() {
         let core = SpscCore::<u32>::new(4);
         let mut p = producer(core.clone());
         let mut c = consumer(core);

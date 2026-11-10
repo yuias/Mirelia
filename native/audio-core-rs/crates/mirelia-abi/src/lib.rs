@@ -161,8 +161,7 @@ fn make_backend() -> Box<dyn OutputBackend> {
         fn probe_device(
             &mut self,
             _id: Option<&str>,
-        ) -> Result<mirelia_audio::output::DeviceInfo, mirelia_audio::output::OutputError>
-        {
+        ) -> Result<mirelia_audio::output::DeviceInfo, mirelia_audio::output::OutputError> {
             Err(mirelia_audio::output::OutputError::Unsupported(
                 "no output backend for this platform yet".into(),
             ))
@@ -263,7 +262,12 @@ unsafe fn utf8_arg(ptr: *const c_char) -> Result<Option<String>, i32> {
     unsafe { CStr::from_ptr(ptr) }
         .to_str()
         .map(|s| Some(s.to_owned()))
-        .map_err(|_| fail(MIRELIA_ERR_INVALID_ARG, "string argument is not valid UTF-8"))
+        .map_err(|_| {
+            fail(
+                MIRELIA_ERR_INVALID_ARG,
+                "string argument is not valid UTF-8",
+            )
+        })
 }
 
 // ---- engine lifecycle --------------------------------------------------
@@ -281,7 +285,10 @@ pub unsafe extern "C" fn mirelia_engine_create(
     out: *mut *mut MireliaEngine,
 ) -> i32 {
     if cfg.is_null() || out.is_null() {
-        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaEngineCreate: null argument");
+        return fail(
+            MIRELIA_ERR_INVALID_ARG,
+            "mireliaEngineCreate: null argument",
+        );
     }
     let cfg = unsafe { &*cfg };
     if cfg.abi_version != MIRELIA_ABI_VERSION {
@@ -363,7 +370,10 @@ pub unsafe extern "C" fn mirelia_devices_enumerate(
     out_count: *mut usize,
 ) -> i32 {
     if e.is_null() || out_devices.is_null() || out_count.is_null() {
-        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaDevicesEnumerate: null argument");
+        return fail(
+            MIRELIA_ERR_INVALID_ARG,
+            "mireliaDevicesEnumerate: null argument",
+        );
     }
     let wrapper = unsafe { &mut *e };
 
@@ -437,12 +447,20 @@ pub unsafe extern "C" fn mirelia_engine_open_device(
     out_actual: *mut MireliaStreamFormat,
 ) -> i32 {
     if e.is_null() {
-        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaEngineOpenDevice: null engine");
+        return fail(
+            MIRELIA_ERR_INVALID_ARG,
+            "mireliaEngineOpenDevice: null engine",
+        );
     }
     let share_mode = match mode {
         0 => mirelia_audio::output::ShareMode::Shared,
         1 => mirelia_audio::output::ShareMode::Exclusive,
-        _ => return fail(MIRELIA_ERR_INVALID_ARG, "mireliaEngineOpenDevice: unknown share mode"),
+        _ => {
+            return fail(
+                MIRELIA_ERR_INVALID_ARG,
+                "mireliaEngineOpenDevice: unknown share mode",
+            );
+        }
     };
     let wrapper = unsafe { &mut *e };
     let id = match unsafe { utf8_arg(device_id) } {
@@ -465,7 +483,10 @@ pub unsafe extern "C" fn mirelia_engine_open_device(
         })
     };
 
-    match wrapper.engine.open_device(id.as_deref(), desired_fmt, share_mode) {
+    match wrapper
+        .engine
+        .open_device(id.as_deref(), desired_fmt, share_mode)
+    {
         Ok(actual) => {
             if !out_actual.is_null() {
                 unsafe {
@@ -491,7 +512,10 @@ pub unsafe extern "C" fn mirelia_engine_open_device(
 #[unsafe(export_name = "mireliaEngineCloseDevice")]
 pub unsafe extern "C" fn mirelia_engine_close_device(e: *mut MireliaEngine) -> i32 {
     if e.is_null() {
-        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaEngineCloseDevice: null engine");
+        return fail(
+            MIRELIA_ERR_INVALID_ARG,
+            "mireliaEngineCloseDevice: null engine",
+        );
     }
     unsafe { &mut *e }.engine.close_device();
     MIRELIA_OK
@@ -528,7 +552,10 @@ pub unsafe extern "C" fn mirelia_load(
         Err(code) => return code,
     };
     let Ok(Some(path)) = (unsafe { utf8_arg(p.path) }) else {
-        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaLoad: path is null or not UTF-8");
+        return fail(
+            MIRELIA_ERR_INVALID_ARG,
+            "mireliaLoad: path is null or not UTF-8",
+        );
     };
 
     let params = LoadParams {
@@ -584,9 +611,24 @@ macro_rules! transport {
     };
 }
 
-transport!(mirelia_play, "mireliaPlay", play, "Implements `mireliaPlay`.");
-transport!(mirelia_pause, "mireliaPause", pause, "Implements `mireliaPause`.");
-transport!(mirelia_stop, "mireliaStop", stop, "Implements `mireliaStop` (clears both slots).");
+transport!(
+    mirelia_play,
+    "mireliaPlay",
+    play,
+    "Implements `mireliaPlay`."
+);
+transport!(
+    mirelia_pause,
+    "mireliaPause",
+    pause,
+    "Implements `mireliaPause`."
+);
+transport!(
+    mirelia_stop,
+    "mireliaStop",
+    stop,
+    "Implements `mireliaStop` (clears both slots)."
+);
 transport!(
     mirelia_skip_to_next,
     "mireliaSkipToNext",
@@ -711,7 +753,10 @@ pub unsafe extern "C" fn mirelia_probe(
         return fail(MIRELIA_ERR_INVALID_ARG, "mireliaProbe: null argument");
     }
     let Ok(Some(path)) = (unsafe { utf8_arg(path) }) else {
-        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaProbe: path is null or not UTF-8");
+        return fail(
+            MIRELIA_ERR_INVALID_ARG,
+            "mireliaProbe: path is null or not UTF-8",
+        );
     };
 
     let decoder = match mirelia_decode::Decoder::open(std::path::Path::new(&path)) {
@@ -756,10 +801,16 @@ pub unsafe extern "C" fn mirelia_scan_loudness(
     out_peak: *mut f32,
 ) -> i32 {
     if e.is_null() || out_gain_db.is_null() || out_peak.is_null() {
-        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaScanLoudness: null argument");
+        return fail(
+            MIRELIA_ERR_INVALID_ARG,
+            "mireliaScanLoudness: null argument",
+        );
     }
     let Ok(Some(path)) = (unsafe { utf8_arg(path) }) else {
-        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaScanLoudness: path is null or not UTF-8");
+        return fail(
+            MIRELIA_ERR_INVALID_ARG,
+            "mireliaScanLoudness: path is null or not UTF-8",
+        );
     };
 
     match mirelia_decode::loudness::scan(std::path::Path::new(&path)) {
@@ -815,7 +866,10 @@ pub unsafe extern "C" fn mirelia_register_dsp_library(
     dll_path: *const c_char,
 ) -> i32 {
     if e.is_null() {
-        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaRegisterDspLibrary: null engine");
+        return fail(
+            MIRELIA_ERR_INVALID_ARG,
+            "mireliaRegisterDspLibrary: null engine",
+        );
     }
     let wrapper = unsafe { &mut *e };
     let Ok(Some(path)) = (unsafe { utf8_arg(dll_path) }) else {
@@ -864,15 +918,20 @@ pub unsafe extern "C" fn mirelia_dsp_enumerate(
     out_count: *mut usize,
 ) -> i32 {
     if e.is_null() || out_infos.is_null() || out_count.is_null() {
-        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaDspEnumerate: null argument");
+        return fail(
+            MIRELIA_ERR_INVALID_ARG,
+            "mireliaDspEnumerate: null argument",
+        );
     }
     let wrapper = unsafe { &mut *e };
     wrapper.dsp_infos.clear();
-    wrapper.dsp_infos.extend(wrapper.dsp_plugins.iter().map(|p| MireliaDspInfo {
-        id: p.id.as_ptr(),
-        name: p.name.as_ptr(),
-        kind: dsp::MIRELIA_DSP_KIND_RESAMPLER,
-    }));
+    wrapper
+        .dsp_infos
+        .extend(wrapper.dsp_plugins.iter().map(|p| MireliaDspInfo {
+            id: p.id.as_ptr(),
+            name: p.name.as_ptr(),
+            kind: dsp::MIRELIA_DSP_KIND_RESAMPLER,
+        }));
     unsafe {
         *out_infos = wrapper.dsp_infos.as_ptr();
         *out_count = wrapper.dsp_infos.len();
@@ -904,7 +963,10 @@ pub unsafe extern "C" fn mirelia_engine_set_resampler(
     plugin_id: *const c_char,
 ) -> i32 {
     if e.is_null() {
-        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaEngineSetResampler: null engine");
+        return fail(
+            MIRELIA_ERR_INVALID_ARG,
+            "mireliaEngineSetResampler: null engine",
+        );
     }
     let wrapper = unsafe { &mut *e };
     let id = match unsafe { utf8_arg(plugin_id) } {
@@ -915,14 +977,19 @@ pub unsafe extern "C" fn mirelia_engine_set_resampler(
         wrapper.engine.set_resampler(None);
         return MIRELIA_OK;
     };
-    let Some(plugin) = wrapper.dsp_plugins.iter().find(|p| p.id.as_bytes() == id.as_bytes())
+    let Some(plugin) = wrapper
+        .dsp_plugins
+        .iter()
+        .find(|p| p.id.as_bytes() == id.as_bytes())
     else {
         return fail(
             MIRELIA_ERR_INVALID_ARG,
             &format!("no resampler plugin with id {id:?} is registered"),
         );
     };
-    wrapper.engine.set_resampler(Some(Arc::clone(&plugin.factory)));
+    wrapper
+        .engine
+        .set_resampler(Some(Arc::clone(&plugin.factory)));
     MIRELIA_OK
 }
 
@@ -968,7 +1035,11 @@ mod tests {
             cfg.dither_to_int = value;
             let mut e: *mut MireliaEngine = ptr::null_mut();
             assert_eq!(unsafe { mirelia_engine_create(&cfg, &mut e) }, MIRELIA_OK);
-            assert_eq!(unsafe { &*e }.engine.config().dither, expected, "value {value}");
+            assert_eq!(
+                unsafe { &*e }.engine.config().dither,
+                expected,
+                "value {value}"
+            );
             unsafe { mirelia_engine_destroy(e) };
         }
     }
@@ -1012,7 +1083,10 @@ mod tests {
             .join("../../../../tests/fixtures/fixture.flac");
         let c_path = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
         let mut probe = unsafe { std::mem::zeroed::<MireliaProbeResult>() };
-        assert_eq!(unsafe { mirelia_probe(e, c_path.as_ptr(), &mut probe) }, MIRELIA_OK);
+        assert_eq!(
+            unsafe { mirelia_probe(e, c_path.as_ptr(), &mut probe) },
+            MIRELIA_OK
+        );
         assert_eq!(probe.sample_rate, 44_100);
         assert_eq!(probe.channels, 2);
         assert_eq!(probe.total_frames, 17_640);

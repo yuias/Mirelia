@@ -103,7 +103,12 @@ impl Decoder {
         // `Probe::probe` takes the format reader directly (no `ProbedFormat`
         // wrapper) and consumes the options by value.
         let mut format = symphonia::default::get_probe()
-            .probe(&hint, mss, FormatOptions::default(), MetadataOptions::default())
+            .probe(
+                &hint,
+                mss,
+                FormatOptions::default(),
+                MetadataOptions::default(),
+            )
             .map_err(DecodeError::from)?;
 
         // Scoped so the immutable borrow of `format` ends before `next_packet`
@@ -266,7 +271,10 @@ impl Decoder {
             .map_err(|_| DecodeError::Malformed("seek target out of range".into()))?;
         let seeked = self.format.seek(
             SeekMode::Accurate,
-            SeekTo::Timestamp { ts: target, track_id: self.track_id },
+            SeekTo::Timestamp {
+                ts: target,
+                track_id: self.track_id,
+            },
         )?;
         self.decoder.reset();
         self.primed = false;
