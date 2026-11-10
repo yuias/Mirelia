@@ -21,23 +21,23 @@
 
 #ifdef _WIN32
 #include <windows.h>
-typedef HMODULE lib_handle;
-static lib_handle lib_open(const char *path) { return LoadLibraryA(path); }
-static void *lib_sym(lib_handle h, const char *name) {
+typedef HMODULE LibHandle;
+static LibHandle libOpen(const char *path) { return LoadLibraryA(path); }
+static void *libSym(LibHandle h, const char *name) {
     return (void *)GetProcAddress(h, name);
 }
 #else
 #include <dlfcn.h>
-typedef void *lib_handle;
-static lib_handle lib_open(const char *path) { return dlopen(path, RTLD_NOW); }
-static void *lib_sym(lib_handle h, const char *name) { return dlsym(h, name); }
+typedef void *LibHandle;
+static LibHandle libOpen(const char *path) { return dlopen(path, RTLD_NOW); }
+static void *libSym(LibHandle h, const char *name) { return dlsym(h, name); }
 #endif
 
 /* ---- tiny test harness ------------------------------------------------- */
 
 static int failures = 0;
 
-static void report_fail(const char *tag, const char *file, int line, const char *fmt, ...) {
+static void reportFail(const char *tag, const char *file, int line, const char *fmt, ...) {
     char msg[256];
     va_list args;
     va_start(args, fmt);
@@ -49,7 +49,7 @@ static void report_fail(const char *tag, const char *file, int line, const char 
     failures++;
 }
 
-#define FAIL(tag, ...) report_fail(tag, __FILE__, __LINE__, __VA_ARGS__)
+#define FAIL(tag, ...) reportFail(tag, __FILE__, __LINE__, __VA_ARGS__)
 
 #define CHECK(tag, cond, ...)         \
     do {                              \
@@ -64,11 +64,11 @@ static void report_fail(const char *tag, const char *file, int line, const char 
  * whether the call succeeded, so the caller can stop using the context.
  */
 #define RUNTIME_OK(rc, what)                                                       \
-    (runtime_ok((int64_t)(rc), what, __FILE__, __LINE__))
+    (runtimeOk((int64_t)(rc), what, __FILE__, __LINE__))
 
-static int runtime_ok(int64_t rc, const char *what, const char *file, int line) {
+static int runtimeOk(int64_t rc, const char *what, const char *file, int line) {
     if (rc < 0) {
-        report_fail("runtime", file, line, "%s returned %lld", what, (long long)rc);
+        reportFail("runtime", file, line, "%s returned %lld", what, (long long)rc);
         return 0;
     }
     return 1;
@@ -80,13 +80,13 @@ static int runtime_ok(int64_t rc, const char *what, const char *file, int line) 
  * rc is within the capacity, so the caller can stop using the context.
  */
 #define WITHIN_CAP(tag, rc, cap, what)                                                 \
-    (within_cap(tag, (int64_t)(rc), (int64_t)(cap), what, __FILE__, __LINE__))
+    (withinCap(tag, (int64_t)(rc), (int64_t)(cap), what, __FILE__, __LINE__))
 
-static int within_cap(const char *tag, int64_t rc, int64_t cap, const char *what,
-                      const char *file, int line) {
+static int withinCap(const char *tag, int64_t rc, int64_t cap, const char *what,
+                     const char *file, int line) {
     if (rc > cap) {
-        report_fail(tag, file, line, "%s returned %lld frames for a capacity of %lld", what,
-                    (long long)rc, (long long)cap);
+        reportFail(tag, file, line, "%s returned %lld frames for a capacity of %lld", what,
+                   (long long)rc, (long long)cap);
         return 0;
     }
     return 1;
@@ -105,12 +105,12 @@ static void *xmalloc(size_t n) {
 
 static const kn_dsp_resampler_vtable *vt;
 
-typedef struct rate_pair {
+typedef struct RatePair {
     uint32_t in_rate;
     uint32_t out_rate;
-} rate_pair;
+} RatePair;
 
-static const rate_pair kPairs[] = {
+static const RatePair kPairs[] = {
     {44100, 48000}, {48000, 44100}, {44100, 96000}, {96000, 44100},
     {22050, 48000}, {44100, 88200}, {192000, 48000},
 };
@@ -127,12 +127,12 @@ static const double kTolerance = 1e-3;
 static const double kPi = 3.14159265358979323846;
 
 /* out(n) = ceil(n * out_rate / in_rate), in exact integer arithmetic. */
-static int64_t out_frames(int64_t n, uint32_t in_rate, uint32_t out_rate) {
+static int64_t outFrames(int64_t n, uint32_t in_rate, uint32_t out_rate) {
     return (int64_t)(((uint64_t)n * out_rate + in_rate - 1) / in_rate);
 }
 
 /* Deterministic broadband noise in [-0.5, 0.5), interleaved; the generator of the Rust tests. */
-static float *make_noise(int64_t frames, uint16_t channels, uint32_t seed) {
+static float *makeNoise(int64_t frames, uint16_t channels, uint32_t seed) {
     float *buf = (float *)xmalloc((size_t)(frames * channels) * sizeof(float));
     uint32_t state = seed;
     for (int64_t i = 0; i < frames * channels; i++) {
@@ -151,7 +151,7 @@ static double tone(int64_t k, double freq, uint32_t rate) {
     return 0.5 * cos(2.0 * kPi * fmod((double)k * freq, (double)rate) / (double)rate);
 }
 
-static double channel_freq(uint16_t channel) { return channel == 0 ? 997.0 : 1499.0; }
+static double channelFreq(uint16_t channel) { return channel == 0 ? 997.0 : 1499.0; }
 
 /* ---- running a stream through a context --------------------------------- */
 
@@ -164,9 +164,9 @@ static double channel_freq(uint16_t channel) { return channel == 0 ? 997.0 : 149
  * blocks/block_count: block sizes used cyclically; NULL means a single call.
  * zero_calls: if set, a zero-frame call follows every second block.
  */
-static int64_t run_stream(void *ctx, const float *in, int64_t frames, uint16_t channels,
-                          uint32_t in_rate, uint32_t out_rate, const int64_t *blocks,
-                          size_t block_count, int zero_calls, float *out) {
+static int64_t runStream(void *ctx, const float *in, int64_t frames, uint16_t channels,
+                         uint32_t in_rate, uint32_t out_rate, const int64_t *blocks,
+                         size_t block_count, int zero_calls, float *out) {
     int64_t fed = 0;
     int64_t emitted = 0;
     size_t block_index = 0;
@@ -175,7 +175,7 @@ static int64_t run_stream(void *ctx, const float *in, int64_t frames, uint16_t c
         if (n > frames - fed) {
             n = frames - fed;
         }
-        int64_t cap = out_frames(fed + n, in_rate, out_rate) - emitted;
+        int64_t cap = outFrames(fed + n, in_rate, out_rate) - emitted;
         int64_t rc = vt->process(ctx, in + fed * channels, n, out + emitted * channels, cap);
         if (!RUNTIME_OK(rc, "process") || !WITHIN_CAP("runtime", rc, cap, "process")) {
             return -1;
@@ -184,7 +184,7 @@ static int64_t run_stream(void *ctx, const float *in, int64_t frames, uint16_t c
         fed += n;
         block_index++;
         if (zero_calls && block_index % 2 == 0) {
-            cap = out_frames(fed, in_rate, out_rate) - emitted;
+            cap = outFrames(fed, in_rate, out_rate) - emitted;
             rc = vt->process(ctx, in, 0, out + emitted * channels, cap);
             if (!RUNTIME_OK(rc, "process with zero frames") ||
                 !WITHIN_CAP("runtime", rc, cap, "process with zero frames")) {
@@ -193,7 +193,7 @@ static int64_t run_stream(void *ctx, const float *in, int64_t frames, uint16_t c
             emitted += rc;
         }
     }
-    int64_t cap = out_frames(fed, in_rate, out_rate) - emitted;
+    int64_t cap = outFrames(fed, in_rate, out_rate) - emitted;
     int64_t rc = vt->flush(ctx, out + emitted * channels, cap);
     if (!RUNTIME_OK(rc, "flush") || !WITHIN_CAP("runtime", rc, cap, "flush")) {
         return -1;
@@ -202,7 +202,7 @@ static int64_t run_stream(void *ctx, const float *in, int64_t frames, uint16_t c
 }
 
 /* Creates a context, reporting a failure as a runtime one. NULL on failure. */
-static void *create_ctx(uint32_t in_rate, uint32_t out_rate, uint16_t channels) {
+static void *createCtx(uint32_t in_rate, uint32_t out_rate, uint16_t channels) {
     void *ctx = NULL;
     kn_result rc = vt->create(in_rate, out_rate, channels, &ctx);
     if (!RUNTIME_OK(rc, "create") || ctx == NULL) {
@@ -212,22 +212,22 @@ static void *create_ctx(uint32_t in_rate, uint32_t out_rate, uint16_t channels) 
 }
 
 /* Output of a whole run on a fresh context; returns the frame count, or -1. */
-static int64_t reference_run(const float *in, int64_t frames, uint16_t channels,
-                             uint32_t in_rate, uint32_t out_rate, float **out) {
-    *out = (float *)xmalloc((size_t)(out_frames(frames, in_rate, out_rate) * channels + 1) *
+static int64_t referenceRun(const float *in, int64_t frames, uint16_t channels,
+                            uint32_t in_rate, uint32_t out_rate, float **out) {
+    *out = (float *)xmalloc((size_t)(outFrames(frames, in_rate, out_rate) * channels + 1) *
                             sizeof(float));
-    void *ctx = create_ctx(in_rate, out_rate, channels);
+    void *ctx = createCtx(in_rate, out_rate, channels);
     if (ctx == NULL) {
         return -1;
     }
-    int64_t n = run_stream(ctx, in, frames, channels, in_rate, out_rate, NULL, 0, 0, *out);
+    int64_t n = runStream(ctx, in, frames, channels, in_rate, out_rate, NULL, 0, 0, *out);
     vt->destroy(ctx);
     return n;
 }
 
 /* ---- checks -------------------------------------------------------------- */
 
-static int valid_id(const char *id) {
+static int validId(const char *id) {
     size_t n = id != NULL ? strlen(id) : 0;
     if (n < 1 || n > 64) {
         return 0;
@@ -242,7 +242,7 @@ static int valid_id(const char *id) {
     return 1;
 }
 
-static int valid_utf8(const unsigned char *s, size_t n) {
+static int validUtf8(const unsigned char *s, size_t n) {
     size_t i = 0;
     while (i < n) {
         unsigned char c = s[i];
@@ -279,7 +279,7 @@ static int valid_utf8(const unsigned char *s, size_t n) {
 }
 
 /* Returns the plugin, or NULL if its static contents are too broken to test further. */
-static const kn_dsp_plugin *check_entry(kn_dsp_entry_fn entry) {
+static const kn_dsp_plugin *checkEntry(kn_dsp_entry_fn entry) {
     CHECK("entry", entry(0xDEAD) == NULL, "kn_dsp_entry(0xDEAD) must return NULL");
 
     const kn_dsp_plugin *plugin = entry(KN_DSP_ABI_VERSION);
@@ -289,11 +289,11 @@ static const kn_dsp_plugin *check_entry(kn_dsp_entry_fn entry) {
     }
     CHECK("entry", plugin->abi_version == KN_DSP_ABI_VERSION, "abi_version is %u",
           (unsigned)plugin->abi_version);
-    CHECK("entry", valid_id(plugin->id), "id must be 1..64 bytes of [a-z0-9._-]");
+    CHECK("entry", validId(plugin->id), "id must be 1..64 bytes of [a-z0-9._-]");
     size_t name_len = plugin->name != NULL ? strlen(plugin->name) : 0;
     CHECK("entry",
           name_len >= 1 && name_len <= 128 &&
-              valid_utf8((const unsigned char *)plugin->name, name_len),
+              validUtf8((const unsigned char *)plugin->name, name_len),
           "name must be 1..128 bytes of UTF-8");
     CHECK("entry", plugin->capability_count >= 1 && plugin->capability_count <= 32,
           "capability_count is %u, expected 1..32", (unsigned)plugin->capability_count);
@@ -327,7 +327,7 @@ static const kn_dsp_plugin *check_entry(kn_dsp_entry_fn entry) {
     return vt != NULL ? plugin : NULL;
 }
 
-static void check_create(void) {
+static void checkCreate(void) {
     for (size_t p = 0; p < PAIR_COUNT; p++) {
         for (size_t c = 0; c < CHANNEL_COUNTS; c++) {
             void *ctx = NULL;
@@ -343,7 +343,7 @@ static void check_create(void) {
     }
 }
 
-static void check_length(void) {
+static void checkLength(void) {
     static const int64_t kLengths[] = {1, 2, 100, 147, 2058, 12345, 30000, 44100};
     /* A prime block size, so block edges do not line up with the filter's. */
     const int64_t block = 977;
@@ -354,17 +354,17 @@ static void check_length(void) {
             uint16_t ch = kChannelCounts[c];
             for (size_t l = 0; l < sizeof(kLengths) / sizeof(kLengths[0]); l++) {
                 int64_t n = kLengths[l];
-                float *in = make_noise(n, ch, 1);
-                float *out = (float *)xmalloc((size_t)(out_frames(n, in_rate, out_rate) * ch + 1) *
+                float *in = makeNoise(n, ch, 1);
+                float *out = (float *)xmalloc((size_t)(outFrames(n, in_rate, out_rate) * ch + 1) *
                                               sizeof(float));
-                void *ctx = create_ctx(in_rate, out_rate, ch);
+                void *ctx = createCtx(in_rate, out_rate, ch);
                 if (ctx != NULL) {
                     int64_t fed = 0;
                     int64_t emitted = 0;
                     int ok = 1;
                     while (ok && fed < n) {
                         int64_t k = n - fed < block ? n - fed : block;
-                        int64_t cap = out_frames(fed + k, in_rate, out_rate) - emitted;
+                        int64_t cap = outFrames(fed + k, in_rate, out_rate) - emitted;
                         int64_t rc = vt->process(ctx, in + fed * ch, k, out + emitted * ch, cap);
                         /* rc <= cap is the same as emitted <= out(fed) after this call. */
                         ok = RUNTIME_OK(rc, "process") && WITHIN_CAP("length", rc, cap, "process");
@@ -375,15 +375,15 @@ static void check_length(void) {
                         fed += k;
                     }
                     if (ok) {
-                        int64_t cap = out_frames(fed, in_rate, out_rate) - emitted;
+                        int64_t cap = outFrames(fed, in_rate, out_rate) - emitted;
                         int64_t rc = vt->flush(ctx, out + emitted * ch, cap);
                         if (RUNTIME_OK(rc, "flush") && WITHIN_CAP("length", rc, cap, "flush")) {
                             emitted += rc;
-                            CHECK("length", emitted == out_frames(n, in_rate, out_rate),
+                            CHECK("length", emitted == outFrames(n, in_rate, out_rate),
                                   "%u -> %u, %u ch, N=%lld: total output %lld, expected %lld",
                                   (unsigned)in_rate, (unsigned)out_rate, (unsigned)ch,
                                   (long long)n, (long long)emitted,
-                                  (long long)out_frames(n, in_rate, out_rate));
+                                  (long long)outFrames(n, in_rate, out_rate));
                         }
                     }
                     vt->destroy(ctx);
@@ -395,7 +395,7 @@ static void check_length(void) {
     }
 }
 
-static void check_alignment(void) {
+static void checkAlignment(void) {
     for (size_t p = 0; p < PAIR_COUNT; p++) {
         uint32_t in_rate = kPairs[p].in_rate;
         uint32_t out_rate = kPairs[p].out_rate;
@@ -405,29 +405,29 @@ static void check_alignment(void) {
             float *in = (float *)xmalloc((size_t)(n * ch) * sizeof(float));
             for (int64_t k = 0; k < n; k++) {
                 for (uint16_t i = 0; i < ch; i++) {
-                    in[k * ch + i] = (float)tone(k, channel_freq(i), in_rate);
+                    in[k * ch + i] = (float)tone(k, channelFreq(i), in_rate);
                 }
             }
-            float *out = (float *)xmalloc((size_t)(out_frames(n, in_rate, out_rate) * ch + 1) *
+            float *out = (float *)xmalloc((size_t)(outFrames(n, in_rate, out_rate) * ch + 1) *
                                           sizeof(float));
-            void *ctx = create_ctx(in_rate, out_rate, ch);
+            void *ctx = createCtx(in_rate, out_rate, ch);
             if (ctx != NULL) {
                 const int64_t blocks[] = {4096};
-                int64_t total = run_stream(ctx, in, n, ch, in_rate, out_rate, blocks, 1, 0, out);
+                int64_t total = runStream(ctx, in, n, ch, in_rate, out_rate, blocks, 1, 0, out);
                 vt->destroy(ctx);
-                int64_t expected = out_frames(n, in_rate, out_rate);
+                int64_t expected = outFrames(n, in_rate, out_rate);
                 /* A wrong total length is the length check's finding, not this one's. */
                 if (total > expected) {
                     total = expected;
                 }
-                /* A negative total is a runtime failure that run_stream has reported. */
+                /* A negative total is a runtime failure that runStream has reported. */
                 if (total >= 0) {
                     double worst = 0.0;
                     int64_t worst_at = 0;
                     for (int64_t m = MARGIN_FRAMES; m < total - MARGIN_FRAMES; m++) {
                         for (uint16_t i = 0; i < ch; i++) {
                             double err = fabs((double)out[m * ch + i] -
-                                              tone(m, channel_freq(i), out_rate));
+                                              tone(m, channelFreq(i), out_rate));
                             if (err > worst) {
                                 worst = err;
                                 worst_at = m;
@@ -451,7 +451,7 @@ static void check_alignment(void) {
     }
 }
 
-static void check_split(void) {
+static void checkSplit(void) {
     static const int64_t kBlocks[] = {1, 7, 4096, 333, 2058, 5, 1000, 64};
     const int64_t n = 20000;
     for (size_t p = 0; p < PAIR_COUNT; p++) {
@@ -459,15 +459,15 @@ static void check_split(void) {
         uint32_t out_rate = kPairs[p].out_rate;
         for (size_t c = 0; c < CHANNEL_COUNTS; c++) {
             uint16_t ch = kChannelCounts[c];
-            float *in = make_noise(n, ch, 0x2545f491u);
+            float *in = makeNoise(n, ch, 0x2545f491u);
             float *whole = NULL;
-            int64_t whole_n = reference_run(in, n, ch, in_rate, out_rate, &whole);
-            float *split = (float *)xmalloc((size_t)(out_frames(n, in_rate, out_rate) * ch + 1) *
+            int64_t whole_n = referenceRun(in, n, ch, in_rate, out_rate, &whole);
+            float *split = (float *)xmalloc((size_t)(outFrames(n, in_rate, out_rate) * ch + 1) *
                                             sizeof(float));
-            void *ctx = create_ctx(in_rate, out_rate, ch);
+            void *ctx = createCtx(in_rate, out_rate, ch);
             if (ctx != NULL && whole_n >= 0) {
-                int64_t split_n = run_stream(ctx, in, n, ch, in_rate, out_rate, kBlocks,
-                                             sizeof(kBlocks) / sizeof(kBlocks[0]), 1, split);
+                int64_t split_n = runStream(ctx, in, n, ch, in_rate, out_rate, kBlocks,
+                                            sizeof(kBlocks) / sizeof(kBlocks[0]), 1, split);
                 if (split_n >= 0) {
                     CHECK("split",
                           split_n == whole_n &&
@@ -487,7 +487,7 @@ static void check_split(void) {
     }
 }
 
-static void check_pending(void) {
+static void checkPending(void) {
     static const int64_t kBlocks[] = {1, 100, 0, 5000, 7, 0, 333};
     for (size_t p = 0; p < PAIR_COUNT; p++) {
         uint32_t in_rate = kPairs[p].in_rate;
@@ -498,10 +498,10 @@ static void check_pending(void) {
             for (size_t b = 0; b < sizeof(kBlocks) / sizeof(kBlocks[0]); b++) {
                 total_in += kBlocks[b];
             }
-            float *in = make_noise(total_in, ch, 3);
-            float *out = (float *)xmalloc((size_t)(out_frames(total_in, in_rate, out_rate) * ch + 1) *
+            float *in = makeNoise(total_in, ch, 3);
+            float *out = (float *)xmalloc((size_t)(outFrames(total_in, in_rate, out_rate) * ch + 1) *
                                           sizeof(float));
-            void *ctx = create_ctx(in_rate, out_rate, ch);
+            void *ctx = createCtx(in_rate, out_rate, ch);
             if (ctx != NULL) {
                 int64_t pending = vt->pending_frames(ctx);
                 int ok = RUNTIME_OK(pending, "pending_frames");
@@ -514,7 +514,7 @@ static void check_pending(void) {
                 int64_t fed = 0;
                 int64_t emitted = 0;
                 for (size_t b = 0; ok && b < sizeof(kBlocks) / sizeof(kBlocks[0]); b++) {
-                    int64_t cap = out_frames(fed + kBlocks[b], in_rate, out_rate) - emitted;
+                    int64_t cap = outFrames(fed + kBlocks[b], in_rate, out_rate) - emitted;
                     int64_t rc = vt->process(ctx, in + fed * ch, kBlocks[b], out + emitted * ch,
                                              cap);
                     ok = RUNTIME_OK(rc, "process") && WITHIN_CAP("runtime", rc, cap, "process");
@@ -528,7 +528,7 @@ static void check_pending(void) {
                     if (!ok) {
                         break;
                     }
-                    int64_t expected = out_frames(fed, in_rate, out_rate) - emitted;
+                    int64_t expected = outFrames(fed, in_rate, out_rate) - emitted;
                     CHECK("pending", pending == expected,
                           "%u -> %u, %u ch: pending_frames is %lld after %lld fed, expected %lld",
                           (unsigned)in_rate, (unsigned)out_rate, (unsigned)ch,
@@ -538,7 +538,7 @@ static void check_pending(void) {
                           (unsigned)in_rate, (unsigned)out_rate, (unsigned)ch, (long long)fed);
                 }
                 if (ok) {
-                    int64_t cap = out_frames(fed, in_rate, out_rate) - emitted;
+                    int64_t cap = outFrames(fed, in_rate, out_rate) - emitted;
                     int64_t rc = vt->flush(ctx, out + emitted * ch, cap);
                     /* After a failed call only destroy is valid on the context. */
                     ok = RUNTIME_OK(rc, "flush") && WITHIN_CAP("runtime", rc, cap, "flush");
@@ -570,7 +570,7 @@ static void check_pending(void) {
     }
 }
 
-static void check_reset(void) {
+static void checkReset(void) {
     const int64_t n_a = 3000;
     const int64_t n_b = 5000;
     for (size_t p = 0; p < PAIR_COUNT; p++) {
@@ -578,16 +578,16 @@ static void check_reset(void) {
         uint32_t out_rate = kPairs[p].out_rate;
         for (size_t c = 0; c < CHANNEL_COUNTS; c++) {
             uint16_t ch = kChannelCounts[c];
-            float *in_a = make_noise(n_a, ch, 11);
-            float *in_b = make_noise(n_b, ch, 22);
+            float *in_a = makeNoise(n_a, ch, 11);
+            float *in_b = makeNoise(n_b, ch, 22);
             float *reference = NULL;
-            int64_t ref_n = reference_run(in_b, n_b, ch, in_rate, out_rate, &reference);
+            int64_t ref_n = referenceRun(in_b, n_b, ch, in_rate, out_rate, &reference);
             float *scratch = (float *)xmalloc(
-                (size_t)(out_frames(n_a > n_b ? n_a : n_b, in_rate, out_rate) * ch + 1) *
+                (size_t)(outFrames(n_a > n_b ? n_a : n_b, in_rate, out_rate) * ch + 1) *
                 sizeof(float));
-            float *got = (float *)xmalloc((size_t)(out_frames(n_b, in_rate, out_rate) * ch + 1) *
+            float *got = (float *)xmalloc((size_t)(outFrames(n_b, in_rate, out_rate) * ch + 1) *
                                           sizeof(float));
-            void *ctx = create_ctx(in_rate, out_rate, ch);
+            void *ctx = createCtx(in_rate, out_rate, ch);
             if (ctx != NULL && ref_n >= 0) {
                 /* 0: fresh, 1: mid-run (unflushed), 2: flushed. */
                 for (int state = 0; state < 3; state++) {
@@ -597,18 +597,18 @@ static void check_reset(void) {
                         ok = RUNTIME_OK(vt->reset(ctx), "reset");
                     }
                     if (ok && state == 1) {
-                        int64_t cap = out_frames(n_a - 1000, in_rate, out_rate);
+                        int64_t cap = outFrames(n_a - 1000, in_rate, out_rate);
                         int64_t rc = vt->process(ctx, in_a, n_a - 1000, scratch, cap);
                         ok = RUNTIME_OK(rc, "process") && WITHIN_CAP("runtime", rc, cap, "process");
                     } else if (ok && state == 2) {
-                        ok = run_stream(ctx, in_a, n_a, ch, in_rate, out_rate, NULL, 0, 0,
-                                        scratch) >= 0;
+                        ok = runStream(ctx, in_a, n_a, ch, in_rate, out_rate, NULL, 0, 0,
+                                       scratch) >= 0;
                     }
                     if (!ok || !RUNTIME_OK(vt->reset(ctx), "reset")) {
                         break;
                     }
-                    int64_t got_n = run_stream(ctx, in_b, n_b, ch, in_rate, out_rate, NULL, 0, 0,
-                                               got);
+                    int64_t got_n = runStream(ctx, in_b, n_b, ch, in_rate, out_rate, NULL, 0, 0,
+                                              got);
                     if (got_n < 0) {
                         break;
                     }
@@ -632,30 +632,30 @@ static void check_reset(void) {
     }
 }
 
-static void check_state(void) {
+static void checkState(void) {
     for (size_t p = 0; p < PAIR_COUNT; p++) {
         uint32_t in_rate = kPairs[p].in_rate;
         uint32_t out_rate = kPairs[p].out_rate;
         for (size_t c = 0; c < CHANNEL_COUNTS; c++) {
             uint16_t ch = kChannelCounts[c];
             const int64_t n = 500;
-            float *in = make_noise(n, ch, 5);
+            float *in = makeNoise(n, ch, 5);
             /* Room for any call below: two runs of n frames. */
-            float *out = (float *)xmalloc((size_t)(out_frames(2 * n, in_rate, out_rate) * ch + 1) *
+            float *out = (float *)xmalloc((size_t)(outFrames(2 * n, in_rate, out_rate) * ch + 1) *
                                           sizeof(float));
-            void *ctx = create_ctx(in_rate, out_rate, ch);
+            void *ctx = createCtx(in_rate, out_rate, ch);
             if (ctx != NULL) {
-                if (run_stream(ctx, in, n, ch, in_rate, out_rate, NULL, 0, 0, out) >= 0) {
-                    int64_t rc = vt->process(ctx, in, n, out, out_frames(n, in_rate, out_rate));
+                if (runStream(ctx, in, n, ch, in_rate, out_rate, NULL, 0, 0, out) >= 0) {
+                    int64_t rc = vt->process(ctx, in, n, out, outFrames(n, in_rate, out_rate));
                     CHECK("state", rc == KN_ERR_STATE,
                           "%u -> %u, %u ch: process after flush returned %lld, expected KN_ERR_STATE",
                           (unsigned)in_rate, (unsigned)out_rate, (unsigned)ch, (long long)rc);
-                    rc = vt->flush(ctx, out, out_frames(n, in_rate, out_rate));
+                    rc = vt->flush(ctx, out, outFrames(n, in_rate, out_rate));
                     CHECK("state", rc == 0,
                           "%u -> %u, %u ch: second flush returned %lld, expected 0",
                           (unsigned)in_rate, (unsigned)out_rate, (unsigned)ch, (long long)rc);
                     if (RUNTIME_OK(vt->reset(ctx), "reset")) {
-                        int64_t cap = out_frames(n, in_rate, out_rate);
+                        int64_t cap = outFrames(n, in_rate, out_rate);
                         rc = vt->process(ctx, in, n, out, cap);
                         if (RUNTIME_OK(rc, "process after reset")) {
                             WITHIN_CAP("runtime", rc, cap, "process after reset");
@@ -670,7 +670,7 @@ static void check_state(void) {
     }
 }
 
-static void check_capacity(void) {
+static void checkCapacity(void) {
     const int64_t n = 1000;
     const int64_t guard = 64;
     for (size_t p = 0; p < PAIR_COUNT; p++) {
@@ -678,17 +678,17 @@ static void check_capacity(void) {
         uint32_t out_rate = kPairs[p].out_rate;
         for (size_t c = 0; c < CHANNEL_COUNTS; c++) {
             uint16_t ch = kChannelCounts[c];
-            float *in = make_noise(n, ch, 9);
+            float *in = makeNoise(n, ch, 9);
             float *reference = NULL;
-            int64_t ref_n = reference_run(in, n, ch, in_rate, out_rate, &reference);
-            int64_t required = out_frames(n, in_rate, out_rate);
+            int64_t ref_n = referenceRun(in, n, ch, in_rate, out_rate, &reference);
+            int64_t required = outFrames(n, in_rate, out_rate);
             /* Output buffer of exactly the run's size, followed by a guard region. */
             size_t total_samples = (size_t)((required + guard) * ch);
             float *buf = (float *)xmalloc(total_samples * sizeof(float));
             memset(buf, 0xA5, total_samples * sizeof(float));
             unsigned char *sentinel = (unsigned char *)xmalloc(total_samples * sizeof(float));
             memset(sentinel, 0xA5, total_samples * sizeof(float));
-            void *ctx = create_ctx(in_rate, out_rate, ch);
+            void *ctx = createCtx(in_rate, out_rate, ch);
             if (ctx != NULL && ref_n >= 0) {
                 /* One frame short: rejected, nothing written beyond the capacity, nothing consumed. */
                 int64_t rc = vt->process(ctx, in, n, buf, required - 1);
@@ -752,19 +752,19 @@ static void check_capacity(void) {
     }
 }
 
-static void check_drift(void) {
+static void checkDrift(void) {
     const uint32_t in_rate = 44100;
     const uint32_t out_rate = 48000;
     const int64_t total_in = 10000000;
     const int64_t block = 65536;
-    const int64_t total_out = out_frames(total_in, in_rate, out_rate);
+    const int64_t total_out = outFrames(total_in, in_rate, out_rate);
     const int64_t window_end = total_out - MARGIN_FRAMES;
     const int64_t window_start = window_end - 16000;
 
     float *in = (float *)xmalloc((size_t)block * sizeof(float));
-    int64_t out_cap = out_frames(block, in_rate, out_rate) + 2;
+    int64_t out_cap = outFrames(block, in_rate, out_rate) + 2;
     float *out = (float *)xmalloc((size_t)out_cap * sizeof(float));
-    void *ctx = create_ctx(in_rate, out_rate, 1);
+    void *ctx = createCtx(in_rate, out_rate, 1);
     if (ctx == NULL) {
         free(in);
         free(out);
@@ -780,7 +780,7 @@ static void check_drift(void) {
         /* The extra iteration at fed == total_in is the flush. */
         int64_t n = total_in - fed < block ? total_in - fed : block;
         int64_t rc;
-        int64_t cap = out_frames(fed + n, in_rate, out_rate) - emitted;
+        int64_t cap = outFrames(fed + n, in_rate, out_rate) - emitted;
         /* A plugin may hold output back, so the capacity passed can exceed one block's worth. */
         if (cap > out_cap) {
             free(out);
@@ -830,7 +830,7 @@ static void check_drift(void) {
 
 /* ---- main --------------------------------------------------------------- */
 
-static void run_check(const char *tag, void (*check)(void)) {
+static void runCheck(const char *tag, void (*check)(void)) {
     int before = failures;
     check();
     if (failures == before) {
@@ -844,19 +844,19 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    lib_handle lib = lib_open(argv[1]);
+    LibHandle lib = libOpen(argv[1]);
     if (lib == NULL) {
         FAIL("entry", "cannot load %s", argv[1]);
         return 1;
     }
-    kn_dsp_entry_fn entry = (kn_dsp_entry_fn)lib_sym(lib, "kn_dsp_entry");
+    kn_dsp_entry_fn entry = (kn_dsp_entry_fn)libSym(lib, "kn_dsp_entry");
     if (entry == NULL) {
         FAIL("entry", "kn_dsp_entry is not exported");
         return 1;
     }
 
     int before = failures;
-    const kn_dsp_plugin *plugin = check_entry(entry);
+    const kn_dsp_plugin *plugin = checkEntry(entry);
     if (failures == before) {
         printf("ok   [entry]\n");
     }
@@ -865,15 +865,15 @@ int main(int argc, char **argv) {
     }
     printf("plugin %s (%s)\n", plugin->id, plugin->name);
 
-    run_check("create", check_create);
-    run_check("length", check_length);
-    run_check("alignment", check_alignment);
-    run_check("split", check_split);
-    run_check("pending", check_pending);
-    run_check("reset", check_reset);
-    run_check("state", check_state);
-    run_check("capacity", check_capacity);
-    run_check("drift", check_drift);
+    runCheck("create", checkCreate);
+    runCheck("length", checkLength);
+    runCheck("alignment", checkAlignment);
+    runCheck("split", checkSplit);
+    runCheck("pending", checkPending);
+    runCheck("reset", checkReset);
+    runCheck("state", checkState);
+    runCheck("capacity", checkCapacity);
+    runCheck("drift", checkDrift);
 
     if (failures == 0) {
         printf("all checks passed\n");

@@ -18,23 +18,23 @@
 
 #ifdef _WIN32
 #include <windows.h>
-typedef HMODULE lib_handle;
-static lib_handle lib_open(const char *path) { return LoadLibraryA(path); }
-static void *lib_sym(lib_handle h, const char *name) {
+typedef HMODULE LibHandle;
+static LibHandle libOpen(const char *path) { return LoadLibraryA(path); }
+static void *libSym(LibHandle h, const char *name) {
     return (void *)GetProcAddress(h, name);
 }
-static int make_absolute(const char *path, char *out, size_t size) {
+static int makeAbsolute(const char *path, char *out, size_t size) {
     DWORD n = GetFullPathNameA(path, (DWORD)size, out, NULL);
     return n > 0 && n < size;
 }
 #else
 #include <dlfcn.h>
 #include <unistd.h>
-typedef void *lib_handle;
-static lib_handle lib_open(const char *path) { return dlopen(path, RTLD_NOW); }
-static void *lib_sym(lib_handle h, const char *name) { return dlsym(h, name); }
+typedef void *LibHandle;
+static LibHandle libOpen(const char *path) { return dlopen(path, RTLD_NOW); }
+static void *libSym(LibHandle h, const char *name) { return dlsym(h, name); }
 /* Unlike realpath, this also works for a file that does not exist. */
-static int make_absolute(const char *path, char *out, size_t size) {
+static int makeAbsolute(const char *path, char *out, size_t size) {
     if (path[0] == '/') {
         return snprintf(out, size, "%s", path) < (int)size;
     }
@@ -48,34 +48,34 @@ static int make_absolute(const char *path, char *out, size_t size) {
 
 /* ---- resolved backend entry points ------------------------------------ */
 
-typedef kn_result (*fn_engine_create)(const kn_engine_config *, kn_engine **);
-typedef void (*fn_engine_destroy)(kn_engine *);
-typedef const char *(*fn_engine_last_error)(kn_engine *);
-typedef kn_result (*fn_get_position)(kn_engine *, kn_position *);
-typedef size_t (*fn_poll_event)(kn_engine *, kn_event *, size_t);
-typedef kn_result (*fn_devices_enumerate)(kn_engine *, const kn_device_info **, size_t *);
-typedef kn_result (*fn_open_device)(kn_engine *, const char *, kn_share_mode,
-                                    const kn_stream_format *, kn_stream_format *);
-typedef kn_result (*fn_close_device)(kn_engine *);
-typedef kn_result (*fn_probe)(kn_engine *, const char *, kn_probe_result *);
-typedef kn_result (*fn_register_dsp_library)(kn_engine *, const char *);
-typedef kn_result (*fn_dsp_enumerate)(kn_engine *, const kn_dsp_info **, size_t *);
-typedef void (*fn_dsp_free)(kn_engine *);
-typedef kn_result (*fn_engine_set_resampler)(kn_engine *, const char *);
+typedef kn_result (*EngineCreateFn)(const kn_engine_config *, kn_engine **);
+typedef void (*EngineDestroyFn)(kn_engine *);
+typedef const char *(*EngineLastErrorFn)(kn_engine *);
+typedef kn_result (*GetPositionFn)(kn_engine *, kn_position *);
+typedef size_t (*PollEventFn)(kn_engine *, kn_event *, size_t);
+typedef kn_result (*DevicesEnumerateFn)(kn_engine *, const kn_device_info **, size_t *);
+typedef kn_result (*OpenDeviceFn)(kn_engine *, const char *, kn_share_mode,
+                                  const kn_stream_format *, kn_stream_format *);
+typedef kn_result (*CloseDeviceFn)(kn_engine *);
+typedef kn_result (*ProbeFn)(kn_engine *, const char *, kn_probe_result *);
+typedef kn_result (*RegisterDspLibraryFn)(kn_engine *, const char *);
+typedef kn_result (*DspEnumerateFn)(kn_engine *, const kn_dsp_info **, size_t *);
+typedef void (*DspFreeFn)(kn_engine *);
+typedef kn_result (*EngineSetResamplerFn)(kn_engine *, const char *);
 
-static fn_engine_create p_create;
-static fn_engine_destroy p_destroy;
-static fn_engine_last_error p_last_error;
-static fn_get_position p_get_position;
-static fn_poll_event p_poll_event;
-static fn_devices_enumerate p_devices_enumerate;
-static fn_open_device p_open_device;
-static fn_close_device p_close_device;
-static fn_probe p_probe;
-static fn_register_dsp_library p_register_dsp_library;
-static fn_dsp_enumerate p_dsp_enumerate;
-static fn_dsp_free p_dsp_free;
-static fn_engine_set_resampler p_engine_set_resampler;
+static EngineCreateFn p_create;
+static EngineDestroyFn p_destroy;
+static EngineLastErrorFn p_last_error;
+static GetPositionFn p_get_position;
+static PollEventFn p_poll_event;
+static DevicesEnumerateFn p_devices_enumerate;
+static OpenDeviceFn p_open_device;
+static CloseDeviceFn p_close_device;
+static ProbeFn p_probe;
+static RegisterDspLibraryFn p_register_dsp_library;
+static DspEnumerateFn p_dsp_enumerate;
+static DspFreeFn p_dsp_free;
+static EngineSetResamplerFn p_engine_set_resampler;
 
 /* ---- tiny test harness ------------------------------------------------- */
 
@@ -91,7 +91,7 @@ static int failures = 0;
         }                                                      \
     } while (0)
 
-static kn_engine_config default_config(void) {
+static kn_engine_config defaultConfig(void) {
     kn_engine_config cfg;
     memset(&cfg, 0, sizeof(cfg));
     cfg.abi_version = KN_ABI_VERSION;
@@ -102,8 +102,8 @@ static kn_engine_config default_config(void) {
 
 /* ---- tests ------------------------------------------------------------- */
 
-static void test_version_negotiation(void) {
-    kn_engine_config cfg = default_config();
+static void testVersionNegotiation(void) {
+    kn_engine_config cfg = defaultConfig();
     cfg.abi_version = 0xDEAD;
     kn_engine *e = NULL;
     CHECK(p_create(&cfg, &e) == KN_ERR_ABI_MISMATCH,
@@ -113,13 +113,13 @@ static void test_version_negotiation(void) {
     CHECK(msg != NULL && msg[0] != '\0', "last_error carries detail after mismatch");
 }
 
-static void test_argument_validation(void) {
+static void testArgumentValidation(void) {
     CHECK(p_create(NULL, NULL) == KN_ERR_INVALID_ARG,
           "create rejects null arguments with KN_ERR_INVALID_ARG");
 }
 
-static void test_lifecycle_and_idle_contract(void) {
-    kn_engine_config cfg = default_config();
+static void testLifecycleAndIdleContract(void) {
+    kn_engine_config cfg = defaultConfig();
     kn_engine *e = NULL;
     CHECK(p_create(&cfg, &e) == KN_OK, "create succeeds for ABI v1");
     CHECK(e != NULL, "engine handle is non-null");
@@ -155,10 +155,10 @@ static void test_lifecycle_and_idle_contract(void) {
     printf("ok   destroy(NULL) is a no-op\n");
 }
 
-static void test_dither_modes(void) {
+static void testDitherModes(void) {
     /* 0 = off, 1 = always (unchanged), 2 = resampled tracks only. */
     for (int mode = 0; mode <= 2; mode++) {
-        kn_engine_config cfg = default_config();
+        kn_engine_config cfg = defaultConfig();
         cfg.dither_to_int = mode;
         kn_engine *e = NULL;
         char msg[64];
@@ -170,11 +170,11 @@ static void test_dither_modes(void) {
     }
 }
 
-static void test_probe(const char *fixtures_dir) {
+static void testProbe(const char *fixtures_dir) {
     char path[1024];
     snprintf(path, sizeof(path), "%s/fixture.flac", fixtures_dir);
 
-    kn_engine_config cfg = default_config();
+    kn_engine_config cfg = defaultConfig();
     kn_engine *e = NULL;
     if (p_create(&cfg, &e) != KN_OK) {
         CHECK(0, "probe: engine creation failed");
@@ -196,8 +196,8 @@ static void test_probe(const char *fixtures_dir) {
     p_destroy(e);
 }
 
-static void test_device_open(void) {
-    kn_engine_config cfg = default_config();
+static void testDeviceOpen(void) {
+    kn_engine_config cfg = defaultConfig();
     kn_engine *e = NULL;
     if (p_create(&cfg, &e) != KN_OK) {
         CHECK(0, "device: engine creation failed");
@@ -238,8 +238,8 @@ static void test_device_open(void) {
     p_destroy(e);
 }
 
-static void test_dsp_registration(const char *backend_path, const char *plugin_path) {
-    kn_engine_config cfg = default_config();
+static void testDspRegistration(const char *backend_path, const char *plugin_path) {
+    kn_engine_config cfg = defaultConfig();
     kn_engine *e = NULL;
     if (p_create(&cfg, &e) != KN_OK) {
         CHECK(0, "dsp: engine creation failed");
@@ -259,7 +259,7 @@ static void test_dsp_registration(const char *backend_path, const char *plugin_p
           "register_dsp_library rejects a relative path with KN_ERR_INVALID_ARG");
 
     char missing[1024];
-    if (make_absolute("no-such-plugin.dll", missing, sizeof(missing))) {
+    if (makeAbsolute("no-such-plugin.dll", missing, sizeof(missing))) {
         CHECK(p_register_dsp_library(e, missing) == KN_ERR_IO,
               "register_dsp_library reports KN_ERR_IO for a missing file");
     } else {
@@ -267,7 +267,7 @@ static void test_dsp_registration(const char *backend_path, const char *plugin_p
     }
 
     char backend[1024];
-    if (make_absolute(backend_path, backend, sizeof(backend))) {
+    if (makeAbsolute(backend_path, backend, sizeof(backend))) {
         CHECK(p_register_dsp_library(e, backend) == KN_ERR_FORMAT,
               "register_dsp_library reports KN_ERR_FORMAT for a library without kn_dsp_entry");
     } else {
@@ -290,7 +290,7 @@ static void test_dsp_registration(const char *backend_path, const char *plugin_p
     }
 
     char plugin[1024];
-    if (!make_absolute(plugin_path, plugin, sizeof(plugin))) {
+    if (!makeAbsolute(plugin_path, plugin, sizeof(plugin))) {
         CHECK(0, "dsp: cannot make the plugin path absolute");
         p_destroy(e);
         return;
@@ -332,7 +332,7 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    lib_handle lib = lib_open(argv[1]);
+    LibHandle lib = libOpen(argv[1]);
     if (!lib) {
         fprintf(stderr, "cannot load backend: %s\n", argv[1]);
         return 2;
@@ -357,7 +357,7 @@ int main(int argc, char **argv) {
         {"kn_engine_set_resampler", (void **)&p_engine_set_resampler},
     };
     for (size_t i = 0; i < sizeof(symbols) / sizeof(symbols[0]); i++) {
-        *symbols[i].slot = lib_sym(lib, symbols[i].name);
+        *symbols[i].slot = libSym(lib, symbols[i].name);
         if (*symbols[i].slot == NULL) {
             printf("FAIL missing export: %s\n", symbols[i].name);
             failures++;
@@ -369,17 +369,17 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    test_version_negotiation();
-    test_argument_validation();
-    test_lifecycle_and_idle_contract();
-    test_dither_modes();
-    test_device_open();
+    testVersionNegotiation();
+    testArgumentValidation();
+    testLifecycleAndIdleContract();
+    testDitherModes();
+    testDeviceOpen();
     if (argc >= 3) {
-        test_probe(argv[2]);
+        testProbe(argv[2]);
     } else {
         printf("skip probe tests: no fixtures directory given\n");
     }
-    test_dsp_registration(argv[1], argc == 4 ? argv[3] : NULL);
+    testDspRegistration(argv[1], argc == 4 ? argv[3] : NULL);
 
     printf(failures ? "\n%d FAILURE(S)\n" : "\nall tests passed\n", failures);
     return failures ? 1 : 0;
