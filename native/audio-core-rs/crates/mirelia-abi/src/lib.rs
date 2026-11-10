@@ -8,7 +8,7 @@
 //! Implemented: device enumeration, shared and exclusive playback,
 //! transport, seek, volume, probe, loudness scan, and DSP (resampler) plugins
 //! on Windows. Decoder and output plugin registration returns
-//! `KN_ERR_UNSUPPORTED`; it is post-v1.
+//! `MireliaErrUnsupported`; it is post-v1.
 
 pub mod dsp;
 
@@ -23,42 +23,42 @@ use mirelia_audio::output::{OutputBackend, StreamFormat};
 use mirelia_audio::resample::ResamplerFactory;
 use mirelia_audio::{DitherMode, Engine, EngineConfig, State};
 
-use dsp::KnDspInfo;
+use dsp::MireliaDspInfo;
 
-// ---- kn_result ---------------------------------------------------------
+// ---- MireliaResult -----------------------------------------------------
 
-/// `kn_result` values. Mirrors `audio_core.h`; the header is the documentation.
+/// `MireliaResult` values. Mirrors `audio_core.h`; the header is the documentation.
 #[allow(missing_docs)]
 pub mod result {
-    pub const KN_OK: i32 = 0;
-    pub const KN_ERR_INVALID_ARG: i32 = -1;
-    pub const KN_ERR_UNSUPPORTED: i32 = -2;
-    pub const KN_ERR_DEVICE_LOST: i32 = -3;
-    pub const KN_ERR_DEVICE_BUSY: i32 = -4;
-    pub const KN_ERR_DECODE: i32 = -5;
-    pub const KN_ERR_IO: i32 = -6;
-    pub const KN_ERR_FORMAT: i32 = -7;
-    pub const KN_ERR_STATE: i32 = -8;
-    pub const KN_ERR_OOM: i32 = -9;
-    pub const KN_ERR_ABI_MISMATCH: i32 = -10;
-    pub const KN_ERR_PLUGIN: i32 = -11;
-    pub const KN_ERR_INTERNAL: i32 = -99;
+    pub const MIRELIA_OK: i32 = 0;
+    pub const MIRELIA_ERR_INVALID_ARG: i32 = -1;
+    pub const MIRELIA_ERR_UNSUPPORTED: i32 = -2;
+    pub const MIRELIA_ERR_DEVICE_LOST: i32 = -3;
+    pub const MIRELIA_ERR_DEVICE_BUSY: i32 = -4;
+    pub const MIRELIA_ERR_DECODE: i32 = -5;
+    pub const MIRELIA_ERR_IO: i32 = -6;
+    pub const MIRELIA_ERR_FORMAT: i32 = -7;
+    pub const MIRELIA_ERR_STATE: i32 = -8;
+    pub const MIRELIA_ERR_OOM: i32 = -9;
+    pub const MIRELIA_ERR_ABI_MISMATCH: i32 = -10;
+    pub const MIRELIA_ERR_PLUGIN: i32 = -11;
+    pub const MIRELIA_ERR_INTERNAL: i32 = -99;
 }
 use result::*;
 
-/// The ABI version this backend implements (`KN_ABI_VERSION`).
-pub const KN_ABI_VERSION: u32 = 1;
+/// The ABI version this backend implements (`MIRELIA_ABI_VERSION`).
+pub const MIRELIA_ABI_VERSION: u32 = 1;
 
 // ---- C struct mirrors --------------------------------------------------
 
-/// Mirrors of the `kn_*` structs. Layouts must match `audio_core.h` exactly;
+/// Mirrors of the `audio_core.h` structs. Layouts must match the header exactly;
 /// the header is the documentation.
 #[allow(missing_docs)]
 pub mod types {
     use std::ffi::c_char;
 
     #[repr(C)]
-    pub struct KnEngineConfig {
+    pub struct MireliaEngineConfig {
         pub abi_version: u32,
         pub target_latency_ms: u32,
         pub decode_ahead_ms: u32,
@@ -67,7 +67,7 @@ pub mod types {
     }
 
     #[repr(C)]
-    pub struct KnStreamFormat {
+    pub struct MireliaStreamFormat {
         pub sample_rate: u32,
         pub channels: u16,
         pub format: i32,
@@ -75,7 +75,7 @@ pub mod types {
     }
 
     #[repr(C)]
-    pub struct KnDeviceInfo {
+    pub struct MireliaDeviceInfo {
         pub id: *const c_char,
         pub name: *const c_char,
         pub backend: *const c_char,
@@ -90,7 +90,7 @@ pub mod types {
     }
 
     #[repr(C)]
-    pub struct KnLoadParams {
+    pub struct MireliaLoadParams {
         pub path: *const c_char,
         pub start_frame: i64,
         pub end_frame: i64,
@@ -102,7 +102,7 @@ pub mod types {
     }
 
     #[repr(C)]
-    pub struct KnPosition {
+    pub struct MireliaPosition {
         pub state: i32,
         pub user_token: u64,
         pub frame: i64,
@@ -113,7 +113,7 @@ pub mod types {
     }
 
     #[repr(C)]
-    pub struct KnEvent {
+    pub struct MireliaEvent {
         pub event_type: i32,
         pub user_token: u64,
         pub code: i32,
@@ -121,7 +121,7 @@ pub mod types {
     }
 
     #[repr(C)]
-    pub struct KnProbeResult {
+    pub struct MireliaProbeResult {
         pub sample_rate: u32,
         pub channels: u16,
         pub bit_depth: u16,
@@ -195,17 +195,17 @@ struct RegisteredDsp {
     factory: Arc<dyn ResamplerFactory>,
 }
 
-/// The opaque `kn_engine`: the engine plus ABI-side snapshot storage.
-pub struct KnEngine {
+/// The opaque `MireliaEngine`: the engine plus ABI-side snapshot storage.
+pub struct MireliaEngine {
     // First, so its `Drop` joins the decode worker before the registry (and with
     // it the last reference to a plugin library) is released.
     engine: Engine,
     /// Device snapshot backing storage; pointers in `device_infos` point here.
     device_strings: Vec<CString>,
-    device_infos: Vec<KnDeviceInfo>,
+    device_infos: Vec<MireliaDeviceInfo>,
     /// Registered DSP plugins. The strings that `dsp_infos` points to live here.
     dsp_plugins: Vec<RegisteredDsp>,
-    dsp_infos: Vec<KnDspInfo>,
+    dsp_infos: Vec<MireliaDspInfo>,
 }
 
 // ---- last-error storage ------------------------------------------------
@@ -229,24 +229,24 @@ fn fail(code: i32, msg: &str) -> i32 {
 fn engine_err(e: &EngineError) -> i32 {
     set_last_error(&e.to_string());
     match e {
-        EngineError::InvalidArg(_) => KN_ERR_INVALID_ARG,
-        EngineError::Unsupported(_) => KN_ERR_UNSUPPORTED,
-        EngineError::DeviceLost(_) => KN_ERR_DEVICE_LOST,
-        EngineError::DeviceBusy(_) => KN_ERR_DEVICE_BUSY,
-        EngineError::Decode(_) => KN_ERR_DECODE,
-        EngineError::Io(_) => KN_ERR_IO,
-        EngineError::Format(_) => KN_ERR_FORMAT,
-        EngineError::State(_) => KN_ERR_STATE,
-        EngineError::Internal(_) => KN_ERR_INTERNAL,
+        EngineError::InvalidArg(_) => MIRELIA_ERR_INVALID_ARG,
+        EngineError::Unsupported(_) => MIRELIA_ERR_UNSUPPORTED,
+        EngineError::DeviceLost(_) => MIRELIA_ERR_DEVICE_LOST,
+        EngineError::DeviceBusy(_) => MIRELIA_ERR_DEVICE_BUSY,
+        EngineError::Decode(_) => MIRELIA_ERR_DECODE,
+        EngineError::Io(_) => MIRELIA_ERR_IO,
+        EngineError::Format(_) => MIRELIA_ERR_FORMAT,
+        EngineError::State(_) => MIRELIA_ERR_STATE,
+        EngineError::Internal(_) => MIRELIA_ERR_INTERNAL,
     }
 }
 
 fn decode_err(e: &mirelia_decode::DecodeError) -> i32 {
     set_last_error(&e.to_string());
     match e {
-        mirelia_decode::DecodeError::Io(_) => KN_ERR_IO,
-        mirelia_decode::DecodeError::Unsupported(_) => KN_ERR_FORMAT,
-        mirelia_decode::DecodeError::Malformed(_) => KN_ERR_DECODE,
+        mirelia_decode::DecodeError::Io(_) => MIRELIA_ERR_IO,
+        mirelia_decode::DecodeError::Unsupported(_) => MIRELIA_ERR_FORMAT,
+        mirelia_decode::DecodeError::Malformed(_) => MIRELIA_ERR_DECODE,
     }
 }
 
@@ -263,32 +263,32 @@ unsafe fn utf8_arg(ptr: *const c_char) -> Result<Option<String>, i32> {
     unsafe { CStr::from_ptr(ptr) }
         .to_str()
         .map(|s| Some(s.to_owned()))
-        .map_err(|_| fail(KN_ERR_INVALID_ARG, "string argument is not valid UTF-8"))
+        .map_err(|_| fail(MIRELIA_ERR_INVALID_ARG, "string argument is not valid UTF-8"))
 }
 
 // ---- engine lifecycle --------------------------------------------------
 
 /// Implements `mireliaEngineCreate`. Rejects any `abi_version` other than
-/// [`KN_ABI_VERSION`] with `KN_ERR_ABI_MISMATCH`.
+/// [`MIRELIA_ABI_VERSION`] with `MireliaErrAbiMismatch`.
 ///
 /// # Safety
 ///
-/// `cfg` must point to a valid `kn_engine_config`; `out` must point to
+/// `cfg` must point to a valid `MireliaEngineConfig`; `out` must point to
 /// writable storage for one pointer.
 #[unsafe(export_name = "mireliaEngineCreate")]
 pub unsafe extern "C" fn mirelia_engine_create(
-    cfg: *const KnEngineConfig,
-    out: *mut *mut KnEngine,
+    cfg: *const MireliaEngineConfig,
+    out: *mut *mut MireliaEngine,
 ) -> i32 {
     if cfg.is_null() || out.is_null() {
-        return fail(KN_ERR_INVALID_ARG, "mireliaEngineCreate: null argument");
+        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaEngineCreate: null argument");
     }
     let cfg = unsafe { &*cfg };
-    if cfg.abi_version != KN_ABI_VERSION {
+    if cfg.abi_version != MIRELIA_ABI_VERSION {
         return fail(
-            KN_ERR_ABI_MISMATCH,
+            MIRELIA_ERR_ABI_MISMATCH,
             &format!(
-                "mireliaEngineCreate: host requested ABI v{}, backend implements v{KN_ABI_VERSION}",
+                "mireliaEngineCreate: host requested ABI v{}, backend implements v{MIRELIA_ABI_VERSION}",
                 cfg.abi_version
             ),
         );
@@ -312,7 +312,7 @@ pub unsafe extern "C" fn mirelia_engine_create(
         },
         make_backend(),
     );
-    let wrapper = Box::new(KnEngine {
+    let wrapper = Box::new(MireliaEngine {
         engine,
         device_strings: Vec::new(),
         device_infos: Vec::new(),
@@ -320,7 +320,7 @@ pub unsafe extern "C" fn mirelia_engine_create(
         dsp_infos: Vec::new(),
     });
     unsafe { *out = Box::into_raw(wrapper) };
-    KN_OK
+    MIRELIA_OK
 }
 
 /// Implements `mireliaEngineDestroy`. Null is a no-op.
@@ -330,7 +330,7 @@ pub unsafe extern "C" fn mirelia_engine_create(
 /// `e` must be null or a pointer previously returned by [`mirelia_engine_create`]
 /// that has not been destroyed yet.
 #[unsafe(export_name = "mireliaEngineDestroy")]
-pub unsafe extern "C" fn mirelia_engine_destroy(e: *mut KnEngine) {
+pub unsafe extern "C" fn mirelia_engine_destroy(e: *mut MireliaEngine) {
     if !e.is_null() {
         drop(unsafe { Box::from_raw(e) });
     }
@@ -344,7 +344,7 @@ pub unsafe extern "C" fn mirelia_engine_destroy(e: *mut KnEngine) {
 /// The returned pointer must not be freed or retained past the next call
 /// into this library from the same thread.
 #[unsafe(export_name = "mireliaEngineLastError")]
-pub unsafe extern "C" fn mirelia_engine_last_error(_e: *mut KnEngine) -> *const c_char {
+pub unsafe extern "C" fn mirelia_engine_last_error(_e: *mut MireliaEngine) -> *const c_char {
     LAST_ERROR.with(|e| e.borrow().as_ptr())
 }
 
@@ -358,12 +358,12 @@ pub unsafe extern "C" fn mirelia_engine_last_error(_e: *mut KnEngine) -> *const 
 /// All pointers must be valid; `e` must be a live engine.
 #[unsafe(export_name = "mireliaDevicesEnumerate")]
 pub unsafe extern "C" fn mirelia_devices_enumerate(
-    e: *mut KnEngine,
-    out_devices: *mut *const KnDeviceInfo,
+    e: *mut MireliaEngine,
+    out_devices: *mut *const MireliaDeviceInfo,
     out_count: *mut usize,
 ) -> i32 {
     if e.is_null() || out_devices.is_null() || out_count.is_null() {
-        return fail(KN_ERR_INVALID_ARG, "mireliaDevicesEnumerate: null argument");
+        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaDevicesEnumerate: null argument");
     }
     let wrapper = unsafe { &mut *e };
 
@@ -385,7 +385,7 @@ pub unsafe extern "C" fn mirelia_devices_enumerate(
         let id_ptr = wrapper.device_strings.last().unwrap().as_ptr();
         wrapper.device_strings.push(name);
         let name_ptr = wrapper.device_strings.last().unwrap().as_ptr();
-        wrapper.device_infos.push(KnDeviceInfo {
+        wrapper.device_infos.push(MireliaDeviceInfo {
             id: id_ptr,
             name: name_ptr,
             backend: backend_ptr,
@@ -393,7 +393,7 @@ pub unsafe extern "C" fn mirelia_devices_enumerate(
             native_rate: d.native_rate,
             native_channels: d.native_channels,
             supported_rate_mask: 0,
-            supported_format_mask: 1 << 3, // KN_FMT_F32 via shared-mode mixer
+            supported_format_mask: 1 << 3, // MireliaFmtF32 via shared-mode mixer
             supports_exclusive: 0,         // Not probed yet; nothing reads it
             min_period_frames: 0,
             default_period_frames: 0,
@@ -404,7 +404,7 @@ pub unsafe extern "C" fn mirelia_devices_enumerate(
         *out_devices = wrapper.device_infos.as_ptr();
         *out_count = wrapper.device_infos.len();
     }
-    KN_OK
+    MIRELIA_OK
 }
 
 /// Implements `mireliaDevicesFree`: drops the enumeration snapshot.
@@ -413,7 +413,7 @@ pub unsafe extern "C" fn mirelia_devices_enumerate(
 ///
 /// `e` must be null or a live engine pointer.
 #[unsafe(export_name = "mireliaDevicesFree")]
-pub unsafe extern "C" fn mirelia_devices_free(e: *mut KnEngine) {
+pub unsafe extern "C" fn mirelia_devices_free(e: *mut MireliaEngine) {
     if !e.is_null() {
         let wrapper = unsafe { &mut *e };
         wrapper.device_infos.clear();
@@ -430,19 +430,19 @@ pub unsafe extern "C" fn mirelia_devices_free(e: *mut KnEngine) {
 /// Pointer arguments must be valid per the header contract.
 #[unsafe(export_name = "mireliaEngineOpenDevice")]
 pub unsafe extern "C" fn mirelia_engine_open_device(
-    e: *mut KnEngine,
+    e: *mut MireliaEngine,
     device_id: *const c_char,
     mode: i32,
-    desired: *const KnStreamFormat,
-    out_actual: *mut KnStreamFormat,
+    desired: *const MireliaStreamFormat,
+    out_actual: *mut MireliaStreamFormat,
 ) -> i32 {
     if e.is_null() {
-        return fail(KN_ERR_INVALID_ARG, "mireliaEngineOpenDevice: null engine");
+        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaEngineOpenDevice: null engine");
     }
     let share_mode = match mode {
         0 => mirelia_audio::output::ShareMode::Shared,
         1 => mirelia_audio::output::ShareMode::Exclusive,
-        _ => return fail(KN_ERR_INVALID_ARG, "mireliaEngineOpenDevice: unknown share mode"),
+        _ => return fail(MIRELIA_ERR_INVALID_ARG, "mireliaEngineOpenDevice: unknown share mode"),
     };
     let wrapper = unsafe { &mut *e };
     let id = match unsafe { utf8_arg(device_id) } {
@@ -454,7 +454,10 @@ pub unsafe extern "C" fn mirelia_engine_open_device(
     } else {
         let d = unsafe { &*desired };
         if d.sample_rate == 0 {
-            return fail(KN_ERR_INVALID_ARG, "mireliaEngineOpenDevice: desired sample rate is 0");
+            return fail(
+                MIRELIA_ERR_INVALID_ARG,
+                "mireliaEngineOpenDevice: desired sample rate is 0",
+            );
         }
         Some(StreamFormat {
             sample_rate: d.sample_rate,
@@ -466,15 +469,15 @@ pub unsafe extern "C" fn mirelia_engine_open_device(
         Ok(actual) => {
             if !out_actual.is_null() {
                 unsafe {
-                    *out_actual = KnStreamFormat {
+                    *out_actual = MireliaStreamFormat {
                         sample_rate: actual.sample_rate,
                         channels: actual.channels,
-                        format: 3, // KN_FMT_F32
+                        format: 3, // MireliaFmtF32
                         channel_mask: 0,
                     };
                 }
             }
-            KN_OK
+            MIRELIA_OK
         }
         Err(err) => engine_err(&err),
     }
@@ -486,12 +489,12 @@ pub unsafe extern "C" fn mirelia_engine_open_device(
 ///
 /// `e` must be a live engine pointer.
 #[unsafe(export_name = "mireliaEngineCloseDevice")]
-pub unsafe extern "C" fn mirelia_engine_close_device(e: *mut KnEngine) -> i32 {
+pub unsafe extern "C" fn mirelia_engine_close_device(e: *mut MireliaEngine) -> i32 {
     if e.is_null() {
-        return fail(KN_ERR_INVALID_ARG, "mireliaEngineCloseDevice: null engine");
+        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaEngineCloseDevice: null engine");
     }
     unsafe { &mut *e }.engine.close_device();
-    KN_OK
+    MIRELIA_OK
 }
 
 // ---- transport ---------------------------------------------------------
@@ -500,7 +503,7 @@ fn slot_from(slot: i32) -> Result<Slot, i32> {
     match slot {
         0 => Ok(Slot::Current),
         1 => Ok(Slot::Next),
-        _ => Err(fail(KN_ERR_INVALID_ARG, "invalid slot")),
+        _ => Err(fail(MIRELIA_ERR_INVALID_ARG, "invalid slot")),
     }
 }
 
@@ -510,9 +513,13 @@ fn slot_from(slot: i32) -> Result<Slot, i32> {
 ///
 /// Pointer arguments must be valid per the header contract.
 #[unsafe(export_name = "mireliaLoad")]
-pub unsafe extern "C" fn mirelia_load(e: *mut KnEngine, slot: i32, p: *const KnLoadParams) -> i32 {
+pub unsafe extern "C" fn mirelia_load(
+    e: *mut MireliaEngine,
+    slot: i32,
+    p: *const MireliaLoadParams,
+) -> i32 {
     if e.is_null() || p.is_null() {
-        return fail(KN_ERR_INVALID_ARG, "mireliaLoad: null argument");
+        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaLoad: null argument");
     }
     let wrapper = unsafe { &mut *e };
     let p = unsafe { &*p };
@@ -521,7 +528,7 @@ pub unsafe extern "C" fn mirelia_load(e: *mut KnEngine, slot: i32, p: *const KnL
         Err(code) => return code,
     };
     let Ok(Some(path)) = (unsafe { utf8_arg(p.path) }) else {
-        return fail(KN_ERR_INVALID_ARG, "mireliaLoad: path is null or not UTF-8");
+        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaLoad: path is null or not UTF-8");
     };
 
     let params = LoadParams {
@@ -532,7 +539,7 @@ pub unsafe extern "C" fn mirelia_load(e: *mut KnEngine, slot: i32, p: *const KnL
         user_token: p.user_token,
     };
     match wrapper.engine.load(slot, params) {
-        Ok(()) => KN_OK,
+        Ok(()) => MIRELIA_OK,
         Err(err) => engine_err(&err),
     }
 }
@@ -543,16 +550,16 @@ pub unsafe extern "C" fn mirelia_load(e: *mut KnEngine, slot: i32, p: *const KnL
 ///
 /// `e` must be a live engine pointer.
 #[unsafe(export_name = "mireliaClear")]
-pub unsafe extern "C" fn mirelia_clear(e: *mut KnEngine, slot: i32) -> i32 {
+pub unsafe extern "C" fn mirelia_clear(e: *mut MireliaEngine, slot: i32) -> i32 {
     if e.is_null() {
-        return fail(KN_ERR_INVALID_ARG, "mireliaClear: null engine");
+        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaClear: null engine");
     }
     let slot = match slot_from(slot) {
         Ok(s) => s,
         Err(code) => return code,
     };
     match unsafe { &mut *e }.engine.clear(slot) {
-        Ok(()) => KN_OK,
+        Ok(()) => MIRELIA_OK,
         Err(err) => engine_err(&err),
     }
 }
@@ -565,12 +572,12 @@ macro_rules! transport {
         ///
         /// `e` must be a live engine pointer.
         #[unsafe(export_name = $symbol)]
-        pub unsafe extern "C" fn $fn_name(e: *mut KnEngine) -> i32 {
+        pub unsafe extern "C" fn $fn_name(e: *mut MireliaEngine) -> i32 {
             if e.is_null() {
-                return fail(KN_ERR_INVALID_ARG, concat!($symbol, ": null engine"));
+                return fail(MIRELIA_ERR_INVALID_ARG, concat!($symbol, ": null engine"));
             }
             match unsafe { &mut *e }.engine.$method() {
-                Ok(()) => KN_OK,
+                Ok(()) => MIRELIA_OK,
                 Err(err) => engine_err(&err),
             }
         }
@@ -593,12 +600,12 @@ transport!(
 ///
 /// `e` must be a live engine pointer.
 #[unsafe(export_name = "mireliaSeek")]
-pub unsafe extern "C" fn mirelia_seek(e: *mut KnEngine, frame: i64) -> i32 {
+pub unsafe extern "C" fn mirelia_seek(e: *mut MireliaEngine, frame: i64) -> i32 {
     if e.is_null() {
-        return fail(KN_ERR_INVALID_ARG, "mireliaSeek: null engine");
+        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaSeek: null engine");
     }
     match unsafe { &mut *e }.engine.seek(frame) {
-        Ok(()) => KN_OK,
+        Ok(()) => MIRELIA_OK,
         Err(err) => engine_err(&err),
     }
 }
@@ -609,12 +616,12 @@ pub unsafe extern "C" fn mirelia_seek(e: *mut KnEngine, frame: i64) -> i32 {
 ///
 /// `e` must be a live engine pointer.
 #[unsafe(export_name = "mireliaSetVolume")]
-pub unsafe extern "C" fn mirelia_set_volume(e: *mut KnEngine, gain: f32) -> i32 {
+pub unsafe extern "C" fn mirelia_set_volume(e: *mut MireliaEngine, gain: f32) -> i32 {
     if e.is_null() {
-        return fail(KN_ERR_INVALID_ARG, "mireliaSetVolume: null engine");
+        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaSetVolume: null engine");
     }
     match unsafe { &mut *e }.engine.set_volume(gain) {
-        Ok(()) => KN_OK,
+        Ok(()) => MIRELIA_OK,
         Err(err) => engine_err(&err),
     }
 }
@@ -624,15 +631,18 @@ pub unsafe extern "C" fn mirelia_set_volume(e: *mut KnEngine, gain: f32) -> i32 
 /// # Safety
 ///
 /// `e` must be a live engine pointer; `out` must point to writable storage
-/// for one `kn_position`.
+/// for one `MireliaPosition`.
 #[unsafe(export_name = "mireliaGetPosition")]
-pub unsafe extern "C" fn mirelia_get_position(e: *mut KnEngine, out: *mut KnPosition) -> i32 {
+pub unsafe extern "C" fn mirelia_get_position(
+    e: *mut MireliaEngine,
+    out: *mut MireliaPosition,
+) -> i32 {
     if e.is_null() || out.is_null() {
-        return fail(KN_ERR_INVALID_ARG, "mireliaGetPosition: null argument");
+        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaGetPosition: null argument");
     }
     let pos = unsafe { &*e }.engine.position();
     unsafe {
-        *out = KnPosition {
+        *out = MireliaPosition {
             state: i32::from(match pos.state {
                 State::Idle => 0u8,
                 State::Playing => 1,
@@ -647,7 +657,7 @@ pub unsafe extern "C" fn mirelia_get_position(e: *mut KnEngine, out: *mut KnPosi
             buffer_fill: pos.buffer_fill,
         };
     }
-    KN_OK
+    MIRELIA_OK
 }
 
 // ---- events ------------------------------------------------------------
@@ -660,8 +670,8 @@ pub unsafe extern "C" fn mirelia_get_position(e: *mut KnEngine, out: *mut KnPosi
 /// called concurrently with itself.
 #[unsafe(export_name = "mireliaEnginePollEvent")]
 pub unsafe extern "C" fn mirelia_engine_poll_event(
-    e: *mut KnEngine,
-    out: *mut KnEvent,
+    e: *mut MireliaEngine,
+    out: *mut MireliaEvent,
     capacity: usize,
 ) -> usize {
     if e.is_null() || out.is_null() || capacity == 0 {
@@ -673,7 +683,7 @@ pub unsafe extern "C" fn mirelia_engine_poll_event(
     let n = wrapper.engine.poll_events(&mut scratch[..take]);
     for (i, ev) in scratch[..n].iter().enumerate() {
         unsafe {
-            *out.add(i) = KnEvent {
+            *out.add(i) = MireliaEvent {
                 event_type: ev.kind as i32,
                 user_token: ev.token,
                 code: ev.code,
@@ -693,15 +703,15 @@ pub unsafe extern "C" fn mirelia_engine_poll_event(
 /// Pointer arguments must be valid per the header contract.
 #[unsafe(export_name = "mireliaProbe")]
 pub unsafe extern "C" fn mirelia_probe(
-    e: *mut KnEngine,
+    e: *mut MireliaEngine,
     path: *const c_char,
-    out: *mut KnProbeResult,
+    out: *mut MireliaProbeResult,
 ) -> i32 {
     if e.is_null() || out.is_null() {
-        return fail(KN_ERR_INVALID_ARG, "mireliaProbe: null argument");
+        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaProbe: null argument");
     }
     let Ok(Some(path)) = (unsafe { utf8_arg(path) }) else {
-        return fail(KN_ERR_INVALID_ARG, "mireliaProbe: path is null or not UTF-8");
+        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaProbe: path is null or not UTF-8");
     };
 
     let decoder = match mirelia_decode::Decoder::open(std::path::Path::new(&path)) {
@@ -716,7 +726,7 @@ pub unsafe extern "C" fn mirelia_probe(
     }
 
     unsafe {
-        *out = KnProbeResult {
+        *out = MireliaProbeResult {
             sample_rate: info.sample_rate,
             channels: info.channels,
             bit_depth: info.bit_depth.unwrap_or(0),
@@ -729,7 +739,7 @@ pub unsafe extern "C" fn mirelia_probe(
             codec,
         };
     }
-    KN_OK
+    MIRELIA_OK
 }
 
 /// Implements `mireliaScanLoudness`: EBU R128 integrated loudness → RG2 gain
@@ -740,16 +750,16 @@ pub unsafe extern "C" fn mirelia_probe(
 /// Pointer arguments must be valid per the header contract.
 #[unsafe(export_name = "mireliaScanLoudness")]
 pub unsafe extern "C" fn mirelia_scan_loudness(
-    e: *mut KnEngine,
+    e: *mut MireliaEngine,
     path: *const c_char,
     out_gain_db: *mut f32,
     out_peak: *mut f32,
 ) -> i32 {
     if e.is_null() || out_gain_db.is_null() || out_peak.is_null() {
-        return fail(KN_ERR_INVALID_ARG, "mireliaScanLoudness: null argument");
+        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaScanLoudness: null argument");
     }
     let Ok(Some(path)) = (unsafe { utf8_arg(path) }) else {
-        return fail(KN_ERR_INVALID_ARG, "mireliaScanLoudness: path is null or not UTF-8");
+        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaScanLoudness: path is null or not UTF-8");
     };
 
     match mirelia_decode::loudness::scan(std::path::Path::new(&path)) {
@@ -758,7 +768,7 @@ pub unsafe extern "C" fn mirelia_scan_loudness(
                 *out_gain_db = result.gain_db;
                 *out_peak = result.peak;
             }
-            KN_OK
+            MIRELIA_OK
         }
         Err(err) => decode_err(&err),
     }
@@ -773,10 +783,10 @@ pub unsafe extern "C" fn mirelia_scan_loudness(
 /// Pointer arguments must be valid per the header contract.
 #[unsafe(export_name = "mireliaRegisterDecoderLibrary")]
 pub unsafe extern "C" fn mirelia_register_decoder_library(
-    _e: *mut KnEngine,
+    _e: *mut MireliaEngine,
     _dll_path: *const c_char,
 ) -> i32 {
-    fail(KN_ERR_UNSUPPORTED, "decoder plugins land post-v1")
+    fail(MIRELIA_ERR_UNSUPPORTED, "decoder plugins land post-v1")
 }
 
 /// Implements `mireliaRegisterOutputLibrary`. Post-v1.
@@ -786,10 +796,10 @@ pub unsafe extern "C" fn mirelia_register_decoder_library(
 /// Pointer arguments must be valid per the header contract.
 #[unsafe(export_name = "mireliaRegisterOutputLibrary")]
 pub unsafe extern "C" fn mirelia_register_output_library(
-    _e: *mut KnEngine,
+    _e: *mut MireliaEngine,
     _dll_path: *const c_char,
 ) -> i32 {
-    fail(KN_ERR_UNSUPPORTED, "output plugins land post-v1")
+    fail(MIRELIA_ERR_UNSUPPORTED, "output plugins land post-v1")
 }
 
 /// Implements `mireliaRegisterDspLibrary`. Loads and validates the library on the
@@ -801,16 +811,16 @@ pub unsafe extern "C" fn mirelia_register_output_library(
 /// NUL-terminated string.
 #[unsafe(export_name = "mireliaRegisterDspLibrary")]
 pub unsafe extern "C" fn mirelia_register_dsp_library(
-    e: *mut KnEngine,
+    e: *mut MireliaEngine,
     dll_path: *const c_char,
 ) -> i32 {
     if e.is_null() {
-        return fail(KN_ERR_INVALID_ARG, "mireliaRegisterDspLibrary: null engine");
+        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaRegisterDspLibrary: null engine");
     }
     let wrapper = unsafe { &mut *e };
     let Ok(Some(path)) = (unsafe { utf8_arg(dll_path) }) else {
         return fail(
-            KN_ERR_INVALID_ARG,
+            MIRELIA_ERR_INVALID_ARG,
             "mireliaRegisterDspLibrary: path is null or not UTF-8",
         );
     };
@@ -821,7 +831,7 @@ pub unsafe extern "C" fn mirelia_register_dsp_library(
     };
     if wrapper.dsp_plugins.iter().any(|p| p.id == loaded.plugin.id) {
         return fail(
-            KN_ERR_STATE,
+            MIRELIA_ERR_STATE,
             &format!(
                 "a DSP plugin with id {:?} is already registered",
                 loaded.plugin.id
@@ -837,7 +847,7 @@ pub unsafe extern "C" fn mirelia_register_dsp_library(
         name: loaded.plugin.name,
         factory: Arc::new(dsp::PluginResamplerFactory::new(loaded.library, fns)),
     });
-    KN_OK
+    MIRELIA_OK
 }
 
 /// Implements `mireliaDspEnumerate`. The snapshot stays valid until the next
@@ -849,25 +859,25 @@ pub unsafe extern "C" fn mirelia_register_dsp_library(
 /// writable storage.
 #[unsafe(export_name = "mireliaDspEnumerate")]
 pub unsafe extern "C" fn mirelia_dsp_enumerate(
-    e: *mut KnEngine,
-    out_infos: *mut *const KnDspInfo,
+    e: *mut MireliaEngine,
+    out_infos: *mut *const MireliaDspInfo,
     out_count: *mut usize,
 ) -> i32 {
     if e.is_null() || out_infos.is_null() || out_count.is_null() {
-        return fail(KN_ERR_INVALID_ARG, "mireliaDspEnumerate: null argument");
+        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaDspEnumerate: null argument");
     }
     let wrapper = unsafe { &mut *e };
     wrapper.dsp_infos.clear();
-    wrapper.dsp_infos.extend(wrapper.dsp_plugins.iter().map(|p| KnDspInfo {
+    wrapper.dsp_infos.extend(wrapper.dsp_plugins.iter().map(|p| MireliaDspInfo {
         id: p.id.as_ptr(),
         name: p.name.as_ptr(),
-        kind: dsp::KN_DSP_KIND_RESAMPLER,
+        kind: dsp::MIRELIA_DSP_KIND_RESAMPLER,
     }));
     unsafe {
         *out_infos = wrapper.dsp_infos.as_ptr();
         *out_count = wrapper.dsp_infos.len();
     }
-    KN_OK
+    MIRELIA_OK
 }
 
 /// Implements `mireliaDspFree`: drops the enumeration snapshot.
@@ -876,7 +886,7 @@ pub unsafe extern "C" fn mirelia_dsp_enumerate(
 ///
 /// `e` must be null or a live engine pointer.
 #[unsafe(export_name = "mireliaDspFree")]
-pub unsafe extern "C" fn mirelia_dsp_free(e: *mut KnEngine) {
+pub unsafe extern "C" fn mirelia_dsp_free(e: *mut MireliaEngine) {
     if !e.is_null() {
         unsafe { &mut *e }.dsp_infos.clear();
     }
@@ -890,11 +900,11 @@ pub unsafe extern "C" fn mirelia_dsp_free(e: *mut KnEngine) {
 /// NUL-terminated string.
 #[unsafe(export_name = "mireliaEngineSetResampler")]
 pub unsafe extern "C" fn mirelia_engine_set_resampler(
-    e: *mut KnEngine,
+    e: *mut MireliaEngine,
     plugin_id: *const c_char,
 ) -> i32 {
     if e.is_null() {
-        return fail(KN_ERR_INVALID_ARG, "mireliaEngineSetResampler: null engine");
+        return fail(MIRELIA_ERR_INVALID_ARG, "mireliaEngineSetResampler: null engine");
     }
     let wrapper = unsafe { &mut *e };
     let id = match unsafe { utf8_arg(plugin_id) } {
@@ -903,17 +913,17 @@ pub unsafe extern "C" fn mirelia_engine_set_resampler(
     };
     let Some(id) = id else {
         wrapper.engine.set_resampler(None);
-        return KN_OK;
+        return MIRELIA_OK;
     };
     let Some(plugin) = wrapper.dsp_plugins.iter().find(|p| p.id.as_bytes() == id.as_bytes())
     else {
         return fail(
-            KN_ERR_INVALID_ARG,
+            MIRELIA_ERR_INVALID_ARG,
             &format!("no resampler plugin with id {id:?} is registered"),
         );
     };
     wrapper.engine.set_resampler(Some(Arc::clone(&plugin.factory)));
-    KN_OK
+    MIRELIA_OK
 }
 
 // ---- tests -------------------------------------------------------------
@@ -924,8 +934,8 @@ mod tests {
     use std::ffi::CStr;
     use std::ptr;
 
-    fn config(abi: u32) -> KnEngineConfig {
-        KnEngineConfig {
+    fn config(abi: u32) -> MireliaEngineConfig {
+        MireliaEngineConfig {
             abi_version: abi,
             target_latency_ms: 0,
             decode_ahead_ms: 0,
@@ -937,9 +947,9 @@ mod tests {
     #[test]
     fn create_rejects_wrong_abi_version() {
         let cfg = config(999);
-        let mut e: *mut KnEngine = ptr::null_mut();
+        let mut e: *mut MireliaEngine = ptr::null_mut();
         let rc = unsafe { mirelia_engine_create(&cfg, &mut e) };
-        assert_eq!(rc, KN_ERR_ABI_MISMATCH);
+        assert_eq!(rc, MIRELIA_ERR_ABI_MISMATCH);
         assert!(e.is_null());
         let msg = unsafe { CStr::from_ptr(mirelia_engine_last_error(e)) };
         assert!(msg.to_str().unwrap().contains("ABI"));
@@ -954,10 +964,10 @@ mod tests {
             (-1, DitherMode::Always),
             (7, DitherMode::Always),
         ] {
-            let mut cfg = config(KN_ABI_VERSION);
+            let mut cfg = config(MIRELIA_ABI_VERSION);
             cfg.dither_to_int = value;
-            let mut e: *mut KnEngine = ptr::null_mut();
-            assert_eq!(unsafe { mirelia_engine_create(&cfg, &mut e) }, KN_OK);
+            let mut e: *mut MireliaEngine = ptr::null_mut();
+            assert_eq!(unsafe { mirelia_engine_create(&cfg, &mut e) }, MIRELIA_OK);
             assert_eq!(unsafe { &*e }.engine.config().dither, expected, "value {value}");
             unsafe { mirelia_engine_destroy(e) };
         }
@@ -965,12 +975,12 @@ mod tests {
 
     #[test]
     fn create_and_destroy_roundtrip() {
-        let cfg = config(KN_ABI_VERSION);
-        let mut e: *mut KnEngine = ptr::null_mut();
-        assert_eq!(unsafe { mirelia_engine_create(&cfg, &mut e) }, KN_OK);
+        let cfg = config(MIRELIA_ABI_VERSION);
+        let mut e: *mut MireliaEngine = ptr::null_mut();
+        assert_eq!(unsafe { mirelia_engine_create(&cfg, &mut e) }, MIRELIA_OK);
         assert!(!e.is_null());
 
-        let mut pos = KnPosition {
+        let mut pos = MireliaPosition {
             state: -1,
             user_token: 1,
             frame: 1,
@@ -979,7 +989,7 @@ mod tests {
             host_time_ns: 0,
             buffer_fill: 1.0,
         };
-        assert_eq!(unsafe { mirelia_get_position(e, &mut pos) }, KN_OK);
+        assert_eq!(unsafe { mirelia_get_position(e, &mut pos) }, MIRELIA_OK);
         assert_eq!(pos.state, 0);
         assert_eq!(pos.total_frames, -1);
 
@@ -989,20 +999,20 @@ mod tests {
     #[test]
     fn null_arguments_are_rejected() {
         let rc = unsafe { mirelia_engine_create(ptr::null(), ptr::null_mut()) };
-        assert_eq!(rc, KN_ERR_INVALID_ARG);
+        assert_eq!(rc, MIRELIA_ERR_INVALID_ARG);
     }
 
     #[test]
     fn probe_reads_fixture_metadata() {
-        let cfg = config(KN_ABI_VERSION);
-        let mut e: *mut KnEngine = ptr::null_mut();
-        assert_eq!(unsafe { mirelia_engine_create(&cfg, &mut e) }, KN_OK);
+        let cfg = config(MIRELIA_ABI_VERSION);
+        let mut e: *mut MireliaEngine = ptr::null_mut();
+        assert_eq!(unsafe { mirelia_engine_create(&cfg, &mut e) }, MIRELIA_OK);
 
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../../../tests/fixtures/fixture.flac");
         let c_path = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
-        let mut probe = unsafe { std::mem::zeroed::<KnProbeResult>() };
-        assert_eq!(unsafe { mirelia_probe(e, c_path.as_ptr(), &mut probe) }, KN_OK);
+        let mut probe = unsafe { std::mem::zeroed::<MireliaProbeResult>() };
+        assert_eq!(unsafe { mirelia_probe(e, c_path.as_ptr(), &mut probe) }, MIRELIA_OK);
         assert_eq!(probe.sample_rate, 44_100);
         assert_eq!(probe.channels, 2);
         assert_eq!(probe.total_frames, 17_640);

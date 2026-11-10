@@ -12,13 +12,13 @@ use std::sync::Arc;
 
 use mirelia_audio::resample::{ResamplerError, ResamplerFactory, StreamResampler};
 
-use crate::result::{KN_ERR_FORMAT, KN_ERR_UNSUPPORTED, KN_OK};
+use crate::result::{MIRELIA_ERR_FORMAT, MIRELIA_ERR_UNSUPPORTED, MIRELIA_OK};
 
-/// `KN_DSP_ABI_VERSION`: the DSP plugin ABI version this host implements.
-pub const KN_DSP_ABI_VERSION: u32 = 1;
+/// `MIRELIA_DSP_ABI_VERSION`: the DSP plugin ABI version this host implements.
+pub const MIRELIA_DSP_ABI_VERSION: u32 = 1;
 
-/// `KN_DSP_KIND_RESAMPLER`: the capability kind of a sample-rate converter.
-pub const KN_DSP_KIND_RESAMPLER: i32 = 1;
+/// `MireliaDspKindResampler`: the capability kind of a sample-rate converter.
+pub const MIRELIA_DSP_KIND_RESAMPLER: i32 = 1;
 
 const MAX_ID_BYTES: usize = 64;
 const MAX_NAME_BYTES: usize = 128;
@@ -26,19 +26,19 @@ const MAX_CAPABILITIES: u32 = 32;
 
 // ---- C struct mirrors --------------------------------------------------
 
-/// Mirror of `kn_dsp_capability`. Layouts must match `audio_dsp.h` exactly;
+/// Mirror of `MireliaDspCapability`. Layouts must match `audio_dsp.h` exactly;
 /// the header is the documentation.
 #[repr(C)]
-pub struct KnDspCapability {
-    /// A `kn_dsp_kind` value.
+pub struct MireliaDspCapability {
+    /// A `MireliaDspKind` value.
     pub kind: i32,
-    /// Layout chosen by `kind`; for a resampler, a `KnDspResamplerVtable`.
+    /// Layout chosen by `kind`; for a resampler, a `MireliaDspResamplerVtable`.
     pub vtable: *const c_void,
 }
 
-/// Mirror of `kn_dsp_plugin`.
+/// Mirror of `MireliaDspPlugin`.
 #[repr(C)]
-pub struct KnDspPlugin {
+pub struct MireliaDspPlugin {
     /// The ABI version the plugin answered for.
     pub abi_version: u32,
     /// Stable identifier, 1..64 bytes of `[a-z0-9._-]`.
@@ -48,26 +48,26 @@ pub struct KnDspPlugin {
     /// Number of records behind `capabilities`, 1..32.
     pub capability_count: u32,
     /// The capability records.
-    pub capabilities: *const KnDspCapability,
+    pub capabilities: *const MireliaDspCapability,
 }
 
-/// `kn_dsp_resampler_vtable::create`.
+/// `MireliaDspResamplerVtable::create`.
 pub type CreateFn = unsafe extern "C" fn(u32, u32, u16, *mut *mut c_void) -> i32;
-/// `kn_dsp_resampler_vtable::process`.
+/// `MireliaDspResamplerVtable::process`.
 pub type ProcessFn = unsafe extern "C" fn(*mut c_void, *const f32, i64, *mut f32, i64) -> i64;
-/// `kn_dsp_resampler_vtable::flush`.
+/// `MireliaDspResamplerVtable::flush`.
 pub type FlushFn = unsafe extern "C" fn(*mut c_void, *mut f32, i64) -> i64;
-/// `kn_dsp_resampler_vtable::pending_frames`.
+/// `MireliaDspResamplerVtable::pending_frames`.
 pub type PendingFn = unsafe extern "C" fn(*mut c_void) -> i64;
-/// `kn_dsp_resampler_vtable::reset`.
+/// `MireliaDspResamplerVtable::reset`.
 pub type ResetFn = unsafe extern "C" fn(*mut c_void) -> i32;
-/// `kn_dsp_resampler_vtable::destroy`.
+/// `MireliaDspResamplerVtable::destroy`.
 pub type DestroyFn = unsafe extern "C" fn(*mut c_void);
 
-/// Mirror of `kn_dsp_resampler_vtable`. Members are `Option` so a NULL pointer
+/// Mirror of `MireliaDspResamplerVtable`. Members are `Option` so a NULL pointer
 /// from a plugin can be detected instead of being called.
 #[repr(C)]
-pub struct KnDspResamplerVtable {
+pub struct MireliaDspResamplerVtable {
     /// Creates a context for one stream.
     pub create: Option<CreateFn>,
     /// Converts a block of input.
@@ -82,14 +82,14 @@ pub struct KnDspResamplerVtable {
     pub destroy: Option<DestroyFn>,
 }
 
-/// Mirror of `kn_dsp_info`, one entry of the enumeration snapshot.
+/// Mirror of `MireliaDspInfo`, one entry of the enumeration snapshot.
 #[repr(C)]
-pub struct KnDspInfo {
+pub struct MireliaDspInfo {
     /// Plugin id, NUL-terminated.
     pub id: *const c_char,
     /// Plugin display name, NUL-terminated.
     pub name: *const c_char,
-    /// A `kn_dsp_kind` value.
+    /// A `MireliaDspKind` value.
     pub kind: i32,
 }
 
@@ -120,7 +120,7 @@ pub struct ValidPlugin {
     pub id: CString,
     /// The plugin display name.
     pub name: CString,
-    /// One entry per `KN_DSP_KIND_RESAMPLER` record, in the plugin's order.
+    /// One entry per `MireliaDspKindResampler` record, in the plugin's order.
     pub resamplers: Vec<ResamplerFns>,
 }
 
@@ -140,24 +140,24 @@ unsafe fn bounded_cstr<'a>(p: *const c_char, max: usize) -> Option<&'a CStr> {
 
 /// Checks the static description a plugin's entry point returned.
 ///
-/// Returns `KN_ERR_UNSUPPORTED` when no capability is of a kind this host
-/// knows, and `KN_ERR_FORMAT` for anything malformed. Records of unknown kinds
+/// Returns `MIRELIA_ERR_UNSUPPORTED` when no capability is of a kind this host
+/// knows, and `MIRELIA_ERR_FORMAT` for anything malformed. Records of unknown kinds
 /// are skipped without looking at their vtable. On failure the message is left
 /// in the thread's last-error slot.
 ///
 /// # Safety
 ///
-/// `plugin` must be null or point to a `kn_dsp_plugin` that stays valid for
+/// `plugin` must be null or point to a `MireliaDspPlugin` that stays valid for
 /// the call, with `capability_count` records behind `capabilities`. A non-null
 /// `id` or `name` must be readable up to its first NUL or to one byte past the
 /// maximum length, whichever comes first; termination itself is checked here.
 pub unsafe fn validate_plugin(
-    plugin: *const KnDspPlugin,
+    plugin: *const MireliaDspPlugin,
     requested_version: u32,
 ) -> Result<ValidPlugin, i32> {
     if plugin.is_null() {
         return Err(crate::fail(
-            KN_ERR_FORMAT,
+            MIRELIA_ERR_FORMAT,
             "plugin entry returned no description",
         ));
     }
@@ -165,7 +165,7 @@ pub unsafe fn validate_plugin(
     let plugin = unsafe { &*plugin };
     if plugin.abi_version != requested_version {
         return Err(crate::fail(
-            KN_ERR_FORMAT,
+            MIRELIA_ERR_FORMAT,
             &format!(
                 "plugin describes ABI version {} but {requested_version} was requested",
                 plugin.abi_version
@@ -174,7 +174,7 @@ pub unsafe fn validate_plugin(
     }
 
     if plugin.id.is_null() {
-        return Err(crate::fail(KN_ERR_FORMAT, "plugin id is null"));
+        return Err(crate::fail(MIRELIA_ERR_FORMAT, "plugin id is null"));
     }
     // SAFETY: non-null, and readable as far as `bounded_cstr` reads per the
     // caller's contract.
@@ -187,27 +187,27 @@ pub unsafe fn validate_plugin(
     });
     let Some(id) = id else {
         return Err(crate::fail(
-            KN_ERR_FORMAT,
+            MIRELIA_ERR_FORMAT,
             "plugin id must be 1..64 bytes of [a-z0-9._-]",
         ));
     };
 
     if plugin.name.is_null() {
-        return Err(crate::fail(KN_ERR_FORMAT, "plugin name is null"));
+        return Err(crate::fail(MIRELIA_ERR_FORMAT, "plugin name is null"));
     }
     // SAFETY: non-null, and readable as far as `bounded_cstr` reads per the
     // caller's contract.
     let name = unsafe { bounded_cstr(plugin.name, MAX_NAME_BYTES) };
     let Some(name) = name.filter(|n| !n.is_empty() && n.to_str().is_ok()) else {
         return Err(crate::fail(
-            KN_ERR_FORMAT,
+            MIRELIA_ERR_FORMAT,
             "plugin name must be 1..128 bytes of UTF-8",
         ));
     };
 
     if !(1..=MAX_CAPABILITIES).contains(&plugin.capability_count) || plugin.capabilities.is_null() {
         return Err(crate::fail(
-            KN_ERR_FORMAT,
+            MIRELIA_ERR_FORMAT,
             "plugin must list 1..32 capabilities",
         ));
     }
@@ -218,18 +218,18 @@ pub unsafe fn validate_plugin(
 
     let mut resamplers = Vec::new();
     for capability in capabilities {
-        if capability.kind != KN_DSP_KIND_RESAMPLER {
+        if capability.kind != MIRELIA_DSP_KIND_RESAMPLER {
             continue;
         }
         if capability.vtable.is_null() {
             return Err(crate::fail(
-                KN_ERR_FORMAT,
+                MIRELIA_ERR_FORMAT,
                 "resampler capability has no vtable",
             ));
         }
         // SAFETY: non-null, and a resampler vtable for this kind per the
         // caller's contract.
-        let vtable = unsafe { &*capability.vtable.cast::<KnDspResamplerVtable>() };
+        let vtable = unsafe { &*capability.vtable.cast::<MireliaDspResamplerVtable>() };
         let (
             Some(create),
             Some(process),
@@ -247,7 +247,7 @@ pub unsafe fn validate_plugin(
         )
         else {
             return Err(crate::fail(
-                KN_ERR_FORMAT,
+                MIRELIA_ERR_FORMAT,
                 "resampler vtable has a null function pointer",
             ));
         };
@@ -262,7 +262,7 @@ pub unsafe fn validate_plugin(
     }
     if resamplers.is_empty() {
         return Err(crate::fail(
-            KN_ERR_UNSUPPORTED,
+            MIRELIA_ERR_UNSUPPORTED,
             "plugin offers no capability this backend knows",
         ));
     }
@@ -317,7 +317,7 @@ impl Drop for PluginLibrary {
 }
 
 /// A plugin entry point: `mireliaDspEntry` in `audio_dsp.h`.
-pub type EntryFn = unsafe extern "C" fn(u32) -> *const KnDspPlugin;
+pub type EntryFn = unsafe extern "C" fn(u32) -> *const MireliaDspPlugin;
 
 /// A loaded library together with its validated description.
 pub struct LoadedPlugin {
@@ -329,12 +329,12 @@ pub struct LoadedPlugin {
 }
 
 /// Loads the library at `path`, asks its entry point for
-/// `KN_DSP_ABI_VERSION` and validates the answer. The library is unloaded again
+/// `MIRELIA_DSP_ABI_VERSION` and validates the answer. The library is unloaded again
 /// on every failure.
 ///
-/// Failure codes: `KN_ERR_INVALID_ARG` for a relative path, `KN_ERR_IO` for a
-/// missing file, `KN_ERR_FORMAT` for a file that does not load or has no entry
-/// point, `KN_ERR_ABI_MISMATCH` when the entry point answers `NULL`, and the
+/// Failure codes: `MIRELIA_ERR_INVALID_ARG` for a relative path, `MIRELIA_ERR_IO` for a
+/// missing file, `MIRELIA_ERR_FORMAT` for a file that does not load or has no entry
+/// point, `MIRELIA_ERR_ABI_MISMATCH` when the entry point answers `NULL`, and the
 /// codes of [`validate_plugin`]. The message is left in the thread's last-error
 /// slot.
 #[cfg(windows)]
@@ -345,20 +345,20 @@ pub fn load_plugin(path: &str) -> Result<LoadedPlugin, i32> {
     };
     use windows::core::{HSTRING, s};
 
-    use crate::result::{KN_ERR_ABI_MISMATCH, KN_ERR_INVALID_ARG, KN_ERR_IO};
+    use crate::result::{MIRELIA_ERR_ABI_MISMATCH, MIRELIA_ERR_INVALID_ARG, MIRELIA_ERR_IO};
 
     let file = std::path::Path::new(path);
     // `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR` only works with an absolute path.
     if !file.is_absolute() {
         return Err(crate::fail(
-            KN_ERR_INVALID_ARG,
+            MIRELIA_ERR_INVALID_ARG,
             "mireliaRegisterDspLibrary: path is not absolute",
         ));
     }
     // Decided here because `LoadLibraryExW` reports a missing dependency with
     // the same error as a missing file.
     if let Err(err) = std::fs::metadata(file) {
-        return Err(crate::fail(KN_ERR_IO, &format!("{path}: {err}")));
+        return Err(crate::fail(MIRELIA_ERR_IO, &format!("{path}: {err}")));
     }
 
     let wide = HSTRING::from(path);
@@ -370,14 +370,16 @@ pub fn load_plugin(path: &str) -> Result<LoadedPlugin, i32> {
             LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32,
         )
     }
-    .map_err(|err| crate::fail(KN_ERR_FORMAT, &format!("{path}: cannot load library: {err}")))?;
+    .map_err(|err| {
+        crate::fail(MIRELIA_ERR_FORMAT, &format!("{path}: cannot load library: {err}"))
+    })?;
     // From here on every early return unloads the library through `Drop`.
     let library = Arc::new(PluginLibrary { module });
 
     // SAFETY: `module` is loaded and the name is NUL-terminated.
     let Some(entry) = (unsafe { GetProcAddress(module, s!("mireliaDspEntry")) }) else {
         return Err(crate::fail(
-            KN_ERR_FORMAT,
+            MIRELIA_ERR_FORMAT,
             &format!("{path}: no mireliaDspEntry export"),
         ));
     };
@@ -387,16 +389,16 @@ pub fn load_plugin(path: &str) -> Result<LoadedPlugin, i32> {
     };
     // SAFETY: the library stays loaded for the call, and the entry point may be
     // called with any version number.
-    let description = unsafe { entry(KN_DSP_ABI_VERSION) };
+    let description = unsafe { entry(MIRELIA_DSP_ABI_VERSION) };
     if description.is_null() {
         return Err(crate::fail(
-            KN_ERR_ABI_MISMATCH,
-            &format!("{path}: plugin does not implement DSP ABI version {KN_DSP_ABI_VERSION}"),
+            MIRELIA_ERR_ABI_MISMATCH,
+            &format!("{path}: plugin does not implement DSP ABI version {MIRELIA_DSP_ABI_VERSION}"),
         ));
     }
     // SAFETY: a non-null answer from the entry point is static data of the
     // library, which stays loaded for the call.
-    let plugin = unsafe { validate_plugin(description, KN_DSP_ABI_VERSION) }?;
+    let plugin = unsafe { validate_plugin(description, MIRELIA_DSP_ABI_VERSION) }?;
     Ok(LoadedPlugin { library, plugin })
 }
 
@@ -404,7 +406,7 @@ pub fn load_plugin(path: &str) -> Result<LoadedPlugin, i32> {
 #[cfg(not(windows))]
 pub fn load_plugin(_path: &str) -> Result<LoadedPlugin, i32> {
     Err(crate::fail(
-        KN_ERR_UNSUPPORTED,
+        MIRELIA_ERR_UNSUPPORTED,
         "DSP plugins are not implemented on this platform",
     ))
 }
@@ -532,7 +534,7 @@ impl StreamResampler for PluginResampler {
 
     fn reset(&mut self) -> Result<(), ResamplerError> {
         // SAFETY: `ctx` is live.
-        if unsafe { (self.fns.reset)(self.ctx) } != KN_OK {
+        if unsafe { (self.fns.reset)(self.ctx) } != MIRELIA_OK {
             return Err(ResamplerError::Failed);
         }
         self.fed = 0;
@@ -575,7 +577,7 @@ impl ResamplerFactory for PluginResamplerFactory {
         // SAFETY: `ctx` is writable storage for one pointer.
         let code = unsafe { (self.fns.create)(in_rate, out_rate, channels_u16, &mut ctx) };
         match code {
-            KN_OK if !ctx.is_null() => {
+            MIRELIA_OK if !ctx.is_null() => {
                 // SAFETY: `ctx` is a live context from this plugin's `create`,
                 // owned by nothing else.
                 let resampler = unsafe {
@@ -590,7 +592,7 @@ impl ResamplerFactory for PluginResamplerFactory {
                 };
                 Ok(Box::new(resampler))
             }
-            KN_ERR_UNSUPPORTED => Err(ResamplerError::Unsupported),
+            MIRELIA_ERR_UNSUPPORTED => Err(ResamplerError::Unsupported),
             _ => Err(ResamplerError::Failed),
         }
     }
@@ -601,7 +603,7 @@ mod tests {
     use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 
     use super::*;
-    use crate::result::{KN_ERR_INTERNAL, KN_ERR_INVALID_ARG};
+    use crate::result::{MIRELIA_ERR_INTERNAL, MIRELIA_ERR_INVALID_ARG};
 
     // ---- in-process fake plugin ----
 
@@ -671,19 +673,19 @@ mod tests {
             &Arc::new(Probe::default()),
         );
         unsafe { *out_ctx = ctx };
-        KN_OK
+        MIRELIA_OK
     }
 
     unsafe extern "C" fn unsupported_create(_: u32, _: u32, _: u16, _: *mut *mut c_void) -> i32 {
-        KN_ERR_UNSUPPORTED
+        MIRELIA_ERR_UNSUPPORTED
     }
 
     unsafe extern "C" fn failing_create(_: u32, _: u32, _: u16, _: *mut *mut c_void) -> i32 {
-        KN_ERR_INTERNAL
+        MIRELIA_ERR_INTERNAL
     }
 
     unsafe extern "C" fn null_ctx_create(_: u32, _: u32, _: u16, _: *mut *mut c_void) -> i32 {
-        KN_OK
+        MIRELIA_OK
     }
 
     unsafe extern "C" fn fake_process(
@@ -701,7 +703,7 @@ mod tests {
         // contract requires of a plugin with no delay of its own.
         let emit = total.saturating_sub(1).saturating_sub(c.emitted);
         if emit as i64 > out_capacity {
-            return i64::from(KN_ERR_INVALID_ARG);
+            return i64::from(MIRELIA_ERR_INVALID_ARG);
         }
         unsafe { std::slice::from_raw_parts_mut(out, emit as usize * c.channels) }.fill(1.0);
         c.fed = fed;
@@ -716,7 +718,7 @@ mod tests {
         let c = unsafe { &mut *ctx.cast::<FakeCtx>() };
         let owed = c.owed();
         if owed as i64 > out_capacity {
-            return i64::from(KN_ERR_INVALID_ARG);
+            return i64::from(MIRELIA_ERR_INVALID_ARG);
         }
         unsafe { std::slice::from_raw_parts_mut(out, owed as usize * c.channels) }.fill(1.0);
         c.emitted += owed;
@@ -740,7 +742,7 @@ mod tests {
         let c = unsafe { &mut *ctx.cast::<FakeCtx>() };
         c.fed = 0;
         c.emitted = 0;
-        KN_OK
+        MIRELIA_OK
     }
 
     unsafe extern "C" fn fake_destroy(ctx: *mut c_void) {
@@ -748,8 +750,8 @@ mod tests {
         c.probe.destroyed.fetch_add(1, Ordering::SeqCst);
     }
 
-    fn fake_vtable() -> KnDspResamplerVtable {
-        KnDspResamplerVtable {
+    fn fake_vtable() -> MireliaDspResamplerVtable {
+        MireliaDspResamplerVtable {
             create: Some(fake_create),
             process: Some(fake_process),
             flush: Some(fake_flush),
@@ -787,16 +789,16 @@ mod tests {
 
     // ---- validate_plugin ----
 
-    fn capability(vtable: &KnDspResamplerVtable) -> KnDspCapability {
-        KnDspCapability {
-            kind: KN_DSP_KIND_RESAMPLER,
+    fn capability(vtable: &MireliaDspResamplerVtable) -> MireliaDspCapability {
+        MireliaDspCapability {
+            kind: MIRELIA_DSP_KIND_RESAMPLER,
             vtable: std::ptr::from_ref(vtable).cast(),
         }
     }
 
-    fn plugin(id: &CStr, name: &CStr, capabilities: &[KnDspCapability]) -> KnDspPlugin {
-        KnDspPlugin {
-            abi_version: KN_DSP_ABI_VERSION,
+    fn plugin(id: &CStr, name: &CStr, capabilities: &[MireliaDspCapability]) -> MireliaDspPlugin {
+        MireliaDspPlugin {
+            abi_version: MIRELIA_DSP_ABI_VERSION,
             id: id.as_ptr(),
             name: name.as_ptr(),
             capability_count: capabilities.len() as u32,
@@ -804,9 +806,9 @@ mod tests {
         }
     }
 
-    fn validate(p: &KnDspPlugin) -> Result<ValidPlugin, i32> {
+    fn validate(p: &MireliaDspPlugin) -> Result<ValidPlugin, i32> {
         // SAFETY: `p` and everything it points to outlive the call.
-        unsafe { validate_plugin(p, KN_DSP_ABI_VERSION) }
+        unsafe { validate_plugin(p, MIRELIA_DSP_ABI_VERSION) }
     }
 
     #[test]
@@ -823,8 +825,8 @@ mod tests {
     #[test]
     fn validate_rejects_a_null_plugin() {
         // SAFETY: null is allowed.
-        let result = unsafe { validate_plugin(std::ptr::null(), KN_DSP_ABI_VERSION) };
-        assert_eq!(result.err(), Some(KN_ERR_FORMAT));
+        let result = unsafe { validate_plugin(std::ptr::null(), MIRELIA_DSP_ABI_VERSION) };
+        assert_eq!(result.err(), Some(MIRELIA_ERR_FORMAT));
     }
 
     #[test]
@@ -833,7 +835,7 @@ mod tests {
         let caps = [capability(&vtable)];
         let mut p = plugin(c"fake", c"Fake", &caps);
         p.abi_version = 2;
-        assert_eq!(validate(&p).err(), Some(KN_ERR_FORMAT));
+        assert_eq!(validate(&p).err(), Some(MIRELIA_ERR_FORMAT));
     }
 
     #[test]
@@ -842,11 +844,11 @@ mod tests {
         let caps = [capability(&vtable)];
         for id in [c"", c"Upper", c"has space", c"slash/x"] {
             let p = plugin(id, c"Fake", &caps);
-            assert_eq!(validate(&p).err(), Some(KN_ERR_FORMAT), "{id:?}");
+            assert_eq!(validate(&p).err(), Some(MIRELIA_ERR_FORMAT), "{id:?}");
         }
         let long = CString::new("a".repeat(65)).unwrap();
         let p = plugin(&long, c"Fake", &caps);
-        assert_eq!(validate(&p).err(), Some(KN_ERR_FORMAT));
+        assert_eq!(validate(&p).err(), Some(MIRELIA_ERR_FORMAT));
         let longest = CString::new("a".repeat(64)).unwrap();
         let p = plugin(&longest, c"Fake", &caps);
         assert!(validate(&p).is_ok());
@@ -854,7 +856,7 @@ mod tests {
         let unterminated = [b'a'; 65];
         let mut p = plugin(c"fake", c"Fake", &caps);
         p.id = unterminated.as_ptr().cast();
-        assert_eq!(validate(&p).err(), Some(KN_ERR_FORMAT));
+        assert_eq!(validate(&p).err(), Some(MIRELIA_ERR_FORMAT));
     }
 
     #[test]
@@ -863,37 +865,37 @@ mod tests {
         let caps = [capability(&vtable)];
         let long = CString::new("n".repeat(129)).unwrap();
         let p = plugin(c"fake", &long, &caps);
-        assert_eq!(validate(&p).err(), Some(KN_ERR_FORMAT));
+        assert_eq!(validate(&p).err(), Some(MIRELIA_ERR_FORMAT));
         let empty = plugin(c"fake", c"", &caps);
-        assert_eq!(validate(&empty).err(), Some(KN_ERR_FORMAT));
+        assert_eq!(validate(&empty).err(), Some(MIRELIA_ERR_FORMAT));
         let invalid_utf8 = CString::new(vec![0xff, 0xfe]).unwrap();
         let p = plugin(c"fake", &invalid_utf8, &caps);
-        assert_eq!(validate(&p).err(), Some(KN_ERR_FORMAT));
+        assert_eq!(validate(&p).err(), Some(MIRELIA_ERR_FORMAT));
         let unterminated = [b'n'; 129];
         let mut p = plugin(c"fake", c"Fake", &caps);
         p.name = unterminated.as_ptr().cast();
-        assert_eq!(validate(&p).err(), Some(KN_ERR_FORMAT));
+        assert_eq!(validate(&p).err(), Some(MIRELIA_ERR_FORMAT));
     }
 
     #[test]
     fn validate_rejects_no_capabilities() {
         let p = plugin(c"fake", c"Fake", &[]);
-        assert_eq!(validate(&p).err(), Some(KN_ERR_FORMAT));
+        assert_eq!(validate(&p).err(), Some(MIRELIA_ERR_FORMAT));
 
         let vtable = fake_vtable();
         let caps = vec![capability(&vtable)];
         let mut p = plugin(c"fake", c"Fake", &caps);
         p.capabilities = std::ptr::null();
-        assert_eq!(validate(&p).err(), Some(KN_ERR_FORMAT));
+        assert_eq!(validate(&p).err(), Some(MIRELIA_ERR_FORMAT));
 
         let many: Vec<_> = (0..33).map(|_| capability(&vtable)).collect();
         let p = plugin(c"fake", c"Fake", &many);
-        assert_eq!(validate(&p).err(), Some(KN_ERR_FORMAT));
+        assert_eq!(validate(&p).err(), Some(MIRELIA_ERR_FORMAT));
     }
 
     #[test]
     fn validate_rejects_a_null_function_pointer() {
-        let clear: [fn(&mut KnDspResamplerVtable); 6] = [
+        let clear: [fn(&mut MireliaDspResamplerVtable); 6] = [
             |v| v.create = None,
             |v| v.process = None,
             |v| v.flush = None,
@@ -906,15 +908,15 @@ mod tests {
             clear(&mut vtable);
             let caps = [capability(&vtable)];
             let p = plugin(c"fake", c"Fake", &caps);
-            assert_eq!(validate(&p).err(), Some(KN_ERR_FORMAT), "member {member}");
+            assert_eq!(validate(&p).err(), Some(MIRELIA_ERR_FORMAT), "member {member}");
         }
 
-        let null_vtable = [KnDspCapability {
-            kind: KN_DSP_KIND_RESAMPLER,
+        let null_vtable = [MireliaDspCapability {
+            kind: MIRELIA_DSP_KIND_RESAMPLER,
             vtable: std::ptr::null(),
         }];
         let p = plugin(c"fake", c"Fake", &null_vtable);
-        assert_eq!(validate(&p).err(), Some(KN_ERR_FORMAT));
+        assert_eq!(validate(&p).err(), Some(MIRELIA_ERR_FORMAT));
     }
 
     #[test]
@@ -922,7 +924,7 @@ mod tests {
         let vtable = fake_vtable();
         let caps = [
             // An unknown kind is skipped even with a null vtable.
-            KnDspCapability {
+            MireliaDspCapability {
                 kind: 99,
                 vtable: std::ptr::null(),
             },
@@ -936,17 +938,17 @@ mod tests {
     #[test]
     fn validate_reports_unsupported_with_only_unknown_kinds() {
         let caps = [
-            KnDspCapability {
+            MireliaDspCapability {
                 kind: 99,
                 vtable: std::ptr::null(),
             },
-            KnDspCapability {
+            MireliaDspCapability {
                 kind: 7,
                 vtable: std::ptr::null(),
             },
         ];
         let p = plugin(c"fake", c"Fake", &caps);
-        assert_eq!(validate(&p).err(), Some(KN_ERR_UNSUPPORTED));
+        assert_eq!(validate(&p).err(), Some(MIRELIA_ERR_UNSUPPORTED));
     }
 
     // ---- PluginResampler ----

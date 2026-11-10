@@ -85,11 +85,11 @@ fn enumerator() -> Result<IMMDeviceEnumerator, OutputError> {
         .map_err(|e| internal("create device enumerator", e))
 }
 
-// `kn_result` value for otherwise-unclassified mid-stream failures; mirrors
-// `KN_ERR_INTERNAL` in `audio_core.h`. Local literal, like the decode
+// `MireliaResult` value for otherwise-unclassified mid-stream failures; mirrors
+// `MireliaErrInternal` in `audio_core.h`. Local literal, like the decode
 // worker's error codes in `mirelia-audio`, since this crate cannot depend
 // on the ABI crate that owns the named constants.
-const KN_ERR_INTERNAL: i32 = -99;
+const MIRELIA_ERR_INTERNAL: i32 = -99;
 
 /// Classifies a WASAPI failure hit outside the render callback (in the loop
 /// that drives it) and reports it through the event path before the render
@@ -100,7 +100,7 @@ fn report_stream_error(events: &mut EventSink, e: &windows::core::Error) {
     if e.code() == AUDCLNT_E_DEVICE_INVALIDATED {
         events.push(EventKind::DeviceLost, 0, 0);
     } else {
-        events.push(EventKind::Error, 0, KN_ERR_INTERNAL);
+        events.push(EventKind::Error, 0, MIRELIA_ERR_INTERNAL);
     }
 }
 
