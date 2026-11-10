@@ -55,35 +55,18 @@ if (-not $env:VSCMD_VER) {
 
 .NET C# identifier naming rules and conversions (https://raw.githubusercontent.com/dotnet/docs/refs/heads/main/docs/csharp/fundamentals/coding-style/identifier-names.md).
 
-## C/C++ Naming conventions
+## C/C++ style
 
-Google C++ Style Guide (https://google.github.io/styleguide/cppguide.html) with the following modifications.
+Follow the Google C++ Style Guide, with these naming deviations:
 
-| Kind | Convention | Example |
-| --- | --- | --- |
-| Variables (incl. arguments) | `snake_case` | `file_path` |
-| Local variables | `snake_case` preferred; `camelCase` acceptable | `file_path` |
-| Functions | `camelCase` | `openFile()` |
-| Types (class, struct, enum, enum class, typedef, using) | `PascalCase` | `FileReader` |
-| Concepts | `PascalCase` | `Readable` |
-| Class data members | `snake_case` + trailing underscore | `file_path_` |
-| Struct data members | `snake_case` | `file_path` |
-| Constants (`constexpr`, etc.) | `k` + `PascalCase` | `kFilePath` |
-| Enumerators | `PascalCase` | `NotFound` |
-| Macros (discouraged) | `ALL_CAPS_WITH_UNDERSCORES` | `LOG_ERROR` |
-
-### Public C ABI
-
-- C has no namespaces, so every identifier declared in `native/include/mirelia/`
-  carries the project name as a prefix, in the case style of its kind:
+- Functions and methods: `camelCase` (e.g. `openFile()`), not PascalCase.
+- Enumerators: `PascalCase` (e.g. `NotFound`), no `k` prefix.
+- Local variables: `snake_case` preferred; `camelCase` acceptable.
+  Keep one style within a function, preferably within a file. Match the surrounding code.
+- Identifiers declared in `native/include/mirelia/` (the public C ABI; C has no namespaces)
+  carry the project name as a prefix, in the case style of their kind:
   `mireliaEngineCreate()`, `MireliaResult`, `MireliaOk`, `MIRELIA_ABI_VERSION`.
 
-### Consistency
-
-- Local variable style must be consistent within a function and, preferably, within a file. Match the surrounding code.
-
-### Exceptions
-
-- Deviate when aligning with STL or external library conventions,
-  e.g. `begin()`, `end()`, `value_type`, `iterator_category`.
-- Types intended to satisfy STL concepts follow STL naming.
+Exception: types meant to satisfy STL concepts, members mirroring STL interfaces
+(`push_back`, `value_type`, ...), and names mirroring an external API (r8brain's
+`r8b::CDSPResampler`, WASAPI's `WAVEFORMATEXTENSIBLE`) follow that naming.
