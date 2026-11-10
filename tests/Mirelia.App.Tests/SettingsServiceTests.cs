@@ -49,6 +49,23 @@ public sealed class SettingsServiceTests : IDisposable
     }
 
     [Fact]
+    public void ResamplerPluginIdDefaultsToTheBuiltIn()
+    {
+        var service = new SettingsService(Path.Combine(_root, "settings.json"));
+
+        Assert.Null(service.Current.ResamplerPluginId);
+    }
+
+    [Fact]
+    public void AResamplerPluginIdSurvivesAReload()
+    {
+        string path = Path.Combine(_root, "settings.json");
+        new SettingsService(path).Save(new AppSettings { ResamplerPluginId = "example.resampler" });
+
+        Assert.Equal("example.resampler", new SettingsService(path).Current.ResamplerPluginId);
+    }
+
+    [Fact]
     public void AnUnsupportedOutputSampleRateLoadsAsSameAsSource()
     {
         string path = Path.Combine(_root, "settings.json");

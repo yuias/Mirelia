@@ -117,6 +117,13 @@ public sealed record AppSettings
     /// exclusive mode. Tracks played at their own rate are never dithered.
     /// </summary>
     public bool DitherResampled { get; init; }
+
+    /// <summary>
+    /// Id of the resampler plugin used for tracks Mirelia resamples, or null
+    /// for the built-in one. A string because the available plugins are not
+    /// known at compile time; the engine decides whether the id is valid.
+    /// </summary>
+    public string? ResamplerPluginId { get; init; }
 }
 
 /// <summary>
