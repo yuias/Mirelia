@@ -9,6 +9,8 @@
 //! transport, seek, volume, probe, loudness scan. Plugin registration
 //! returns `KN_ERR_UNSUPPORTED`; it is post-v1.
 
+pub mod dsp;
+
 use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char};
 use std::path::PathBuf;
@@ -34,6 +36,7 @@ pub mod result {
     pub const KN_ERR_STATE: i32 = -8;
     pub const KN_ERR_OOM: i32 = -9;
     pub const KN_ERR_ABI_MISMATCH: i32 = -10;
+    pub const KN_ERR_PLUGIN: i32 = -11;
     pub const KN_ERR_INTERNAL: i32 = -99;
 }
 use result::*;
