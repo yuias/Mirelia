@@ -632,11 +632,11 @@ public sealed class LibraryService : IDisposable
     /// <see cref="RunAsync"/>; the separate connection is what keeps a long
     /// one from blocking hydration, artwork and settings behind it.
     /// </summary>
-    private Task<T> RunViewAsync<T>(
+    internal Task<T> RunViewAsync<T>(
         Func<T> operation, CancellationToken cancellationToken = default)
         => RunOnAsync(operation, _viewGate, () => _viewDb, cancellationToken);
 
-    private Task<T> RunAsync<T>(
+    internal Task<T> RunAsync<T>(
         Func<T> operation, CancellationToken cancellationToken = default)
         => RunOnAsync(operation, _gate, () => _db, cancellationToken);
 

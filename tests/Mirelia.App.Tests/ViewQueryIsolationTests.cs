@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Mirelia.App.Services;
 using Mirelia.Library.Database;
 using Mirelia.Library.Querying;
@@ -13,9 +12,17 @@ namespace Mirelia.App.Tests;
 /// paths — do not queue behind them. Sharing one connection is what turned "a
 /// slow playlist" into "the app is dead".
 /// </summary>
+/// <remarks>
+/// Each test holds one lane with an operation that does not finish until the
+/// test releases it, then requires a call on the other lane to complete. A call
+/// that shared the held lane could not complete, so the result does not depend
+/// on how fast the machine is.
+/// </remarks>
 public sealed class ViewQueryIsolationTests : IDisposable
 {
-    private const int TrackCount = 40_000;
+    // Bounds only the failure case, where the call is stuck behind the held
+    // lane; a passing run never waits on it.
+    private static readonly TimeSpan HangLimit = TimeSpan.FromSeconds(30);
 
     private readonly string _root = Path.Combine(
         Path.GetTempPath(), $"mirelia-iso-{Guid.NewGuid():N}");
@@ -26,49 +33,68 @@ public sealed class ViewQueryIsolationTests : IDisposable
     {
         Directory.CreateDirectory(_root);
         _dbPath = Path.Combine(_root, "library.db");
-        Seed(_dbPath, TrackCount);
+        Seed(_dbPath, 10);
     }
 
     public void Dispose() => Directory.Delete(_root, recursive: true);
 
     [Fact]
-    public async Task ShortReadsDoNotQueueBehindALongViewQuery()
+    public async Task HydrationCompletesWhileAViewQueryIsRunning()
     {
         using var service = new LibraryService(_dbPath);
         long[] ids = await service.BrowseAllAsync(TrackSortOrder.Artist);
-        Assert.Equal(TrackCount, ids.Length);
 
-        var clock = Stopwatch.StartNew();
-        Task view = Task.Run(async () =>
+        using var release = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<int> view = service.RunViewAsync(() =>
         {
-            // Re-sorting the whole id array is the heaviest thing the reload
-            // path does: a JSON array of every id, joined against five tables.
-            for (int i = 0; i < 8; i++)
-            {
-                await service.SortIdsAsync(ids, TrackSortOrder.Album);
-            }
+            entered.SetResult();
+            release.Wait();
+            return 0;
         });
 
-        // Hydration is what the grid does while scrolling; it must stay
-        // responsive while the view queries run.
-        var shortReads = Stopwatch.StartNew();
-        for (int i = 0; i < 20; i++)
+        try
         {
-            await service.HydrateAsync([.. ids.Skip(i * 100).Take(100)]);
+            await entered.Task;
+            Dictionary<long, TrackPageRow> rows =
+                await service.HydrateAsync(ids).WaitAsync(HangLimit);
+            Assert.Equal(ids.Length, rows.Count);
+        }
+        finally
+        {
+            release.Set();
         }
 
-        shortReads.Stop();
         await view;
-        clock.Stop();
+    }
 
-        // Serialized, the twenty short reads would take about as long as the
-        // view work they were interleaved with; overlapping, they cost only
-        // themselves. Half is a wide margin either way.
-        Assert.True(
-            shortReads.Elapsed < clock.Elapsed / 2,
-            $"twenty short reads took {shortReads.ElapsedMilliseconds} ms against "
-            + $"{clock.ElapsedMilliseconds} ms of view queries — they were "
-            + "serialized behind them");
+    [Fact]
+    public async Task SortingCompletesWhileTheShortReadConnectionIsBusy()
+    {
+        using var service = new LibraryService(_dbPath);
+        long[] ids = await service.BrowseAllAsync(TrackSortOrder.Artist);
+
+        using var release = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<int> shortRead = service.RunAsync(() =>
+        {
+            entered.SetResult();
+            release.Wait();
+            return 0;
+        });
+
+        try
+        {
+            await entered.Task;
+            long[] sorted = await service.SortIdsAsync(ids, TrackSortOrder.Album).WaitAsync(HangLimit);
+            Assert.Equal(ids.Order(), sorted.Order());
+        }
+        finally
+        {
+            release.Set();
+        }
+
+        await shortRead;
     }
 
     private static void Seed(string path, int count)
