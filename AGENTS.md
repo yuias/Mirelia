@@ -72,6 +72,12 @@ Google C++ Style Guide (https://google.github.io/styleguide/cppguide.html) with 
 | Enumerators | `PascalCase` | `NotFound` |
 | Macros (discouraged) | `ALL_CAPS_WITH_UNDERSCORES` | `LOG_ERROR` |
 
+### Public C ABI
+
+- C has no namespaces, so every identifier declared in `native/include/mirelia/`
+  carries the project name as a prefix, in the case style of its kind:
+  `mireliaEngineCreate()`, `MireliaResult`, `MireliaOk`, `MIRELIA_ABI_VERSION`.
+
 ### Consistency
 
 - Local variable style must be consistent within a function and, preferably, within a file. Match the surrounding code.
