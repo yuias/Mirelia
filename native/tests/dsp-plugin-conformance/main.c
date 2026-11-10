@@ -2,8 +2,8 @@
  * Conformance suite for Mirelia DSP resampler plugins.
  *
  * Loads the plugin under test dynamically (path given as argv[1]) and drives it
- * through kn_dsp_entry and the resampler vtable exactly as a host does, so any
- * plugin that passes behaves the same for the engine. No engine is needed.
+ * through mireliaDspEntry and the resampler vtable exactly as a host does, so
+ * any plugin that passes behaves the same for the engine. No engine is needed.
  * The contract being checked is documented in mirelia/audio_dsp.h.
  *
  * Every failure prints "FAIL [<tag>] <message> (<file>:<line>)". All checks run
@@ -280,11 +280,11 @@ static int validUtf8(const unsigned char *s, size_t n) {
 
 /* Returns the plugin, or NULL if its static contents are too broken to test further. */
 static const MireliaDspPlugin *checkEntry(MireliaDspEntryFn entry) {
-    CHECK("entry", entry(0xDEAD) == NULL, "kn_dsp_entry(0xDEAD) must return NULL");
+    CHECK("entry", entry(0xDEAD) == NULL, "mireliaDspEntry(0xDEAD) must return NULL");
 
     const MireliaDspPlugin *plugin = entry(MIRELIA_DSP_ABI_VERSION);
     if (plugin == NULL) {
-        FAIL("entry", "kn_dsp_entry(%d) returned NULL", MIRELIA_DSP_ABI_VERSION);
+        FAIL("entry", "mireliaDspEntry(%d) returned NULL", MIRELIA_DSP_ABI_VERSION);
         return NULL;
     }
     CHECK("entry", plugin->abi_version == MIRELIA_DSP_ABI_VERSION, "abi_version is %u",
@@ -849,9 +849,9 @@ int main(int argc, char **argv) {
         FAIL("entry", "cannot load %s", argv[1]);
         return 1;
     }
-    MireliaDspEntryFn entry = (MireliaDspEntryFn)libSym(lib, "kn_dsp_entry");
+    MireliaDspEntryFn entry = (MireliaDspEntryFn)libSym(lib, "mireliaDspEntry");
     if (entry == NULL) {
-        FAIL("entry", "kn_dsp_entry is not exported");
+        FAIL("entry", "mireliaDspEntry is not exported");
         return 1;
     }
 

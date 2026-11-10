@@ -269,7 +269,8 @@ static void testDspRegistration(const char *backend_path, const char *plugin_pat
     char backend[1024];
     if (makeAbsolute(backend_path, backend, sizeof(backend))) {
         CHECK(p_register_dsp_library(e, backend) == MireliaErrFormat,
-              "register_dsp_library reports MireliaErrFormat for a library without kn_dsp_entry");
+              "register_dsp_library reports MireliaErrFormat for a library without "
+              "mireliaDspEntry");
     } else {
         CHECK(0, "dsp: cannot make the backend path absolute");
     }

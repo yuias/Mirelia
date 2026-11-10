@@ -216,6 +216,6 @@ const MireliaDspPlugin kPlugin = {
 
 }  // namespace
 
-extern "C" MIRELIA_DSP_EXPORT const MireliaDspPlugin* kn_dsp_entry(uint32_t abi_version) {
+extern "C" MIRELIA_DSP_EXPORT const MireliaDspPlugin* mireliaDspEntry(uint32_t abi_version) {
     return abi_version == MIRELIA_DSP_ABI_VERSION ? &kPlugin : nullptr;
 }

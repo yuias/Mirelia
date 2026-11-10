@@ -312,7 +312,7 @@ static const MireliaDspPlugin kFixturePlugin = {
     kFixtureCapabilities,
 };
 
-MIRELIA_DSP_EXPORT const MireliaDspPlugin *kn_dsp_entry(uint32_t abi_version) {
+MIRELIA_DSP_EXPORT const MireliaDspPlugin *mireliaDspEntry(uint32_t abi_version) {
 #ifdef FIXTURE_FAULT_BAD_VERSION
     (void)abi_version;
     return &kFixturePlugin;

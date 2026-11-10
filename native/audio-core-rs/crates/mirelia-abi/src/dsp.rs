@@ -316,7 +316,7 @@ impl Drop for PluginLibrary {
     }
 }
 
-/// A plugin entry point: `kn_dsp_entry` in `audio_dsp.h`.
+/// A plugin entry point: `mireliaDspEntry` in `audio_dsp.h`.
 pub type EntryFn = unsafe extern "C" fn(u32) -> *const KnDspPlugin;
 
 /// A loaded library together with its validated description.
@@ -375,13 +375,13 @@ pub fn load_plugin(path: &str) -> Result<LoadedPlugin, i32> {
     let library = Arc::new(PluginLibrary { module });
 
     // SAFETY: `module` is loaded and the name is NUL-terminated.
-    let Some(entry) = (unsafe { GetProcAddress(module, s!("kn_dsp_entry")) }) else {
+    let Some(entry) = (unsafe { GetProcAddress(module, s!("mireliaDspEntry")) }) else {
         return Err(crate::fail(
             KN_ERR_FORMAT,
-            &format!("{path}: no kn_dsp_entry export"),
+            &format!("{path}: no mireliaDspEntry export"),
         ));
     };
-    // SAFETY: `audio_dsp.h` defines the signature of `kn_dsp_entry`.
+    // SAFETY: `audio_dsp.h` defines the signature of `mireliaDspEntry`.
     let entry = unsafe {
         std::mem::transmute::<unsafe extern "system" fn() -> isize, EntryFn>(entry)
     };

@@ -3,7 +3,7 @@
  *
  * A DSP plugin is a shared library exporting a single entry point:
  *
- *     const MireliaDspPlugin *kn_dsp_entry(uint32_t abi_version);
+ *     const MireliaDspPlugin *mireliaDspEntry(uint32_t abi_version);
  *
  * The entry point returns NULL if it does not implement `abi_version`. The
  * returned struct, its strings and its vtables are static data valid until the
