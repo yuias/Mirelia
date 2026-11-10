@@ -38,6 +38,7 @@ typedef enum kn_result {
     KN_ERR_STATE             = -8,
     KN_ERR_OOM               = -9,
     KN_ERR_ABI_MISMATCH      = -10,
+    KN_ERR_PLUGIN            = -11,  /* a DSP plugin failed; playback continued without it */
     KN_ERR_INTERNAL          = -99
 } kn_result;
 
@@ -221,6 +222,31 @@ kn_result kn_scan_loudness(kn_engine *e, const char *path,
 
 kn_result kn_register_decoder_library(kn_engine *e, const char *dll_path);
 kn_result kn_register_output_library (kn_engine *e, const char *dll_path);
+
+typedef enum kn_dsp_kind {
+    KN_DSP_KIND_RESAMPLER = 1
+} kn_dsp_kind;
+
+typedef struct kn_dsp_info {
+    const char  *id;
+    const char  *name;
+    kn_dsp_kind  kind;
+} kn_dsp_info;
+
+/* dll_path is an absolute UTF-8 path. Loads the library and validates it, on the
+ * calling thread. KN_ERR_UNSUPPORTED where plugins are not implemented, or for
+ * a plugin offering no kind this backend knows. */
+kn_result kn_register_dsp_library(kn_engine *e, const char *dll_path);
+
+/* Snapshot of one entry per registered capability: valid until the next call to
+ * kn_dsp_free or kn_dsp_enumerate. */
+kn_result kn_dsp_enumerate(kn_engine *e, const kn_dsp_info **out_infos, size_t *out_count);
+void      kn_dsp_free(kn_engine *e);
+
+/* Selects the resampler plugin by id; NULL selects the built-in resampler. Takes
+ * effect at the next kn_load into KN_SLOT_CURRENT. KN_ERR_INVALID_ARG for an id
+ * that is not registered. */
+kn_result kn_engine_set_resampler(kn_engine *e, const char *plugin_id);
 
 #ifdef __cplusplus
 }
