@@ -29,7 +29,7 @@ typedef struct MireliaOutputVtable {
     uint32_t    abi_version;
     const char *name;            /* backend id, e.g. "asio". Shown in device UI. */
 
-    /* Snapshot semantics identical to kn_devices_enumerate: the returned
+    /* Snapshot semantics identical to mireliaDevicesEnumerate: the returned
      * array is owned by the plugin and valid until the next enumerate or
      * enumerate_free call. */
     MireliaResult (*enumerate)(const MireliaDeviceInfo **out_devices, size_t *out_count);

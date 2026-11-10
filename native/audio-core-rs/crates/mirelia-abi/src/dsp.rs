@@ -352,7 +352,7 @@ pub fn load_plugin(path: &str) -> Result<LoadedPlugin, i32> {
     if !file.is_absolute() {
         return Err(crate::fail(
             KN_ERR_INVALID_ARG,
-            "kn_register_dsp_library: path is not absolute",
+            "mireliaRegisterDspLibrary: path is not absolute",
         ));
     }
     // Decided here because `LoadLibraryExW` reports a missing dependency with

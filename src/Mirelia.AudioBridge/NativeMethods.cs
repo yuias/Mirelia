@@ -86,25 +86,25 @@ internal static partial class NativeMethods
     }
 
     [LibraryImport(LibraryName)]
-    internal static partial KnResult kn_engine_create(in KnEngineConfig cfg, out nint engine);
+    internal static partial KnResult mireliaEngineCreate(in KnEngineConfig cfg, out nint engine);
 
     [LibraryImport(LibraryName)]
-    internal static partial void kn_engine_destroy(nint engine);
+    internal static partial void mireliaEngineDestroy(nint engine);
 
     [LibraryImport(LibraryName)]
-    internal static partial nint kn_engine_last_error(nint engine);
+    internal static partial nint mireliaEngineLastError(nint engine);
 
     [LibraryImport(LibraryName)]
-    internal static partial KnResult kn_get_position(nint engine, out KnPosition position);
+    internal static partial KnResult mireliaGetPosition(nint engine, out KnPosition position);
 
     [LibraryImport(LibraryName)]
-    internal static partial nuint kn_engine_poll_event(
+    internal static partial nuint mireliaEnginePollEvent(
         nint engine,
         [Out] KnEvent[] events,
         nuint capacity);
 
     [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
-    internal static partial KnResult kn_engine_open_device(
+    internal static partial KnResult mireliaEngineOpenDevice(
         nint engine,
         string? deviceId,
         int mode,
@@ -112,34 +112,35 @@ internal static partial class NativeMethods
         out KnStreamFormat actual);
 
     [LibraryImport(LibraryName)]
-    internal static partial KnResult kn_engine_close_device(nint engine);
+    internal static partial KnResult mireliaEngineCloseDevice(nint engine);
 
     [LibraryImport(LibraryName)]
-    internal static partial KnResult kn_load(nint engine, int slot, in KnLoadParams p);
+    internal static partial KnResult mireliaLoad(nint engine, int slot, in KnLoadParams p);
 
     [LibraryImport(LibraryName)]
-    internal static partial KnResult kn_clear(nint engine, int slot);
+    internal static partial KnResult mireliaClear(nint engine, int slot);
 
     [LibraryImport(LibraryName)]
-    internal static partial KnResult kn_play(nint engine);
+    internal static partial KnResult mireliaPlay(nint engine);
 
     [LibraryImport(LibraryName)]
-    internal static partial KnResult kn_pause(nint engine);
+    internal static partial KnResult mireliaPause(nint engine);
 
     [LibraryImport(LibraryName)]
-    internal static partial KnResult kn_stop(nint engine);
+    internal static partial KnResult mireliaStop(nint engine);
 
     [LibraryImport(LibraryName)]
-    internal static partial KnResult kn_seek(nint engine, long frame);
+    internal static partial KnResult mireliaSeek(nint engine, long frame);
 
     [LibraryImport(LibraryName)]
-    internal static partial KnResult kn_skip_to_next(nint engine);
+    internal static partial KnResult mireliaSkipToNext(nint engine);
 
     [LibraryImport(LibraryName)]
-    internal static partial KnResult kn_set_volume(nint engine, float gain);
+    internal static partial KnResult mireliaSetVolume(nint engine, float gain);
 
     [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
-    internal static partial KnResult kn_probe(nint engine, string path, out KnProbeResult result);
+    internal static partial KnResult mireliaProbe(
+        nint engine, string path, out KnProbeResult result);
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct KnDeviceInfo
@@ -158,11 +159,11 @@ internal static partial class NativeMethods
     }
 
     [LibraryImport(LibraryName)]
-    internal static partial KnResult kn_devices_enumerate(
+    internal static partial KnResult mireliaDevicesEnumerate(
         nint engine, out nint devices, out nuint count);
 
     [LibraryImport(LibraryName)]
-    internal static partial void kn_devices_free(nint engine);
+    internal static partial void mireliaDevicesFree(nint engine);
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct KnDspInfo
@@ -173,20 +174,20 @@ internal static partial class NativeMethods
     }
 
     [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
-    internal static partial KnResult kn_register_dsp_library(nint engine, string? dllPath);
+    internal static partial KnResult mireliaRegisterDspLibrary(nint engine, string? dllPath);
 
     [LibraryImport(LibraryName)]
-    internal static partial KnResult kn_dsp_enumerate(
+    internal static partial KnResult mireliaDspEnumerate(
         nint engine, out nint infos, out nuint count);
 
     [LibraryImport(LibraryName)]
-    internal static partial void kn_dsp_free(nint engine);
+    internal static partial void mireliaDspFree(nint engine);
 
     [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
-    internal static partial KnResult kn_engine_set_resampler(nint engine, string? pluginId);
+    internal static partial KnResult mireliaEngineSetResampler(nint engine, string? pluginId);
 
     [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
-    internal static partial KnResult kn_scan_loudness(
+    internal static partial KnResult mireliaScanLoudness(
         nint engine, string path, out float gainDb, out float peak);
 
     /// <summary>
@@ -195,6 +196,6 @@ internal static partial class NativeMethods
     /// </summary>
     internal static string LastError(nint engine)
     {
-        return Marshal.PtrToStringUTF8(kn_engine_last_error(engine)) ?? string.Empty;
+        return Marshal.PtrToStringUTF8(mireliaEngineLastError(engine)) ?? string.Empty;
     }
 }

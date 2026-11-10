@@ -81,11 +81,11 @@ typedef struct MireliaDeviceInfo {
     uint32_t    default_period_frames;
 } MireliaDeviceInfo;
 
-/* Snapshot: valid until the next call to kn_devices_free or kn_devices_enumerate. */
-MireliaResult kn_devices_enumerate(MireliaEngine *e,
-                                   const MireliaDeviceInfo **out_devices,
-                                   size_t *out_count);
-void          kn_devices_free(MireliaEngine *e);
+/* Snapshot: valid until the next call to mireliaDevicesFree or mireliaDevicesEnumerate. */
+MireliaResult mireliaDevicesEnumerate(MireliaEngine *e,
+                                      const MireliaDeviceInfo **out_devices,
+                                      size_t *out_count);
+void          mireliaDevicesFree(MireliaEngine *e);
 
 /* ---- engine lifecycle ------------------------------------------------- */
 
@@ -100,11 +100,11 @@ typedef struct MireliaEngineConfig {
                                     Exclusive mode with integer devices only. */
 } MireliaEngineConfig;
 
-MireliaResult kn_engine_create(const MireliaEngineConfig *cfg, MireliaEngine **out);
-void          kn_engine_destroy(MireliaEngine *e);
+MireliaResult mireliaEngineCreate(const MireliaEngineConfig *cfg, MireliaEngine **out);
+void          mireliaEngineDestroy(MireliaEngine *e);
 
 /* Human-readable detail for the most recent failure on this thread. */
-const char *kn_engine_last_error(MireliaEngine *e);
+const char *mireliaEngineLastError(MireliaEngine *e);
 
 /*
  * `desired` selects the output format of every stream until the device is
@@ -120,12 +120,12 @@ const char *kn_engine_last_error(MireliaEngine *e);
  *     device's native channel count. A non-zero channels opens the stream
  *     now. format and channel_mask are ignored.
  */
-MireliaResult kn_engine_open_device(MireliaEngine *e,
-                                    const char *device_id,   /* NULL = system default */
-                                    MireliaShareMode mode,
-                                    const MireliaStreamFormat *desired, /* NULL = follow source */
-                                    MireliaStreamFormat *out_actual);
-MireliaResult kn_engine_close_device(MireliaEngine *e);
+MireliaResult mireliaEngineOpenDevice(MireliaEngine *e,
+                                      const char *device_id,   /* NULL = system default */
+                                      MireliaShareMode mode,
+                                      const MireliaStreamFormat *desired, /* NULL = follow source */
+                                      MireliaStreamFormat *out_actual);
+MireliaResult mireliaEngineCloseDevice(MireliaEngine *e);
 
 /* ---- transport -------------------------------------------------------- */
 
@@ -146,17 +146,17 @@ typedef struct MireliaLoadParams {
     uint64_t    user_token;       /* echoed back in events. Host's track id. */
 } MireliaLoadParams;
 
-MireliaResult kn_load(MireliaEngine *e, MireliaSlot slot, const MireliaLoadParams *p);
-MireliaResult kn_clear(MireliaEngine *e, MireliaSlot slot);
+MireliaResult mireliaLoad(MireliaEngine *e, MireliaSlot slot, const MireliaLoadParams *p);
+MireliaResult mireliaClear(MireliaEngine *e, MireliaSlot slot);
 
-MireliaResult kn_play(MireliaEngine *e);
-MireliaResult kn_pause(MireliaEngine *e);
-MireliaResult kn_stop(MireliaEngine *e);          /* clears both slots */
-MireliaResult kn_seek(MireliaEngine *e, int64_t frame);
-MireliaResult kn_skip_to_next(MireliaEngine *e);  /* immediate, not gapless */
+MireliaResult mireliaPlay(MireliaEngine *e);
+MireliaResult mireliaPause(MireliaEngine *e);
+MireliaResult mireliaStop(MireliaEngine *e);          /* clears both slots */
+MireliaResult mireliaSeek(MireliaEngine *e, int64_t frame);
+MireliaResult mireliaSkipToNext(MireliaEngine *e);  /* immediate, not gapless */
 
 /* Linear gain, 0.0 .. 1.0+. Applied after ReplayGain. Smoothed internally. */
-MireliaResult kn_set_volume(MireliaEngine *e, float gain);
+MireliaResult mireliaSetVolume(MireliaEngine *e, float gain);
 
 typedef enum MireliaState {
     MireliaStateIdle = 0, MireliaStatePlaying, MireliaStatePaused, MireliaStateStalled
@@ -172,7 +172,7 @@ typedef struct MireliaPosition {
     float        buffer_fill;     /* 0..1, for the stall indicator */
 } MireliaPosition;
 
-MireliaResult kn_get_position(MireliaEngine *e, MireliaPosition *out);
+MireliaResult mireliaGetPosition(MireliaEngine *e, MireliaPosition *out);
 
 /* ---- events (polled) --------------------------------------------------- */
 
@@ -197,7 +197,7 @@ typedef struct MireliaEvent {
  * Drains up to `capacity` events. Returns the number written.
  * Safe to call from any single thread; must not be called concurrently.
  */
-size_t kn_engine_poll_event(MireliaEngine *e, MireliaEvent *out, size_t capacity);
+size_t mireliaEnginePollEvent(MireliaEngine *e, MireliaEvent *out, size_t capacity);
 
 /* ---- metadata probe (no playback) --------------------------------------- */
 
@@ -212,16 +212,16 @@ typedef struct MireliaProbeResult {
     char     codec[16];
 } MireliaProbeResult;
 
-MireliaResult kn_probe(MireliaEngine *e, const char *path, MireliaProbeResult *out);
+MireliaResult mireliaProbe(MireliaEngine *e, const char *path, MireliaProbeResult *out);
 
 /* EBU R128 scan. Blocking; call from a worker thread. */
-MireliaResult kn_scan_loudness(MireliaEngine *e, const char *path,
-                               float *out_gain_db, float *out_peak);
+MireliaResult mireliaScanLoudness(MireliaEngine *e, const char *path,
+                                  float *out_gain_db, float *out_peak);
 
 /* ---- plugins ------------------------------------------------------------ */
 
-MireliaResult kn_register_decoder_library(MireliaEngine *e, const char *dll_path);
-MireliaResult kn_register_output_library (MireliaEngine *e, const char *dll_path);
+MireliaResult mireliaRegisterDecoderLibrary(MireliaEngine *e, const char *dll_path);
+MireliaResult mireliaRegisterOutputLibrary (MireliaEngine *e, const char *dll_path);
 
 typedef enum MireliaDspKind {
     MireliaDspKindResampler = 1
@@ -236,19 +236,19 @@ typedef struct MireliaDspInfo {
 /* dll_path is an absolute UTF-8 path. Loads the library and validates it, on the
  * calling thread. MireliaErrUnsupported where plugins are not implemented, or for
  * a plugin offering no kind this backend knows. */
-MireliaResult kn_register_dsp_library(MireliaEngine *e, const char *dll_path);
+MireliaResult mireliaRegisterDspLibrary(MireliaEngine *e, const char *dll_path);
 
 /* Snapshot of one entry per registered plugin: valid until the next call to
- * kn_dsp_free or kn_dsp_enumerate. Only the first resampler capability of a
+ * mireliaDspFree or mireliaDspEnumerate. Only the first resampler capability of a
  * plugin is registered, because one id selects one resampler. */
-MireliaResult kn_dsp_enumerate(MireliaEngine *e, const MireliaDspInfo **out_infos,
-                               size_t *out_count);
-void          kn_dsp_free(MireliaEngine *e);
+MireliaResult mireliaDspEnumerate(MireliaEngine *e, const MireliaDspInfo **out_infos,
+                                  size_t *out_count);
+void          mireliaDspFree(MireliaEngine *e);
 
 /* Selects the resampler plugin by id; NULL selects the built-in resampler. Takes
- * effect at the next kn_load into MireliaSlotCurrent. MireliaErrInvalidArg for an id
+ * effect at the next mireliaLoad into MireliaSlotCurrent. MireliaErrInvalidArg for an id
  * that is not registered. */
-MireliaResult kn_engine_set_resampler(MireliaEngine *e, const char *plugin_id);
+MireliaResult mireliaEngineSetResampler(MireliaEngine *e, const char *plugin_id);
 
 #ifdef __cplusplus
 }

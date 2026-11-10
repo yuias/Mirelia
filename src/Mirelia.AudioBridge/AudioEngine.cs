@@ -35,7 +35,7 @@ public sealed class AudioEngine : IDisposable
         nint handle;
         try
         {
-            result = NativeMethods.kn_engine_create(in native, out handle);
+            result = NativeMethods.mireliaEngineCreate(in native, out handle);
         }
         catch (Exception ex) when (ex is DllNotFoundException or BadImageFormatException)
         {
@@ -58,7 +58,7 @@ public sealed class AudioEngine : IDisposable
     public PlaybackPosition GetPosition()
     {
         ThrowIfDisposed();
-        KnResult result = NativeMethods.kn_get_position(_handle, out NativeMethods.KnPosition p);
+        KnResult result = NativeMethods.mireliaGetPosition(_handle, out NativeMethods.KnPosition p);
         if (result != KnResult.Ok)
         {
             throw new AudioEngineException(result, NativeMethods.LastError(_handle));
@@ -96,7 +96,7 @@ public sealed class AudioEngine : IDisposable
             Format = 3,
             ChannelMask = 0,
         };
-        Check(NativeMethods.kn_engine_open_device(
+        Check(NativeMethods.mireliaEngineOpenDevice(
             _handle,
             deviceId,
             mode: exclusive ? 1 : 0,
@@ -109,7 +109,7 @@ public sealed class AudioEngine : IDisposable
     public void CloseDevice()
     {
         ThrowIfDisposed();
-        Check(NativeMethods.kn_engine_close_device(_handle));
+        Check(NativeMethods.mireliaEngineCloseDevice(_handle));
     }
 
     /// <summary>
@@ -137,7 +137,7 @@ public sealed class AudioEngine : IDisposable
                 GainDb = gainDb,
                 UserToken = userToken,
             };
-            Check(NativeMethods.kn_load(_handle, (int)slot, in native));
+            Check(NativeMethods.mireliaLoad(_handle, (int)slot, in native));
         }
     }
 
@@ -145,49 +145,49 @@ public sealed class AudioEngine : IDisposable
     public void Clear(AudioSlot slot)
     {
         ThrowIfDisposed();
-        Check(NativeMethods.kn_clear(_handle, (int)slot));
+        Check(NativeMethods.mireliaClear(_handle, (int)slot));
     }
 
     /// <summary>Starts or resumes playback.</summary>
     public void Play()
     {
         ThrowIfDisposed();
-        Check(NativeMethods.kn_play(_handle));
+        Check(NativeMethods.mireliaPlay(_handle));
     }
 
     /// <summary>Pauses playback, keeping the position.</summary>
     public void Pause()
     {
         ThrowIfDisposed();
-        Check(NativeMethods.kn_pause(_handle));
+        Check(NativeMethods.mireliaPause(_handle));
     }
 
     /// <summary>Stops playback and clears both slots.</summary>
     public void Stop()
     {
         ThrowIfDisposed();
-        Check(NativeMethods.kn_stop(_handle));
+        Check(NativeMethods.mireliaStop(_handle));
     }
 
     /// <summary>Seeks within the current source, in frames.</summary>
     public void Seek(long frame)
     {
         ThrowIfDisposed();
-        Check(NativeMethods.kn_seek(_handle, frame));
+        Check(NativeMethods.mireliaSeek(_handle, frame));
     }
 
     /// <summary>Jumps to the Next slot immediately (not gapless).</summary>
     public void SkipToNext()
     {
         ThrowIfDisposed();
-        Check(NativeMethods.kn_skip_to_next(_handle));
+        Check(NativeMethods.mireliaSkipToNext(_handle));
     }
 
     /// <summary>Sets linear output gain, 0.0 to 4.0. Smoothed internally.</summary>
     public void SetVolume(float gain)
     {
         ThrowIfDisposed();
-        Check(NativeMethods.kn_set_volume(_handle, gain));
+        Check(NativeMethods.mireliaSetVolume(_handle, gain));
     }
 
     /// <summary>Drains pending engine events (up to 32 per call).</summary>
@@ -195,7 +195,7 @@ public sealed class AudioEngine : IDisposable
     {
         ThrowIfDisposed();
         var buffer = new NativeMethods.KnEvent[32];
-        nuint n = NativeMethods.kn_engine_poll_event(_handle, buffer, (nuint)buffer.Length);
+        nuint n = NativeMethods.mireliaEnginePollEvent(_handle, buffer, (nuint)buffer.Length);
         var result = new List<AudioEvent>((int)n);
         for (nuint i = 0; i < n; i++)
         {
@@ -211,7 +211,7 @@ public sealed class AudioEngine : IDisposable
     public IReadOnlyList<AudioDeviceInfo> EnumerateDevices()
     {
         ThrowIfDisposed();
-        Check(NativeMethods.kn_devices_enumerate(_handle, out nint devices, out nuint count));
+        Check(NativeMethods.mireliaDevicesEnumerate(_handle, out nint devices, out nuint count));
         try
         {
             var result = new List<AudioDeviceInfo>((int)count);
@@ -233,7 +233,7 @@ public sealed class AudioEngine : IDisposable
         }
         finally
         {
-            NativeMethods.kn_devices_free(_handle);
+            NativeMethods.mireliaDevicesFree(_handle);
         }
     }
 
@@ -246,14 +246,14 @@ public sealed class AudioEngine : IDisposable
     public void RegisterDspLibrary(string path)
     {
         ThrowIfDisposed();
-        Check(NativeMethods.kn_register_dsp_library(_handle, path));
+        Check(NativeMethods.mireliaRegisterDspLibrary(_handle, path));
     }
 
     /// <summary>Lists the registered DSP plugin capabilities, one entry each.</summary>
     public IReadOnlyList<DspPluginInfo> EnumerateDsp()
     {
         ThrowIfDisposed();
-        Check(NativeMethods.kn_dsp_enumerate(_handle, out nint infos, out nuint count));
+        Check(NativeMethods.mireliaDspEnumerate(_handle, out nint infos, out nuint count));
         try
         {
             var result = new List<DspPluginInfo>((int)count);
@@ -273,7 +273,7 @@ public sealed class AudioEngine : IDisposable
         }
         finally
         {
-            NativeMethods.kn_dsp_free(_handle);
+            NativeMethods.mireliaDspFree(_handle);
         }
     }
 
@@ -286,7 +286,7 @@ public sealed class AudioEngine : IDisposable
     public void SetResampler(string? pluginId)
     {
         ThrowIfDisposed();
-        Check(NativeMethods.kn_engine_set_resampler(_handle, pluginId));
+        Check(NativeMethods.mireliaEngineSetResampler(_handle, pluginId));
     }
 
     /// <summary>
@@ -296,7 +296,7 @@ public sealed class AudioEngine : IDisposable
     public (float GainDb, float Peak) ScanLoudness(string path)
     {
         ThrowIfDisposed();
-        Check(NativeMethods.kn_scan_loudness(_handle, path, out float gain, out float peak));
+        Check(NativeMethods.mireliaScanLoudness(_handle, path, out float gain, out float peak));
         return (gain, peak);
     }
 
@@ -304,7 +304,7 @@ public sealed class AudioEngine : IDisposable
     public unsafe AudioProbeResult Probe(string path)
     {
         ThrowIfDisposed();
-        Check(NativeMethods.kn_probe(_handle, path, out NativeMethods.KnProbeResult p));
+        Check(NativeMethods.mireliaProbe(_handle, path, out NativeMethods.KnProbeResult p));
         string codec = System.Text.Encoding.ASCII
             .GetString(p.Codec, 16)
             .TrimEnd('\0');
@@ -322,7 +322,7 @@ public sealed class AudioEngine : IDisposable
     {
         if (_handle != nint.Zero)
         {
-            NativeMethods.kn_engine_destroy(_handle);
+            NativeMethods.mireliaEngineDestroy(_handle);
             _handle = nint.Zero;
         }
     }

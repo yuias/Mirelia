@@ -345,19 +345,19 @@ int main(int argc, char **argv) {
         const char *name;
         void **slot;
     } symbols[] = {
-        {"kn_engine_create", (void **)&p_create},
-        {"kn_engine_destroy", (void **)&p_destroy},
-        {"kn_engine_last_error", (void **)&p_last_error},
-        {"kn_get_position", (void **)&p_get_position},
-        {"kn_engine_poll_event", (void **)&p_poll_event},
-        {"kn_devices_enumerate", (void **)&p_devices_enumerate},
-        {"kn_engine_open_device", (void **)&p_open_device},
-        {"kn_engine_close_device", (void **)&p_close_device},
-        {"kn_probe", (void **)&p_probe},
-        {"kn_register_dsp_library", (void **)&p_register_dsp_library},
-        {"kn_dsp_enumerate", (void **)&p_dsp_enumerate},
-        {"kn_dsp_free", (void **)&p_dsp_free},
-        {"kn_engine_set_resampler", (void **)&p_engine_set_resampler},
+        {"mireliaEngineCreate", (void **)&p_create},
+        {"mireliaEngineDestroy", (void **)&p_destroy},
+        {"mireliaEngineLastError", (void **)&p_last_error},
+        {"mireliaGetPosition", (void **)&p_get_position},
+        {"mireliaEnginePollEvent", (void **)&p_poll_event},
+        {"mireliaDevicesEnumerate", (void **)&p_devices_enumerate},
+        {"mireliaEngineOpenDevice", (void **)&p_open_device},
+        {"mireliaEngineCloseDevice", (void **)&p_close_device},
+        {"mireliaProbe", (void **)&p_probe},
+        {"mireliaRegisterDspLibrary", (void **)&p_register_dsp_library},
+        {"mireliaDspEnumerate", (void **)&p_dsp_enumerate},
+        {"mireliaDspFree", (void **)&p_dsp_free},
+        {"mireliaEngineSetResampler", (void **)&p_engine_set_resampler},
     };
     for (size_t i = 0; i < sizeof(symbols) / sizeof(symbols[0]); i++) {
         *symbols[i].slot = libSym(lib, symbols[i].name);
