@@ -238,8 +238,9 @@ typedef struct kn_dsp_info {
  * a plugin offering no kind this backend knows. */
 kn_result kn_register_dsp_library(kn_engine *e, const char *dll_path);
 
-/* Snapshot of one entry per registered capability: valid until the next call to
- * kn_dsp_free or kn_dsp_enumerate. */
+/* Snapshot of one entry per registered plugin: valid until the next call to
+ * kn_dsp_free or kn_dsp_enumerate. Only the first resampler capability of a
+ * plugin is registered, because one id selects one resampler. */
 kn_result kn_dsp_enumerate(kn_engine *e, const kn_dsp_info **out_infos, size_t *out_count);
 void      kn_dsp_free(kn_engine *e);
 
