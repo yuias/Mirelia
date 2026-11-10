@@ -1,7 +1,7 @@
 namespace Mirelia.AudioBridge;
 
 /// <summary>
-/// Safe wrapper around a native <c>kn_engine</c> instance. All members must
+/// Safe wrapper around a native <c>MireliaEngine</c> instance. All members must
 /// be called from managed threads only; the native side never calls back.
 /// </summary>
 public sealed class AudioEngine : IDisposable
@@ -22,7 +22,7 @@ public sealed class AudioEngine : IDisposable
     /// </summary>
     public static AudioEngine Create(AudioEngineConfig config = default)
     {
-        var native = new NativeMethods.KnEngineConfig
+        var native = new NativeMethods.MireliaEngineConfig
         {
             AbiVersion = NativeMethods.AbiVersion,
             TargetLatencyMs = config.TargetLatencyMs,
@@ -60,7 +60,7 @@ public sealed class AudioEngine : IDisposable
         ThrowIfDisposed();
         MireliaResult result = NativeMethods.mireliaGetPosition(
             _handle,
-            out NativeMethods.KnPosition p);
+            out NativeMethods.MireliaPosition p);
         if (result != MireliaResult.Ok)
         {
             throw new AudioEngineException(result, NativeMethods.LastError(_handle));
@@ -91,7 +91,7 @@ public sealed class AudioEngine : IDisposable
         ThrowIfDisposed();
 
         // Channels 0 means "follow the source's channels"; Format 3 is f32.
-        NativeMethods.KnStreamFormat desired = new()
+        NativeMethods.MireliaStreamFormat desired = new()
         {
             SampleRate = outputSampleRate.GetValueOrDefault(),
             Channels = 0,
@@ -103,7 +103,7 @@ public sealed class AudioEngine : IDisposable
             deviceId,
             mode: exclusive ? 1 : 0,
             desired: outputSampleRate is null ? nint.Zero : (nint)(&desired),
-            out NativeMethods.KnStreamFormat actual));
+            out NativeMethods.MireliaStreamFormat actual));
         return (actual.SampleRate, actual.Channels);
     }
 
@@ -131,7 +131,7 @@ public sealed class AudioEngine : IDisposable
         byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(path + "\0");
         fixed (byte* p = utf8)
         {
-            var native = new NativeMethods.KnLoadParams
+            var native = new NativeMethods.MireliaLoadParams
             {
                 Path = (nint)p,
                 StartFrame = startFrame,
@@ -196,12 +196,12 @@ public sealed class AudioEngine : IDisposable
     public IReadOnlyList<AudioEvent> PollEvents()
     {
         ThrowIfDisposed();
-        var buffer = new NativeMethods.KnEvent[32];
+        var buffer = new NativeMethods.MireliaEvent[32];
         nuint n = NativeMethods.mireliaEnginePollEvent(_handle, buffer, (nuint)buffer.Length);
         var result = new List<AudioEvent>((int)n);
         for (nuint i = 0; i < n; i++)
         {
-            NativeMethods.KnEvent e = buffer[i];
+            NativeMethods.MireliaEvent e = buffer[i];
             result.Add(new AudioEvent(
                 (AudioEventType)e.Type, e.UserToken, (MireliaResult)e.Code, e.HostTimeNs));
         }
@@ -218,11 +218,11 @@ public sealed class AudioEngine : IDisposable
         {
             var result = new List<AudioDeviceInfo>((int)count);
             int size = System.Runtime.InteropServices.Marshal
-                .SizeOf<NativeMethods.KnDeviceInfo>();
+                .SizeOf<NativeMethods.MireliaDeviceInfo>();
             for (nuint i = 0; i < count; i++)
             {
-                NativeMethods.KnDeviceInfo native = System.Runtime.InteropServices.Marshal
-                    .PtrToStructure<NativeMethods.KnDeviceInfo>(devices + (nint)i * size);
+                NativeMethods.MireliaDeviceInfo native = System.Runtime.InteropServices.Marshal
+                    .PtrToStructure<NativeMethods.MireliaDeviceInfo>(devices + (nint)i * size);
                 result.Add(new AudioDeviceInfo(
                     System.Runtime.InteropServices.Marshal.PtrToStringUTF8(native.Id) ?? string.Empty,
                     System.Runtime.InteropServices.Marshal.PtrToStringUTF8(native.Name) ?? "(unknown)",
@@ -260,11 +260,11 @@ public sealed class AudioEngine : IDisposable
         {
             var result = new List<DspPluginInfo>((int)count);
             int size = System.Runtime.InteropServices.Marshal
-                .SizeOf<NativeMethods.KnDspInfo>();
+                .SizeOf<NativeMethods.MireliaDspInfo>();
             for (nuint i = 0; i < count; i++)
             {
-                NativeMethods.KnDspInfo native = System.Runtime.InteropServices.Marshal
-                    .PtrToStructure<NativeMethods.KnDspInfo>(infos + (nint)i * size);
+                NativeMethods.MireliaDspInfo native = System.Runtime.InteropServices.Marshal
+                    .PtrToStructure<NativeMethods.MireliaDspInfo>(infos + (nint)i * size);
                 result.Add(new DspPluginInfo(
                     System.Runtime.InteropServices.Marshal.PtrToStringUTF8(native.Id) ?? string.Empty,
                     System.Runtime.InteropServices.Marshal.PtrToStringUTF8(native.Name) ?? string.Empty,
@@ -306,7 +306,7 @@ public sealed class AudioEngine : IDisposable
     public unsafe AudioProbeResult Probe(string path)
     {
         ThrowIfDisposed();
-        Check(NativeMethods.mireliaProbe(_handle, path, out NativeMethods.KnProbeResult p));
+        Check(NativeMethods.mireliaProbe(_handle, path, out NativeMethods.MireliaProbeResult p));
         string codec = System.Text.Encoding.ASCII
             .GetString(p.Codec, 16)
             .TrimEnd('\0');

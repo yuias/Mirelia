@@ -1,7 +1,7 @@
 namespace Mirelia.AudioBridge;
 
 /// <summary>
-/// Kind of a DSP plugin capability. Mirrors <c>kn_dsp_kind</c> in
+/// Kind of a DSP plugin capability. Mirrors <c>MireliaDspKind</c> in
 /// <c>audio_core.h</c>.
 /// </summary>
 public enum DspKind

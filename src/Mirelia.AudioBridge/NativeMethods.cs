@@ -20,7 +20,7 @@ internal static partial class NativeMethods
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct KnEngineConfig
+    internal struct MireliaEngineConfig
     {
         public uint AbiVersion;
         public uint TargetLatencyMs;
@@ -30,7 +30,7 @@ internal static partial class NativeMethods
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct KnPosition
+    internal struct MireliaPosition
     {
         public int State;
         public ulong UserToken;
@@ -42,7 +42,7 @@ internal static partial class NativeMethods
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct KnEvent
+    internal struct MireliaEvent
     {
         public int Type;
         public ulong UserToken;
@@ -51,7 +51,7 @@ internal static partial class NativeMethods
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct KnStreamFormat
+    internal struct MireliaStreamFormat
     {
         public uint SampleRate;
         public ushort Channels;
@@ -60,7 +60,7 @@ internal static partial class NativeMethods
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct KnLoadParams
+    internal struct MireliaLoadParams
     {
         public nint Path;
         public long StartFrame;
@@ -73,7 +73,7 @@ internal static partial class NativeMethods
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    internal unsafe struct KnProbeResult
+    internal unsafe struct MireliaProbeResult
     {
         public uint SampleRate;
         public ushort Channels;
@@ -87,7 +87,7 @@ internal static partial class NativeMethods
 
     [LibraryImport(LibraryName)]
     internal static partial MireliaResult mireliaEngineCreate(
-        in KnEngineConfig cfg,
+        in MireliaEngineConfig cfg,
         out nint engine);
 
     [LibraryImport(LibraryName)]
@@ -97,12 +97,14 @@ internal static partial class NativeMethods
     internal static partial nint mireliaEngineLastError(nint engine);
 
     [LibraryImport(LibraryName)]
-    internal static partial MireliaResult mireliaGetPosition(nint engine, out KnPosition position);
+    internal static partial MireliaResult mireliaGetPosition(
+        nint engine,
+        out MireliaPosition position);
 
     [LibraryImport(LibraryName)]
     internal static partial nuint mireliaEnginePollEvent(
         nint engine,
-        [Out] KnEvent[] events,
+        [Out] MireliaEvent[] events,
         nuint capacity);
 
     [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
@@ -111,13 +113,16 @@ internal static partial class NativeMethods
         string? deviceId,
         int mode,
         nint desired,
-        out KnStreamFormat actual);
+        out MireliaStreamFormat actual);
 
     [LibraryImport(LibraryName)]
     internal static partial MireliaResult mireliaEngineCloseDevice(nint engine);
 
     [LibraryImport(LibraryName)]
-    internal static partial MireliaResult mireliaLoad(nint engine, int slot, in KnLoadParams p);
+    internal static partial MireliaResult mireliaLoad(
+        nint engine,
+        int slot,
+        in MireliaLoadParams p);
 
     [LibraryImport(LibraryName)]
     internal static partial MireliaResult mireliaClear(nint engine, int slot);
@@ -142,10 +147,10 @@ internal static partial class NativeMethods
 
     [LibraryImport(LibraryName, StringMarshalling = StringMarshalling.Utf8)]
     internal static partial MireliaResult mireliaProbe(
-        nint engine, string path, out KnProbeResult result);
+        nint engine, string path, out MireliaProbeResult result);
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct KnDeviceInfo
+    internal struct MireliaDeviceInfo
     {
         public nint Id;
         public nint Name;
@@ -168,7 +173,7 @@ internal static partial class NativeMethods
     internal static partial void mireliaDevicesFree(nint engine);
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct KnDspInfo
+    internal struct MireliaDspInfo
     {
         public nint Id;
         public nint Name;

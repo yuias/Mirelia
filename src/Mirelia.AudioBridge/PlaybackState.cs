@@ -1,6 +1,6 @@
 namespace Mirelia.AudioBridge;
 
-/// <summary>Transport state. Mirrors <c>kn_state</c> in <c>audio_core.h</c>.</summary>
+/// <summary>Transport state. Mirrors <c>MireliaState</c> in <c>audio_core.h</c>.</summary>
 public enum PlaybackState
 {
     /// <summary>No source loaded.</summary>

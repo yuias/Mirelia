@@ -16,7 +16,7 @@ public enum DitherMode
     Resampled = 2,
 }
 
-/// <summary>Engine creation options. Mirrors <c>kn_engine_config</c>.</summary>
+/// <summary>Engine creation options. Mirrors <c>MireliaEngineConfig</c>.</summary>
 /// <param name="TargetLatencyMs">Output latency hint in milliseconds; 0 = backend default.</param>
 /// <param name="DecodeAheadMs">Decode-ahead ring buffer depth in milliseconds; 0 = backend default.</param>
 /// <param name="AllowResample">When false, playback fails rather than resamples.</param>
