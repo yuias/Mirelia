@@ -26,7 +26,7 @@ public sealed class AudioEngineDspTests : IDisposable
     {
         var ex = Assert.Throws<AudioEngineException>(() => _engine.SetResampler("no-such-plugin"));
 
-        Assert.Equal(KnResult.InvalidArg, ex.Result);
+        Assert.Equal(MireliaResult.InvalidArg, ex.Result);
     }
 
     [Fact]
@@ -41,6 +41,6 @@ public sealed class AudioEngineDspTests : IDisposable
 
         var ex = Assert.Throws<AudioEngineException>(() => _engine.RegisterDspLibrary(missing));
 
-        Assert.Equal(KnResult.Io, ex.Result);
+        Assert.Equal(MireliaResult.Io, ex.Result);
     }
 }

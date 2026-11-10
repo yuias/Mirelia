@@ -6,7 +6,7 @@ public sealed class AudioEngineException : Exception
     /// <summary>Creates an exception for a failed native call.</summary>
     /// <param name="result">The native result code.</param>
     /// <param name="detail">The backend's last-error text, if any.</param>
-    public AudioEngineException(KnResult result, string detail)
+    public AudioEngineException(MireliaResult result, string detail)
         : base(string.IsNullOrEmpty(detail) ? $"Audio core call failed: {result}." : $"Audio core call failed: {result}. {detail}")
     {
         Result = result;
@@ -16,12 +16,12 @@ public sealed class AudioEngineException : Exception
     /// <param name="result">The native result code the failure maps to.</param>
     /// <param name="message">The message to surface.</param>
     /// <param name="inner">The underlying exception.</param>
-    public AudioEngineException(KnResult result, string message, Exception inner)
+    public AudioEngineException(MireliaResult result, string message, Exception inner)
         : base(message, inner)
     {
         Result = result;
     }
 
     /// <summary>The native result code of the failed call.</summary>
-    public KnResult Result { get; }
+    public MireliaResult Result { get; }
 }

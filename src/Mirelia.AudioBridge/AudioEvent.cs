@@ -1,6 +1,6 @@
 namespace Mirelia.AudioBridge;
 
-/// <summary>Event kinds. Mirrors <c>kn_event_type</c> in <c>audio_core.h</c>.</summary>
+/// <summary>Event kinds. Mirrors <c>MireliaEventType</c> in <c>audio_core.h</c>.</summary>
 public enum AudioEventType
 {
     /// <summary>Transport state changed asynchronously.</summary>
@@ -28,15 +28,15 @@ public enum AudioEventType
 /// <summary>One engine event drained by <see cref="AudioEngine.PollEvents"/>.</summary>
 /// <param name="Type">What happened.</param>
 /// <param name="UserToken">The host token passed at load time.</param>
-/// <param name="Code">A <see cref="KnResult"/> for errors; 0 otherwise.</param>
+/// <param name="Code">A <see cref="MireliaResult"/> for errors; 0 otherwise.</param>
 /// <param name="HostTimeNs">Monotonic timestamp of the event.</param>
 public readonly record struct AudioEvent(
     AudioEventType Type,
     ulong UserToken,
-    KnResult Code,
+    MireliaResult Code,
     ulong HostTimeNs);
 
-/// <summary>The two source slots. Mirrors <c>kn_slot</c>.</summary>
+/// <summary>The two source slots. Mirrors <c>MireliaSlot</c>.</summary>
 public enum AudioSlot
 {
     /// <summary>What is playing (or will play).</summary>

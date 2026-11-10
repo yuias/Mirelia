@@ -1,10 +1,10 @@
 namespace Mirelia.AudioBridge;
 
 /// <summary>
-/// Result codes returned by the native audio core. Mirrors <c>kn_result</c>
+/// Result codes returned by the native audio core. Mirrors <c>MireliaResult</c>
 /// in <c>audio_core.h</c>; the header is authoritative.
 /// </summary>
-public enum KnResult
+public enum MireliaResult
 {
     /// <summary>Success.</summary>
     Ok = 0,

@@ -16,8 +16,8 @@ public sealed class AudioEngine : IDisposable
     /// <summary>
     /// Creates an engine, negotiating ABI v1 with whichever backend the
     /// resolver loaded. Throws <see cref="AudioEngineException"/> with
-    /// <see cref="KnResult.AbiMismatch"/> if the backend is stale, or with
-    /// <see cref="KnResult.Unsupported"/> if the backend library is missing
+    /// <see cref="MireliaResult.AbiMismatch"/> if the backend is stale, or with
+    /// <see cref="MireliaResult.Unsupported"/> if the backend library is missing
     /// altogether.
     /// </summary>
     public static AudioEngine Create(AudioEngineConfig config = default)
@@ -31,7 +31,7 @@ public sealed class AudioEngine : IDisposable
             DitherToInt = (int)config.Dither,
         };
 
-        KnResult result;
+        MireliaResult result;
         nint handle;
         try
         {
@@ -44,12 +44,12 @@ public sealed class AudioEngine : IDisposable
             // AudioEngineException everywhere; a raw loader exception from a
             // WinExe is a silent exit instead.
             throw new AudioEngineException(
-                KnResult.Unsupported,
+                MireliaResult.Unsupported,
                 $"The audio backend library could not be loaded. {ex.Message}",
                 ex);
         }
 
-        return result == KnResult.Ok
+        return result == MireliaResult.Ok
             ? new AudioEngine(handle)
             : throw new AudioEngineException(result, NativeMethods.LastError(nint.Zero));
     }
@@ -58,8 +58,10 @@ public sealed class AudioEngine : IDisposable
     public PlaybackPosition GetPosition()
     {
         ThrowIfDisposed();
-        KnResult result = NativeMethods.mireliaGetPosition(_handle, out NativeMethods.KnPosition p);
-        if (result != KnResult.Ok)
+        MireliaResult result = NativeMethods.mireliaGetPosition(
+            _handle,
+            out NativeMethods.KnPosition p);
+        if (result != MireliaResult.Ok)
         {
             throw new AudioEngineException(result, NativeMethods.LastError(_handle));
         }
@@ -78,7 +80,7 @@ public sealed class AudioEngine : IDisposable
     /// Opens an output device (null = system default) and returns the
     /// negotiated sample rate and channel count. Exclusive mode is
     /// bit-perfect (no OS mixer) but can fail with
-    /// <see cref="KnResult.DeviceBusy"/> or <see cref="KnResult.Format"/>.
+    /// <see cref="MireliaResult.DeviceBusy"/> or <see cref="MireliaResult.Format"/>.
     /// A non-null <paramref name="outputSampleRate"/> makes the engine convert
     /// every track to that rate and keep the channel count of the source;
     /// null plays each track at its own rate.
@@ -201,7 +203,7 @@ public sealed class AudioEngine : IDisposable
         {
             NativeMethods.KnEvent e = buffer[i];
             result.Add(new AudioEvent(
-                (AudioEventType)e.Type, e.UserToken, (KnResult)e.Code, e.HostTimeNs));
+                (AudioEventType)e.Type, e.UserToken, (MireliaResult)e.Code, e.HostTimeNs));
         }
 
         return result;
@@ -241,7 +243,7 @@ public sealed class AudioEngine : IDisposable
     /// Loads and validates a DSP plugin library. Registering does not select
     /// it; see <see cref="SetResampler"/>. <paramref name="path"/> must be
     /// absolute. Throws <see cref="AudioEngineException"/> with
-    /// <see cref="KnResult.Unsupported"/> where plugins are not implemented.
+    /// <see cref="MireliaResult.Unsupported"/> where plugins are not implemented.
     /// </summary>
     public void RegisterDspLibrary(string path)
     {
@@ -281,7 +283,7 @@ public sealed class AudioEngine : IDisposable
     /// Selects the resampler plugin by id; null selects the built-in resampler.
     /// Takes effect at the next load into <see cref="AudioSlot.Current"/>.
     /// Throws <see cref="AudioEngineException"/> with
-    /// <see cref="KnResult.InvalidArg"/> for an id that is not registered.
+    /// <see cref="MireliaResult.InvalidArg"/> for an id that is not registered.
     /// </summary>
     public void SetResampler(string? pluginId)
     {
@@ -327,9 +329,9 @@ public sealed class AudioEngine : IDisposable
         }
     }
 
-    private void Check(KnResult result)
+    private void Check(MireliaResult result)
     {
-        if (result != KnResult.Ok)
+        if (result != MireliaResult.Ok)
         {
             throw new AudioEngineException(result, NativeMethods.LastError(_handle));
         }

@@ -591,7 +591,7 @@ public sealed class AudioPlayerService : IDisposable
 
                         break;
 
-                    case AudioEventType.Error when ev.Code == KnResult.Plugin:
+                    case AudioEventType.Error when ev.Code == MireliaResult.Plugin:
                         PlaybackError?.Invoke("resampler plugin failed; using the built-in resampler");
                         break;
 
@@ -807,7 +807,9 @@ public sealed class AudioPlayerService : IDisposable
             _engine.OpenDevice(settings.DeviceId, settings.Exclusive, settings.OutputSampleRate);
         }
         catch (AudioEngineException ex) when (settings.Exclusive
-            && ex.Result is KnResult.DeviceBusy or KnResult.Format or KnResult.Unsupported)
+            && ex.Result is MireliaResult.DeviceBusy
+                or MireliaResult.Format
+                or MireliaResult.Unsupported)
         {
             // Bit-perfect denied (device busy or format not offered):
             // shared mode beats silence.
@@ -845,7 +847,7 @@ public sealed class AudioPlayerService : IDisposable
         }
         catch (AudioEngineException ex) when (
             _settings.Current is { Exclusive: true, OutputSampleRate: not null }
-            && ex.Result is KnResult.DeviceBusy or KnResult.Format)
+            && ex.Result is MireliaResult.DeviceBusy or MireliaResult.Format)
         {
             // Every track plays at the same fixed rate, so a rejection is
             // expected to repeat for later tracks (a channel-count change can
