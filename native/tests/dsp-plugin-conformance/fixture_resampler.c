@@ -12,10 +12,12 @@
  * input frames (its look-ahead), which is what keeps the alignment natural: no
  * output frame is ever dropped to compensate a delay.
  *
- * Deliberately wrong variants of this plugin are selected by compile
- * definitions. Each deviation sits in one of the small helpers below
- * (fixture_out_frames, fixture_holdback, fixture_emit_frame and the vtable
- * members), so a variant changes one place.
+ * Deliberately wrong variants of this plugin are selected by one compile
+ * definition each, FIXTURE_FAULT_<NAME> (for example FIXTURE_FAULT_DELAY). With
+ * none defined the plugin follows the contract. Each deviation sits in one of
+ * the small helpers below (fixture_out_frames, fixture_capacity_ok,
+ * fixture_emit_frame and the vtable members), so a variant changes one place.
+ * The suite must report each variant under the check named in CMakeLists.txt.
  */
 
 #include <math.h>
@@ -45,6 +47,9 @@ typedef struct fixture_ctx {
     uint64_t base;
     uint64_t count;
     uint64_t hist_cap;  /* in frames */
+#ifdef FIXTURE_FAULT_FAIL_MIDSTREAM
+    uint64_t calls;     /* process calls in the current run */
+#endif
 } fixture_ctx;
 
 static uint64_t gcd_u64(uint64_t a, uint64_t b) {
@@ -58,7 +63,22 @@ static uint64_t gcd_u64(uint64_t a, uint64_t b) {
 
 /* out(n) = ceil(n * out_rate / in_rate) */
 static uint64_t fixture_out_frames(const fixture_ctx *c, uint64_t n) {
+#ifdef FIXTURE_FAULT_FLOOR_LENGTH
+    return n * c->out_rate / c->in_rate;
+#else
     return (n * c->out_rate + c->in_rate - 1) / c->in_rate;
+#endif
+}
+
+/* Whether a call may proceed with `capacity` frames when it needs `needed`. */
+static int fixture_capacity_ok(uint64_t capacity, uint64_t needed) {
+#ifdef FIXTURE_FAULT_IGNORE_CAPACITY
+    (void)capacity;
+    (void)needed;
+    return 1;
+#else
+    return capacity >= needed;
+#endif
 }
 
 /* Output frames that can be produced from `fed` frames without zero padding. */
@@ -98,18 +118,31 @@ static void fixture_build_kernels(fixture_ctx *c) {
 
 /* Writes output frame m. Source frames outside [0, fed) are zeros. */
 static void fixture_emit_frame(const fixture_ctx *c, uint64_t m, float *out_frame) {
+#ifdef FIXTURE_FAULT_DELAY
+    /* Frame 0 repeats, so the output is the signal delayed by one frame. */
+    m = m > 0 ? m - 1 : 0;
+#endif
     uint64_t pos = m * c->in_rate;
+#ifdef FIXTURE_FAULT_DRIFT
+    /* Scales the time step by 1 + 1e-8. The extra is below one table phase for
+     * every short run, so only a run of millions of frames is audibly off. */
+    pos += pos / 100000000u;
+#endif
     int64_t n0 = (int64_t)(pos / c->out_rate);
     uint64_t phase = (pos % c->out_rate) / c->gcd;
     const double *kernel = c->kernels + phase * (uint64_t)(2 * c->half);
     int64_t first = n0 - c->half + 1;
 
     for (uint16_t ch = 0; ch < c->channels; ch++) {
+        uint16_t src_ch = ch;
+#ifdef FIXTURE_FAULT_SWAP_CHANNELS
+        src_ch = (uint16_t)(c->channels - 1 - ch);
+#endif
         double acc = 0.0;
         for (int64_t j = 0; j < 2 * c->half; j++) {
             int64_t k = first + j;
             if (k >= 0 && (uint64_t)k < c->fed) {
-                acc += kernel[j] * (double)c->hist[((uint64_t)k - c->base) * c->channels + ch];
+                acc += kernel[j] * (double)c->hist[((uint64_t)k - c->base) * c->channels + src_ch];
             }
         }
         out_frame[ch] = (float)acc;
@@ -142,14 +175,24 @@ static kn_result fixture_create(uint32_t in_rate, uint32_t out_rate, uint16_t ch
 static int64_t fixture_process(void *ctx, const float *in, int64_t in_frames, float *out,
                                int64_t out_capacity) {
     fixture_ctx *c = (fixture_ctx *)ctx;
+#ifdef FIXTURE_FAULT_FAIL_MIDSTREAM
+    if (++c->calls >= 64) {
+        return KN_ERR_INTERNAL;
+    }
+#endif
     if (c->flushed) {
+#ifdef FIXTURE_FAULT_PROCESS_AFTER_FLUSH
+        return 0;
+#else
         return KN_ERR_STATE;
+#endif
     }
     if (in_frames < 0 || out_capacity < 0) {
         return KN_ERR_INVALID_ARG;
     }
     uint64_t new_fed = c->fed + (uint64_t)in_frames;
-    if ((uint64_t)out_capacity < fixture_out_frames(c, new_fed) - c->emitted) {
+    if (!fixture_capacity_ok((uint64_t)out_capacity,
+                             fixture_out_frames(c, new_fed) - c->emitted)) {
         return KN_ERR_INVALID_ARG;
     }
 
@@ -176,9 +219,20 @@ static int64_t fixture_process(void *ctx, const float *in, int64_t in_frames, fl
         c->emitted++;
         written++;
     }
+#ifdef FIXTURE_FAULT_SPLIT
+    /* Depends on where the host cut its input into calls. */
+    if (written > 0) {
+        out[0] += 1e-4f;
+    }
+#endif
 
     /* Drop source frames no later output frame reads. */
-    int64_t keep_from = (int64_t)(c->emitted * c->in_rate / c->out_rate) - c->half + 1;
+    uint64_t next = c->emitted;
+#ifdef FIXTURE_FAULT_DELAY
+    /* The next frame reads the source position of the one before it. */
+    next = next > 0 ? next - 1 : 0;
+#endif
+    int64_t keep_from = (int64_t)(next * c->in_rate / c->out_rate) - c->half + 1;
     if (keep_from > (int64_t)c->base) {
         uint64_t drop = (uint64_t)keep_from - c->base;
         memmove(c->hist, c->hist + drop * c->channels,
@@ -192,7 +246,7 @@ static int64_t fixture_process(void *ctx, const float *in, int64_t in_frames, fl
 static int64_t fixture_flush(void *ctx, float *out, int64_t out_capacity) {
     fixture_ctx *c = (fixture_ctx *)ctx;
     uint64_t pending = fixture_out_frames(c, c->fed) - c->emitted;
-    if (out_capacity < 0 || (uint64_t)out_capacity < pending) {
+    if (out_capacity < 0 || !fixture_capacity_ok((uint64_t)out_capacity, pending)) {
         return KN_ERR_INVALID_ARG;
     }
     int64_t written = 0;
@@ -207,7 +261,12 @@ static int64_t fixture_flush(void *ctx, float *out, int64_t out_capacity) {
 
 static int64_t fixture_pending_frames(void *ctx) {
     fixture_ctx *c = (fixture_ctx *)ctx;
+#ifdef FIXTURE_FAULT_PENDING_ZERO
+    (void)c;
+    return 0;
+#else
     return (int64_t)(fixture_out_frames(c, c->fed) - c->emitted);
+#endif
 }
 
 static kn_result fixture_reset(void *ctx) {
@@ -215,8 +274,17 @@ static kn_result fixture_reset(void *ctx) {
     c->fed = 0;
     c->emitted = 0;
     c->flushed = 0;
+#ifdef FIXTURE_FAULT_FAIL_MIDSTREAM
+    c->calls = 0;
+#endif
+#ifdef FIXTURE_FAULT_RESET_STALE
+    /* Keeps the previous run's frames, which the next run then reads as its own
+     * first input. base is rewound so the stale frames stay inside the buffer. */
+    c->base = 0;
+#else
     c->base = 0;
     c->count = 0;
+#endif
     return KN_OK;
 }
 
@@ -245,5 +313,10 @@ static const kn_dsp_plugin fixture_plugin = {
 };
 
 KN_DSP_EXPORT const kn_dsp_plugin *kn_dsp_entry(uint32_t abi_version) {
+#ifdef FIXTURE_FAULT_BAD_VERSION
+    (void)abi_version;
+    return &fixture_plugin;
+#else
     return abi_version == KN_DSP_ABI_VERSION ? &fixture_plugin : NULL;
+#endif
 }
