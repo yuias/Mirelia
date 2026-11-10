@@ -24,11 +24,12 @@ public sealed class AudioPlayerService : IDisposable
     private string? _openDeviceId;
 
     // Output settings the live device was opened for (device, mode, fixed
-    // output rate and resampled-track dither), and the ReplayGain mode the
-    // loaded slots were decoded under. A settings save that touches neither
-    // (volume, pane visibility, window geometry, fonts…) must leave playback
-    // alone.
-    private (string? DeviceId, bool Exclusive, uint? OutputSampleRate, bool DitherResampled) _deviceConfig;
+    // output rate, resampler plugin and resampled-track dither), and the
+    // ReplayGain mode the loaded slots were decoded under. A settings save
+    // that touches neither (volume, pane visibility, window geometry, fonts…)
+    // must leave playback alone. The resampler plugin only counts under a
+    // fixed output rate, so it is null otherwise.
+    private (string? DeviceId, bool Exclusive, uint? OutputSampleRate, string? ResamplerPluginId, bool DitherResampled) _deviceConfig;
     private ReplayGainMode _replayGain;
 
     // Volume lives here, not on the engine, because the engine is created
@@ -90,7 +91,12 @@ public sealed class AudioPlayerService : IDisposable
             TimeSpan.FromMilliseconds(200), DispatcherPriority.Background, (_, _) => Poll());
 
         AppSettings current = settings.Current;
-        _deviceConfig = (current.DeviceId, current.Exclusive, current.OutputSampleRate, current.DitherResampled);
+        _deviceConfig = (
+            current.DeviceId,
+            current.Exclusive,
+            current.OutputSampleRate,
+            current.OutputSampleRate is null ? null : current.ResamplerPluginId,
+            current.DitherResampled);
         _replayGain = current.ReplayGain;
         _volume = ClampVolume(current.Volume);
         _repeat = current.Repeat;
@@ -111,13 +117,18 @@ public sealed class AudioPlayerService : IDisposable
             _ = ReconcilePreloadAsync();
         }
 
-        var deviceConfig = (settings.DeviceId, settings.Exclusive, settings.OutputSampleRate, settings.DitherResampled);
+        var deviceConfig = (
+            settings.DeviceId,
+            settings.Exclusive,
+            settings.OutputSampleRate,
+            settings.OutputSampleRate is null ? null : settings.ResamplerPluginId,
+            settings.DitherResampled);
         if (_deviceConfig == deviceConfig)
         {
             return;
         }
 
-        // Device, mode, output rate and dither changes take effect on the next
+        // Device, mode, output rate, resampler and dither changes take effect on the next
         // play; live playback stops so the old stream does not linger on the
         // old device. The queue itself is left intact — only the "what's
         // audible" pointer resets, mirroring the previous _index = -1 behavior.
@@ -580,6 +591,10 @@ public sealed class AudioPlayerService : IDisposable
 
                         break;
 
+                    case AudioEventType.Error when ev.Code == KnResult.Plugin:
+                        PlaybackError?.Invoke("resampler plugin failed; using the built-in resampler");
+                        break;
+
                     case AudioEventType.Error:
                         PlaybackError?.Invoke($"engine error: {ev.Code}");
                         break;
@@ -767,9 +782,20 @@ public sealed class AudioPlayerService : IDisposable
         // The engine must be allowed to convert, or a fixed output rate
         // would fail every track whose source rate differs. Dither is off
         // for tracks that play at their own rate, which keeps them bit-perfect.
-        _engine ??= AudioEngine.Create(new AudioEngineConfig(
-            AllowResample: true,
-            Dither: _settings.Current.DitherResampled ? DitherMode.Resampled : DitherMode.Off));
+        if (_engine is null)
+        {
+            _engine = AudioEngine.Create(new AudioEngineConfig(
+                AllowResample: true,
+                Dither: _settings.Current.DitherResampled ? DitherMode.Resampled : DitherMode.Off));
+
+            // Registering selects nothing; the setting is applied after the
+            // device opens. A file that fails to register is skipped.
+            foreach (string failure in DspPlugins.RegisterAll(_engine))
+            {
+                PlaybackError?.Invoke($"resampler plugin not loaded: {failure}");
+            }
+        }
+
         if (_deviceOpen)
         {
             return;
@@ -792,6 +818,20 @@ public sealed class AudioPlayerService : IDisposable
         _openDeviceId = settings.DeviceId;
         _deviceOpen = true;
         ApplyVolume();
+
+        // The selection persists across OpenDevice, so device recovery and the
+        // exclusive fallback do not need to repeat this.
+        try
+        {
+            _engine.SetResampler(settings.ResamplerPluginId);
+        }
+        catch (AudioEngineException ex)
+        {
+            // The stored plugin is not registered (removed, or rejected above).
+            _engine.SetResampler(null);
+            PlaybackError?.Invoke(
+                $"resampler plugin '{settings.ResamplerPluginId}' unavailable, using the built-in resampler ({ex.Result})");
+        }
     }
 
     // Loads into the Current slot. A deferred stream is only probed by
