@@ -2,8 +2,9 @@
  * Mirelia audio core ABI, version 1.
  *
  * This header is THE contract between the managed host and any native audio
- * backend. It is hand-written, frozen at v1, and versioned via MIRELIA_ABI_VERSION.
- * Changes require an ABI version bump and a matching entry in docs/audio-abi.md.
+ * backend. It is hand-written, frozen at v1, and versioned via
+ * MIRELIA_ABI_VERSION. Changes require an ABI version bump and a matching entry
+ * in docs/audio-abi.md.
  *
  * Design constraints (see docs/audio-abi.md for rationale):
  *   1. Plain C. No C++ types, no Rust types, no callbacks into managed code
@@ -81,7 +82,8 @@ typedef struct MireliaDeviceInfo {
     uint32_t    default_period_frames;
 } MireliaDeviceInfo;
 
-/* Snapshot: valid until the next call to mireliaDevicesFree or mireliaDevicesEnumerate. */
+/* Snapshot: valid until the next call to mireliaDevicesFree or
+ * mireliaDevicesEnumerate. */
 MireliaResult mireliaDevicesEnumerate(MireliaEngine *e,
                                       const MireliaDeviceInfo **out_devices,
                                       size_t *out_count);
@@ -112,9 +114,9 @@ const char *mireliaEngineLastError(MireliaEngine *e);
  *   - NULL: follow the source's sample rate and channels. out_actual is the
  *     device's native format.
  *   - non-NULL: sample_rate is the fixed output rate; sources at another rate
- *     are resampled to it (MireliaErrFormat on load if cfg.allow_resample is 0).
- *     sample_rate must be non-zero, otherwise MireliaErrInvalidArg is returned
- *     before the device is touched.
+ *     are resampled to it (MireliaErrFormat on load if cfg.allow_resample is
+ *     0). sample_rate must be non-zero, otherwise MireliaErrInvalidArg is
+ *     returned before the device is touched.
  *     channels == 0 follows the source's channel count, and the stream then
  *     opens at the first load; out_actual carries the desired rate and the
  *     device's native channel count. A non-zero channels opens the stream
@@ -151,7 +153,7 @@ MireliaResult mireliaClear(MireliaEngine *e, MireliaSlot slot);
 
 MireliaResult mireliaPlay(MireliaEngine *e);
 MireliaResult mireliaPause(MireliaEngine *e);
-MireliaResult mireliaStop(MireliaEngine *e);          /* clears both slots */
+MireliaResult mireliaStop(MireliaEngine *e);        /* clears both slots */
 MireliaResult mireliaSeek(MireliaEngine *e, int64_t frame);
 MireliaResult mireliaSkipToNext(MireliaEngine *e);  /* immediate, not gapless */
 
@@ -234,20 +236,20 @@ typedef struct MireliaDspInfo {
 } MireliaDspInfo;
 
 /* dll_path is an absolute UTF-8 path. Loads the library and validates it, on the
- * calling thread. MireliaErrUnsupported where plugins are not implemented, or for
- * a plugin offering no kind this backend knows. */
+ * calling thread. MireliaErrUnsupported where plugins are not implemented, or
+ * for a plugin offering no kind this backend knows. */
 MireliaResult mireliaRegisterDspLibrary(MireliaEngine *e, const char *dll_path);
 
 /* Snapshot of one entry per registered plugin: valid until the next call to
- * mireliaDspFree or mireliaDspEnumerate. Only the first resampler capability of a
- * plugin is registered, because one id selects one resampler. */
+ * mireliaDspFree or mireliaDspEnumerate. Only the first resampler capability of
+ * a plugin is registered, because one id selects one resampler. */
 MireliaResult mireliaDspEnumerate(MireliaEngine *e, const MireliaDspInfo **out_infos,
                                   size_t *out_count);
 void          mireliaDspFree(MireliaEngine *e);
 
 /* Selects the resampler plugin by id; NULL selects the built-in resampler. Takes
- * effect at the next mireliaLoad into MireliaSlotCurrent. MireliaErrInvalidArg for an id
- * that is not registered. */
+ * effect at the next mireliaLoad into MireliaSlotCurrent. MireliaErrInvalidArg
+ * for an id that is not registered. */
 MireliaResult mireliaEngineSetResampler(MireliaEngine *e, const char *plugin_id);
 
 #ifdef __cplusplus

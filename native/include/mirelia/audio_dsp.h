@@ -11,8 +11,8 @@
  * one side of this ABI is freed on the other.
  *
  * A plugin lists what it does as an array of capabilities. Version 1 defines
- * one kind, MireliaDspKindResampler. A later kind adds a MireliaDspKind value and its
- * own vtable struct and does not change this version: a host ignores
+ * one kind, MireliaDspKindResampler. A later kind adds a MireliaDspKind value
+ * and its own vtable struct and does not change this version: a host ignores
  * capabilities whose kind it does not know, and one plugin may list several.
  *
  * Plugin code must not let a C++ exception or any other unwinding cross this
@@ -75,9 +75,9 @@ extern "C" {
  *  - Samples are interleaved f32 with the channel order unchanged, each channel
  *    converted independently. Output is not clamped.
  *  - Failure. After any negative return from process, flush or pending_frames,
- *    or any result other than MireliaOk from reset, the host calls only destroy on
- *    that context. Two returns are not such failures and leave the context in
- *    the state it had: MireliaErrInvalidArg for a too-small capacity and
+ *    or any result other than MireliaOk from reset, the host calls only destroy
+ *    on that context. Two returns are not such failures and leave the context
+ *    in the state it had: MireliaErrInvalidArg for a too-small capacity and
  *    MireliaErrState from process after flush.
  *
  * Threading. All members run on the engine's decode worker, never on the
