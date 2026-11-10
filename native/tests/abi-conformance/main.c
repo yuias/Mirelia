@@ -6,8 +6,9 @@
  * implementation. Any backend must pass identically.
  *
  * Covered: symbol presence, version negotiation, lifecycle, argument
- * validation, the idle position/event contract, device open/close, and
- * probe. Gapless and RT-thread allocation checks are still to be added.
+ * validation, the idle position/event contract, device open/close, probe,
+ * and DSP plugin registration. Gapless and RT-thread allocation checks are
+ * still to be added.
  */
 
 #include <stdio.h>
@@ -22,11 +23,27 @@ static lib_handle lib_open(const char *path) { return LoadLibraryA(path); }
 static void *lib_sym(lib_handle h, const char *name) {
     return (void *)GetProcAddress(h, name);
 }
+static int make_absolute(const char *path, char *out, size_t size) {
+    DWORD n = GetFullPathNameA(path, (DWORD)size, out, NULL);
+    return n > 0 && n < size;
+}
 #else
 #include <dlfcn.h>
+#include <unistd.h>
 typedef void *lib_handle;
 static lib_handle lib_open(const char *path) { return dlopen(path, RTLD_NOW); }
 static void *lib_sym(lib_handle h, const char *name) { return dlsym(h, name); }
+/* Unlike realpath, this also works for a file that does not exist. */
+static int make_absolute(const char *path, char *out, size_t size) {
+    if (path[0] == '/') {
+        return snprintf(out, size, "%s", path) < (int)size;
+    }
+    char cwd[1024];
+    if (getcwd(cwd, sizeof(cwd)) == NULL) {
+        return 0;
+    }
+    return snprintf(out, size, "%s/%s", cwd, path) < (int)size;
+}
 #endif
 
 /* ---- resolved backend entry points ------------------------------------ */
@@ -41,6 +58,10 @@ typedef kn_result (*fn_open_device)(kn_engine *, const char *, kn_share_mode,
                                     const kn_stream_format *, kn_stream_format *);
 typedef kn_result (*fn_close_device)(kn_engine *);
 typedef kn_result (*fn_probe)(kn_engine *, const char *, kn_probe_result *);
+typedef kn_result (*fn_register_dsp_library)(kn_engine *, const char *);
+typedef kn_result (*fn_dsp_enumerate)(kn_engine *, const kn_dsp_info **, size_t *);
+typedef void (*fn_dsp_free)(kn_engine *);
+typedef kn_result (*fn_engine_set_resampler)(kn_engine *, const char *);
 
 static fn_engine_create p_create;
 static fn_engine_destroy p_destroy;
@@ -51,6 +72,10 @@ static fn_devices_enumerate p_devices_enumerate;
 static fn_open_device p_open_device;
 static fn_close_device p_close_device;
 static fn_probe p_probe;
+static fn_register_dsp_library p_register_dsp_library;
+static fn_dsp_enumerate p_dsp_enumerate;
+static fn_dsp_free p_dsp_free;
+static fn_engine_set_resampler p_engine_set_resampler;
 
 /* ---- tiny test harness ------------------------------------------------- */
 
@@ -213,12 +238,97 @@ static void test_device_open(void) {
     p_destroy(e);
 }
 
+static void test_dsp_registration(const char *backend_path, const char *plugin_path) {
+    kn_engine_config cfg = default_config();
+    kn_engine *e = NULL;
+    if (p_create(&cfg, &e) != KN_OK) {
+        CHECK(0, "dsp: engine creation failed");
+        return;
+    }
+
+    CHECK(p_register_dsp_library(e, NULL) == KN_ERR_INVALID_ARG,
+          "register_dsp_library rejects a null path with KN_ERR_INVALID_ARG");
+
+    kn_result rc = p_register_dsp_library(e, "relative-plugin.dll");
+    if (rc == KN_ERR_UNSUPPORTED) {
+        printf("skip dsp registration tests: plugins are not implemented here\n");
+        p_destroy(e);
+        return;
+    }
+    CHECK(rc == KN_ERR_INVALID_ARG,
+          "register_dsp_library rejects a relative path with KN_ERR_INVALID_ARG");
+
+    char missing[1024];
+    if (make_absolute("no-such-plugin.dll", missing, sizeof(missing))) {
+        CHECK(p_register_dsp_library(e, missing) == KN_ERR_IO,
+              "register_dsp_library reports KN_ERR_IO for a missing file");
+    } else {
+        CHECK(0, "dsp: cannot make a missing path absolute");
+    }
+
+    char backend[1024];
+    if (make_absolute(backend_path, backend, sizeof(backend))) {
+        CHECK(p_register_dsp_library(e, backend) == KN_ERR_FORMAT,
+              "register_dsp_library reports KN_ERR_FORMAT for a library without kn_dsp_entry");
+    } else {
+        CHECK(0, "dsp: cannot make the backend path absolute");
+    }
+
+    const kn_dsp_info *infos = NULL;
+    size_t count = (size_t)-1;
+    CHECK(p_dsp_enumerate(e, &infos, &count) == KN_OK && count == 0,
+          "dsp_enumerate lists nothing before any registration");
+    CHECK(p_engine_set_resampler(e, "no-such-plugin") == KN_ERR_INVALID_ARG,
+          "engine_set_resampler rejects an unregistered id with KN_ERR_INVALID_ARG");
+    CHECK(p_engine_set_resampler(e, NULL) == KN_OK,
+          "engine_set_resampler accepts NULL for the built-in resampler");
+
+    if (plugin_path == NULL) {
+        printf("skip dsp plugin tests: no plugin path given\n");
+        p_destroy(e);
+        return;
+    }
+
+    char plugin[1024];
+    if (!make_absolute(plugin_path, plugin, sizeof(plugin))) {
+        CHECK(0, "dsp: cannot make the plugin path absolute");
+        p_destroy(e);
+        return;
+    }
+    CHECK(p_register_dsp_library(e, plugin) == KN_OK, "register_dsp_library registers the plugin");
+    CHECK(p_dsp_enumerate(e, &infos, &count) == KN_OK && count == 1,
+          "dsp_enumerate lists the registered plugin");
+    if (count == 1) {
+        CHECK(infos[0].kind == KN_DSP_KIND_RESAMPLER, "enumerated plugin is a resampler");
+        CHECK(infos[0].id != NULL && infos[0].id[0] != '\0' &&
+                  infos[0].name != NULL && infos[0].name[0] != '\0',
+              "enumerated plugin has an id and a name");
+
+        char id[128];
+        snprintf(id, sizeof(id), "%s", infos[0].id);
+        CHECK(p_register_dsp_library(e, plugin) == KN_ERR_STATE,
+              "register_dsp_library rejects a second plugin with the same id");
+        CHECK(p_engine_set_resampler(e, id) == KN_OK, "engine_set_resampler accepts the id");
+        CHECK(p_engine_set_resampler(e, "no-such-plugin") == KN_ERR_INVALID_ARG,
+              "engine_set_resampler still rejects an unregistered id");
+        CHECK(p_engine_set_resampler(e, NULL) == KN_OK,
+              "engine_set_resampler accepts NULL after a plugin was selected");
+        CHECK(p_engine_set_resampler(e, id) == KN_OK, "engine_set_resampler selects the id again");
+    }
+
+    p_dsp_free(e);
+    p_dsp_free(NULL); /* must be a harmless no-op */
+    printf("ok   dsp_free(NULL) is a no-op\n");
+    p_destroy(e); /* unloads the plugin library after the selection is released */
+}
+
 /* ---- main -------------------------------------------------------------- */
 
 int main(int argc, char **argv) {
-    if (argc < 2 || argc > 3) {
+    if (argc < 2 || argc > 4) {
         fprintf(stderr,
-                "usage: abi-conformance <path-to-backend-library> [fixtures-dir]\n");
+                "usage: abi-conformance <path-to-backend-library> [fixtures-dir] "
+                "[dsp-plugin-library]\n");
         return 2;
     }
 
@@ -241,6 +351,10 @@ int main(int argc, char **argv) {
         {"kn_engine_open_device", (void **)&p_open_device},
         {"kn_engine_close_device", (void **)&p_close_device},
         {"kn_probe", (void **)&p_probe},
+        {"kn_register_dsp_library", (void **)&p_register_dsp_library},
+        {"kn_dsp_enumerate", (void **)&p_dsp_enumerate},
+        {"kn_dsp_free", (void **)&p_dsp_free},
+        {"kn_engine_set_resampler", (void **)&p_engine_set_resampler},
     };
     for (size_t i = 0; i < sizeof(symbols) / sizeof(symbols[0]); i++) {
         *symbols[i].slot = lib_sym(lib, symbols[i].name);
@@ -260,11 +374,12 @@ int main(int argc, char **argv) {
     test_lifecycle_and_idle_contract();
     test_dither_modes();
     test_device_open();
-    if (argc == 3) {
+    if (argc >= 3) {
         test_probe(argv[2]);
     } else {
         printf("skip probe tests: no fixtures directory given\n");
     }
+    test_dsp_registration(argv[1], argc == 4 ? argv[3] : NULL);
 
     printf(failures ? "\n%d FAILURE(S)\n" : "\nall tests passed\n", failures);
     return failures ? 1 : 0;

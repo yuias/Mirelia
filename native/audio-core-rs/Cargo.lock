@@ -111,6 +111,7 @@ dependencies = [
  "mirelia-audio",
  "mirelia-decode",
  "mirelia-out-wasapi",
+ "windows",
 ]
 
 [[package]]

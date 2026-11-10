@@ -6,19 +6,24 @@
 //! match it exactly. On disagreement, the header wins.
 //!
 //! Implemented: device enumeration, shared and exclusive playback,
-//! transport, seek, volume, probe, loudness scan. Plugin registration
-//! returns `KN_ERR_UNSUPPORTED`; it is post-v1.
+//! transport, seek, volume, probe, loudness scan, and DSP (resampler) plugins
+//! on Windows. Decoder and output plugin registration returns
+//! `KN_ERR_UNSUPPORTED`; it is post-v1.
 
 pub mod dsp;
 
 use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use mirelia_audio::engine::{EngineError, LoadParams, Slot};
 use mirelia_audio::events::EngineEvent;
 use mirelia_audio::output::{OutputBackend, StreamFormat};
+use mirelia_audio::resample::ResamplerFactory;
 use mirelia_audio::{DitherMode, Engine, EngineConfig, State};
+
+use dsp::KnDspInfo;
 
 // ---- kn_result ---------------------------------------------------------
 
@@ -182,12 +187,25 @@ fn make_backend() -> Box<dyn OutputBackend> {
 
 // ---- engine wrapper ----------------------------------------------------
 
+/// A registered DSP plugin's resampler.
+struct RegisteredDsp {
+    id: CString,
+    name: CString,
+    /// Holds the plugin library, which stays loaded while this entry exists.
+    factory: Arc<dyn ResamplerFactory>,
+}
+
 /// The opaque `kn_engine`: the engine plus ABI-side snapshot storage.
 pub struct KnEngine {
+    // First, so its `Drop` joins the decode worker before the registry (and with
+    // it the last reference to a plugin library) is released.
     engine: Engine,
     /// Device snapshot backing storage; pointers in `device_infos` point here.
     device_strings: Vec<CString>,
     device_infos: Vec<KnDeviceInfo>,
+    /// Registered DSP plugins. The strings that `dsp_infos` points to live here.
+    dsp_plugins: Vec<RegisteredDsp>,
+    dsp_infos: Vec<KnDspInfo>,
 }
 
 // ---- last-error storage ------------------------------------------------
@@ -298,6 +316,8 @@ pub unsafe extern "C" fn kn_engine_create(
         engine,
         device_strings: Vec::new(),
         device_infos: Vec::new(),
+        dsp_plugins: Vec::new(),
+        dsp_infos: Vec::new(),
     });
     unsafe { *out = Box::into_raw(wrapper) };
     KN_OK
@@ -765,6 +785,130 @@ pub unsafe extern "C" fn kn_register_output_library(
     _dll_path: *const c_char,
 ) -> i32 {
     fail(KN_ERR_UNSUPPORTED, "output plugins land post-v1")
+}
+
+/// Implements `kn_register_dsp_library`. Loads and validates the library on the
+/// calling thread and registers its first resampler capability.
+///
+/// # Safety
+///
+/// `e` must be a live engine pointer; `dll_path` must be null or a valid
+/// NUL-terminated string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kn_register_dsp_library(
+    e: *mut KnEngine,
+    dll_path: *const c_char,
+) -> i32 {
+    if e.is_null() {
+        return fail(KN_ERR_INVALID_ARG, "kn_register_dsp_library: null engine");
+    }
+    let wrapper = unsafe { &mut *e };
+    let Ok(Some(path)) = (unsafe { utf8_arg(dll_path) }) else {
+        return fail(
+            KN_ERR_INVALID_ARG,
+            "kn_register_dsp_library: path is null or not UTF-8",
+        );
+    };
+
+    let loaded = match dsp::load_plugin(&path) {
+        Ok(loaded) => loaded,
+        Err(code) => return code,
+    };
+    if wrapper.dsp_plugins.iter().any(|p| p.id == loaded.plugin.id) {
+        return fail(
+            KN_ERR_STATE,
+            &format!(
+                "a DSP plugin with id {:?} is already registered",
+                loaded.plugin.id
+            ),
+        );
+    }
+
+    // Version 1 selects a resampler by plugin id, so one id can name only one
+    // resampler; any further resampler records of the plugin are ignored.
+    let fns = loaded.plugin.resamplers[0];
+    wrapper.dsp_plugins.push(RegisteredDsp {
+        id: loaded.plugin.id,
+        name: loaded.plugin.name,
+        factory: Arc::new(dsp::PluginResamplerFactory::new(loaded.library, fns)),
+    });
+    KN_OK
+}
+
+/// Implements `kn_dsp_enumerate`. The snapshot stays valid until the next
+/// `kn_dsp_free` or `kn_dsp_enumerate` call, per the header.
+///
+/// # Safety
+///
+/// `e` must be a live engine pointer; `out_infos` and `out_count` must point to
+/// writable storage.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kn_dsp_enumerate(
+    e: *mut KnEngine,
+    out_infos: *mut *const KnDspInfo,
+    out_count: *mut usize,
+) -> i32 {
+    if e.is_null() || out_infos.is_null() || out_count.is_null() {
+        return fail(KN_ERR_INVALID_ARG, "kn_dsp_enumerate: null argument");
+    }
+    let wrapper = unsafe { &mut *e };
+    wrapper.dsp_infos.clear();
+    wrapper.dsp_infos.extend(wrapper.dsp_plugins.iter().map(|p| KnDspInfo {
+        id: p.id.as_ptr(),
+        name: p.name.as_ptr(),
+        kind: dsp::KN_DSP_KIND_RESAMPLER,
+    }));
+    unsafe {
+        *out_infos = wrapper.dsp_infos.as_ptr();
+        *out_count = wrapper.dsp_infos.len();
+    }
+    KN_OK
+}
+
+/// Implements `kn_dsp_free`: drops the enumeration snapshot.
+///
+/// # Safety
+///
+/// `e` must be null or a live engine pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kn_dsp_free(e: *mut KnEngine) {
+    if !e.is_null() {
+        unsafe { &mut *e }.dsp_infos.clear();
+    }
+}
+
+/// Implements `kn_engine_set_resampler`. Null selects the built-in resampler.
+///
+/// # Safety
+///
+/// `e` must be a live engine pointer; `plugin_id` must be null or a valid
+/// NUL-terminated string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kn_engine_set_resampler(
+    e: *mut KnEngine,
+    plugin_id: *const c_char,
+) -> i32 {
+    if e.is_null() {
+        return fail(KN_ERR_INVALID_ARG, "kn_engine_set_resampler: null engine");
+    }
+    let wrapper = unsafe { &mut *e };
+    let id = match unsafe { utf8_arg(plugin_id) } {
+        Ok(id) => id,
+        Err(code) => return code,
+    };
+    let Some(id) = id else {
+        wrapper.engine.set_resampler(None);
+        return KN_OK;
+    };
+    let Some(plugin) = wrapper.dsp_plugins.iter().find(|p| p.id.as_bytes() == id.as_bytes())
+    else {
+        return fail(
+            KN_ERR_INVALID_ARG,
+            &format!("no resampler plugin with id {id:?} is registered"),
+        );
+    };
+    wrapper.engine.set_resampler(Some(Arc::clone(&plugin.factory)));
+    KN_OK
 }
 
 // ---- tests -------------------------------------------------------------

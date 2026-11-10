@@ -278,8 +278,136 @@ pub unsafe fn validate_plugin(
 
 /// A loaded plugin library. Every resampler and registry entry that can call
 /// into the library holds an `Arc` of this, so the library outlives its last
-/// context.
-pub struct PluginLibrary;
+/// context. Dropping the last reference unloads the library.
+pub struct PluginLibrary {
+    #[cfg(windows)]
+    module: windows::Win32::Foundation::HMODULE,
+}
+
+// SAFETY: an `HMODULE` is a process-wide handle with no thread affinity, and
+// `FreeLibrary` may be called from any thread. `ResamplerFactory` requires
+// `Send + Sync`, and the handle is never mutated after loading, so no lock is
+// needed.
+unsafe impl Send for PluginLibrary {}
+// SAFETY: see the `Send` impl above.
+unsafe impl Sync for PluginLibrary {}
+
+impl PluginLibrary {
+    /// A library that owns no module, for tests with in-process fakes.
+    #[cfg(test)]
+    fn detached() -> Self {
+        Self {
+            #[cfg(windows)]
+            module: windows::Win32::Foundation::HMODULE::default(),
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for PluginLibrary {
+    fn drop(&mut self) {
+        // A detached library (tests only) has a null handle.
+        if !self.module.0.is_null() {
+            // SAFETY: `module` came from a successful `LoadLibraryExW` and is
+            // released only here. Every context that could call into the
+            // library holds an `Arc` of this, so none is alive.
+            let _ = unsafe { windows::Win32::Foundation::FreeLibrary(self.module) };
+        }
+    }
+}
+
+/// A plugin entry point: `kn_dsp_entry` in `audio_dsp.h`.
+pub type EntryFn = unsafe extern "C" fn(u32) -> *const KnDspPlugin;
+
+/// A loaded library together with its validated description.
+pub struct LoadedPlugin {
+    /// Keeps the library loaded; the functions in `plugin` are only valid while
+    /// a reference to it exists.
+    pub library: Arc<PluginLibrary>,
+    /// The plugin's validated static description.
+    pub plugin: ValidPlugin,
+}
+
+/// Loads the library at `path`, asks its entry point for
+/// `KN_DSP_ABI_VERSION` and validates the answer. The library is unloaded again
+/// on every failure.
+///
+/// Failure codes: `KN_ERR_INVALID_ARG` for a relative path, `KN_ERR_IO` for a
+/// missing file, `KN_ERR_FORMAT` for a file that does not load or has no entry
+/// point, `KN_ERR_ABI_MISMATCH` when the entry point answers `NULL`, and the
+/// codes of [`validate_plugin`]. The message is left in the thread's last-error
+/// slot.
+#[cfg(windows)]
+pub fn load_plugin(path: &str) -> Result<LoadedPlugin, i32> {
+    use windows::Win32::System::LibraryLoader::{
+        GetProcAddress, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32,
+        LoadLibraryExW,
+    };
+    use windows::core::{HSTRING, s};
+
+    use crate::result::{KN_ERR_ABI_MISMATCH, KN_ERR_INVALID_ARG, KN_ERR_IO};
+
+    let file = std::path::Path::new(path);
+    // `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR` only works with an absolute path.
+    if !file.is_absolute() {
+        return Err(crate::fail(
+            KN_ERR_INVALID_ARG,
+            "kn_register_dsp_library: path is not absolute",
+        ));
+    }
+    // Decided here because `LoadLibraryExW` reports a missing dependency with
+    // the same error as a missing file.
+    if let Err(err) = std::fs::metadata(file) {
+        return Err(crate::fail(KN_ERR_IO, &format!("{path}: {err}")));
+    }
+
+    let wide = HSTRING::from(path);
+    // SAFETY: `wide` is a NUL-terminated UTF-16 string that outlives the call.
+    let module = unsafe {
+        LoadLibraryExW(
+            &wide,
+            None,
+            LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32,
+        )
+    }
+    .map_err(|err| crate::fail(KN_ERR_FORMAT, &format!("{path}: cannot load library: {err}")))?;
+    // From here on every early return unloads the library through `Drop`.
+    let library = Arc::new(PluginLibrary { module });
+
+    // SAFETY: `module` is loaded and the name is NUL-terminated.
+    let Some(entry) = (unsafe { GetProcAddress(module, s!("kn_dsp_entry")) }) else {
+        return Err(crate::fail(
+            KN_ERR_FORMAT,
+            &format!("{path}: no kn_dsp_entry export"),
+        ));
+    };
+    // SAFETY: `audio_dsp.h` defines the signature of `kn_dsp_entry`.
+    let entry = unsafe {
+        std::mem::transmute::<unsafe extern "system" fn() -> isize, EntryFn>(entry)
+    };
+    // SAFETY: the library stays loaded for the call, and the entry point may be
+    // called with any version number.
+    let description = unsafe { entry(KN_DSP_ABI_VERSION) };
+    if description.is_null() {
+        return Err(crate::fail(
+            KN_ERR_ABI_MISMATCH,
+            &format!("{path}: plugin does not implement DSP ABI version {KN_DSP_ABI_VERSION}"),
+        ));
+    }
+    // SAFETY: a non-null answer from the entry point is static data of the
+    // library, which stays loaded for the call.
+    let plugin = unsafe { validate_plugin(description, KN_DSP_ABI_VERSION) }?;
+    Ok(LoadedPlugin { library, plugin })
+}
+
+/// Plugins are not implemented on this platform.
+#[cfg(not(windows))]
+pub fn load_plugin(_path: &str) -> Result<LoadedPlugin, i32> {
+    Err(crate::fail(
+        KN_ERR_UNSUPPORTED,
+        "DSP plugins are not implemented on this platform",
+    ))
+}
 
 // ---- resampler wrapper -------------------------------------------------
 
@@ -649,7 +777,7 @@ mod tests {
             PluginResampler::new(
                 ctx,
                 fake_fns(),
-                Arc::new(PluginLibrary),
+                Arc::new(PluginLibrary::detached()),
                 44100,
                 48000,
                 channels,
@@ -901,7 +1029,7 @@ mod tests {
     fn factory_maps_unsupported_create() {
         let factory = |create: CreateFn| {
             PluginResamplerFactory::new(
-                Arc::new(PluginLibrary),
+                Arc::new(PluginLibrary::detached()),
                 ResamplerFns {
                     create,
                     ..fake_fns()
