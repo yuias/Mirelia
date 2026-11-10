@@ -76,7 +76,9 @@ extern "C" {
  *    converted independently. Output is not clamped.
  *  - Failure. After any negative return from process, flush or pending_frames,
  *    or any result other than KN_OK from reset, the host calls only destroy on
- *    that context.
+ *    that context. Two returns are not such failures and leave the context in
+ *    the state it had: KN_ERR_INVALID_ARG for a too-small capacity and
+ *    KN_ERR_STATE from process after flush.
  *
  * Threading. All members run on the engine's decode worker, never on the
  * real-time thread, so they may allocate and may block briefly. A context is
