@@ -16,7 +16,7 @@ pub struct StreamFormat {
     pub channels: u16,
 }
 
-/// Device access mode, mirroring `kn_share_mode`.
+/// Device access mode, mirroring `MireliaShareMode`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ShareMode {
     /// OS mixer path; format conversion is the mixer's problem.
@@ -125,7 +125,7 @@ pub trait OutputStream: Send {
 /// A factory for output streams on one audio API.
 pub trait OutputBackend: Send {
     /// Short identifier of the platform API behind this backend, reported to
-    /// the host through `kn_device_info.backend`. Stable and lowercase.
+    /// the host through `MireliaDeviceInfo.backend`. Stable and lowercase.
     fn name(&self) -> &'static str;
 
     /// Lists render devices.

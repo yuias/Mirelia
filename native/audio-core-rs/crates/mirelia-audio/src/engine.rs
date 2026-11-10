@@ -30,7 +30,7 @@ use crate::resample::{ResampleStage, ResamplerFactory, SelectedResampler};
 use crate::spsc::{self, Consumer, Producer, SpscCore};
 use crate::{DitherMode, EngineConfig, Position, State, host_time_ns};
 
-/// Engine failure classification, mirroring `kn_result`.
+/// Engine failure classification, mirroring `MireliaResult`.
 #[derive(Debug)]
 pub enum EngineError {
     /// Bad argument from the host.
@@ -94,7 +94,7 @@ impl From<OutputError> for EngineError {
     }
 }
 
-/// The two source slots (`kn_slot`).
+/// The two source slots (`MireliaSlot`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Slot {
     /// What is playing (or will play).
@@ -103,7 +103,7 @@ pub enum Slot {
     Next,
 }
 
-/// Per-load parameters, mirroring `kn_load_params`.
+/// Per-load parameters, mirroring `MireliaLoadParams`.
 #[derive(Debug, Clone)]
 pub struct LoadParams {
     /// Source file.
@@ -1102,7 +1102,7 @@ fn render_callback(
 mod tests {
     use super::*;
     use crate::output::OutputStream;
-    use crate::resample::{Converter, KN_ERR_PLUGIN, ResamplerError, StreamResampler};
+    use crate::resample::{Converter, MIRELIA_ERR_PLUGIN, ResamplerError, StreamResampler};
     use std::path::{Path, PathBuf};
     use std::time::Instant;
 
@@ -2473,7 +2473,7 @@ mod tests {
             .filter(|ev| ev.kind == EventKind::Error)
             .map(|ev| ev.code)
             .collect();
-        assert_eq!(reports, [KN_ERR_PLUGIN]);
+        assert_eq!(reports, [MIRELIA_ERR_PLUGIN]);
 
         // The plugin owed `out(fed)` frames when it died, which became silence;
         // the built-in then converted the rest as a run of its own.

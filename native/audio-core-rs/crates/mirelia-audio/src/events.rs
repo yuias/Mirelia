@@ -1,9 +1,9 @@
-//! Engine events, mirrored to `kn_event` at the ABI layer. Events travel
+//! Engine events, mirrored to `MireliaEvent` at the ABI layer. Events travel
 //! through SPSC rings so pushing them is legal on the real-time thread.
 
 use crate::spsc::Producer;
 
-/// Event kinds, matching `kn_event_type` values in `audio_core.h`.
+/// Event kinds, matching `MireliaEventType` values in `audio_core.h`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum EventKind {
@@ -22,7 +22,7 @@ pub enum EventKind {
     DeviceChanged = 5,
     /// The device disappeared.
     DeviceLost = 6,
-    /// An asynchronous error occurred; `code` carries the kn_result.
+    /// An asynchronous error occurred; `code` carries the MireliaResult.
     Error = 7,
 }
 
@@ -33,7 +33,7 @@ pub struct EngineEvent {
     pub kind: EventKind,
     /// The host's track token, when applicable.
     pub token: u64,
-    /// A `kn_result` for `Error` events; 0 otherwise.
+    /// A `MireliaResult` for `Error` events; 0 otherwise.
     pub code: i32,
     /// Monotonic timestamp of the event.
     pub time_ns: u64,

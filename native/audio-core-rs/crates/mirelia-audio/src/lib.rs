@@ -29,7 +29,7 @@ pub enum DitherMode {
     Resampled,
 }
 
-/// Engine configuration, mirroring `kn_engine_config` minus the ABI version
+/// Engine configuration, mirroring `MireliaEngineConfig` minus the ABI version
 /// (version negotiation is the ABI layer's concern, not the engine's).
 #[derive(Debug, Clone, Copy)]
 pub struct EngineConfig {
@@ -56,7 +56,7 @@ impl Default for EngineConfig {
     }
 }
 
-/// Transport state, mirroring `kn_state`.
+/// Transport state, mirroring `MireliaState`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
     /// No source loaded.
@@ -70,7 +70,7 @@ pub enum State {
 }
 
 impl State {
-    /// ABI-stable numeric value (`kn_state`).
+    /// ABI-stable numeric value (`MireliaState`).
     pub fn as_u8(self) -> u8 {
         match self {
             State::Idle => 0,
@@ -91,7 +91,7 @@ impl State {
     }
 }
 
-/// A position snapshot, mirroring `kn_position`.
+/// A position snapshot, mirroring `MireliaPosition`.
 #[derive(Debug, Clone, Copy)]
 pub struct Position {
     /// Transport state at snapshot time.

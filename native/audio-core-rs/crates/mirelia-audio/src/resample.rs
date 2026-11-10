@@ -152,8 +152,8 @@ impl Converter {
     }
 }
 
-/// Value of `KN_ERR_PLUGIN`, reported in the `Error` event when a plugin fails.
-pub const KN_ERR_PLUGIN: i32 = -11;
+/// Value of `MireliaErrPlugin`, reported in the `Error` event when a plugin fails.
+pub const MIRELIA_ERR_PLUGIN: i32 = -11;
 
 /// Why a resampler could not do what was asked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,7 +266,7 @@ impl ResampleStage {
                 Err(ResamplerError::Unsupported) => {}
                 Err(ResamplerError::Failed) => {
                     sel.disabled.store(true, Ordering::Relaxed);
-                    failure = Some(KN_ERR_PLUGIN);
+                    failure = Some(MIRELIA_ERR_PLUGIN);
                 }
             }
         }
@@ -320,7 +320,7 @@ impl ResampleStage {
         }
     }
 
-    /// A plugin failure not yet reported, as a `kn_result`.
+    /// A plugin failure not yet reported, as a `MireliaResult`.
     pub fn take_failure(&mut self) -> Option<i32> {
         self.failure.take()
     }
@@ -340,7 +340,7 @@ impl ResampleStage {
     // the plugin from being tried again until the host selects it again.
     fn replace_with_builtin(&mut self) {
         self.inner = Box::new(Converter::new(self.in_rate, self.out_rate, self.channels));
-        self.failure = Some(KN_ERR_PLUGIN);
+        self.failure = Some(MIRELIA_ERR_PLUGIN);
         if let Some(sel) = &self.selected {
             sel.disabled.store(true, Ordering::Relaxed);
         }
@@ -690,7 +690,7 @@ mod tests {
 
         stage.process(&signal[fed..fed + BLOCK], &mut out);
         assert!(out[emitted..emitted + owed].iter().all(|&s| s == 0.0));
-        assert_eq!(stage.take_failure(), Some(KN_ERR_PLUGIN));
+        assert_eq!(stage.take_failure(), Some(MIRELIA_ERR_PLUGIN));
         assert_eq!(stage.take_failure(), None);
 
         stage.process(&signal[fed + BLOCK..], &mut out);
@@ -715,7 +715,7 @@ mod tests {
 
         assert_eq!(got.len(), out_len(frames, 44100, 48000) * 2);
         assert_eq!(stage.pending_frames(), 0);
-        assert_eq!(stage.take_failure(), Some(KN_ERR_PLUGIN));
+        assert_eq!(stage.take_failure(), Some(MIRELIA_ERR_PLUGIN));
         assert_eq!(stage.take_failure(), None);
     }
 
@@ -731,7 +731,7 @@ mod tests {
         stage.reset();
 
         assert_eq!(stage.pending_frames(), 0);
-        assert_eq!(stage.take_failure(), Some(KN_ERR_PLUGIN));
+        assert_eq!(stage.take_failure(), Some(MIRELIA_ERR_PLUGIN));
         assert!(sel.disabled.load(Ordering::Relaxed));
 
         // The new run is the built-in's, whole.
@@ -751,7 +751,7 @@ mod tests {
         let signal = noise(9_000, 1);
         let mut first = ResampleStage::new(Some(Arc::clone(&sel)), 44100, 48000, 1);
         let _ = stage_convert(&mut first, &signal, 1);
-        assert_eq!(first.take_failure(), Some(KN_ERR_PLUGIN));
+        assert_eq!(first.take_failure(), Some(MIRELIA_ERR_PLUGIN));
         assert_eq!(calls.creates.load(Ordering::Relaxed), 1);
 
         let mut second = ResampleStage::new(Some(sel), 44100, 48000, 1);
