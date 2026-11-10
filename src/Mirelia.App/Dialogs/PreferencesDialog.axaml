@@ -19,6 +19,9 @@
                       Content="Exclusive mode (bit-perfect, blocks other apps)" />
             <TextBlock Text="Output sample rate" Opacity="0.7" FontSize="12" />
             <ComboBox x:Name="RateBox" HorizontalAlignment="Stretch" />
+            <TextBlock x:Name="ResamplerLabel" Text="Resampler" Opacity="0.7" FontSize="12"
+                       IsVisible="False" />
+            <ComboBox x:Name="ResamplerBox" HorizontalAlignment="Stretch" IsVisible="False" />
             <CheckBox x:Name="DitherCheck" Content="Dither resampled tracks" />
             <!-- Shown when the backend enumerated nothing, which on macOS is
                  every run: there is no output backend there yet. -->

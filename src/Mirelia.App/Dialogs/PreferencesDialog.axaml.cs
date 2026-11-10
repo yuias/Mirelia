@@ -8,10 +8,10 @@ namespace Mirelia.App.Dialogs;
 
 /// <summary>
 /// Playback settings (output device, exclusive mode, output sample rate,
-/// ReplayGain) and
-/// appearance settings (theme, font), grouped into tabs. Device enumeration
-/// runs on a throwaway engine instance so the dialog never touches the
-/// playback engine.
+/// resampler, ReplayGain) and
+/// appearance settings (theme, font), grouped into tabs. Device and resampler
+/// plugin enumeration runs on a throwaway engine instance so the dialog never
+/// touches the playback engine.
 /// </summary>
 public partial class PreferencesDialog : Window
 {
@@ -26,6 +26,11 @@ public partial class PreferencesDialog : Window
     }
 
     private sealed record RateChoice(uint? Rate, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    private sealed record ResamplerChoice(string? Id, string Label)
     {
         public override string ToString() => Label;
     }
@@ -45,6 +50,7 @@ public partial class PreferencesDialog : Window
         _settings = settings;
 
         var choices = new List<DeviceChoice> { new(null, "(System default)") };
+        var resamplerChoices = new List<ResamplerChoice> { new(null, "Built-in") };
         try
         {
             using var engine = AudioEngine.Create();
@@ -54,6 +60,13 @@ public partial class PreferencesDialog : Window
                     device.Id,
                     $"{device.Name} — {device.NativeRate} Hz, {device.NativeChannels} ch"));
             }
+
+            // The player service reports plugins that fail to register; here
+            // only the ones that did are offered.
+            DspPlugins.RegisterAll(engine);
+            resamplerChoices.AddRange(engine.EnumerateDsp()
+                .Where(plugin => plugin.Kind == DspKind.Resampler)
+                .Select(plugin => new ResamplerChoice(plugin.Id, plugin.Name)));
         }
         catch (AudioEngineException)
         {
@@ -72,6 +85,11 @@ public partial class PreferencesDialog : Window
         RateBox.SelectedItem =
             rateChoices.FirstOrDefault(c => c.Rate == settings.Current.OutputSampleRate) ?? rateChoices[0];
 
+        ResamplerBox.ItemsSource = resamplerChoices;
+        ResamplerBox.SelectedItem =
+            resamplerChoices.FirstOrDefault(c => c.Id == settings.Current.ResamplerPluginId) ?? resamplerChoices[0];
+        ResamplerLabel.IsVisible = ResamplerBox.IsVisible = resamplerChoices.Count > 1;
+
         // Only the "(System default)" entry means nothing was enumerated, so
         // say so rather than offering controls that cannot do anything.
         bool noDevices = choices.Count == 1;
@@ -81,8 +99,8 @@ public partial class PreferencesDialog : Window
         RateBox.IsEnabled = !noDevices;
 
         DitherCheck.IsChecked = settings.Current.DitherResampled;
-        UpdateDitherEnabled();
-        RateBox.SelectionChanged += (_, _) => UpdateDitherEnabled();
+        UpdateFixedRateEnabled();
+        RateBox.SelectionChanged += (_, _) => UpdateFixedRateEnabled();
 
         RgBox.ItemsSource = new[] { ReplayGainMode.Off, ReplayGainMode.Track };
         RgBox.SelectedItem = settings.Current.ReplayGain;
@@ -103,9 +121,14 @@ public partial class PreferencesDialog : Window
         FontSizeBox.Value = (decimal)settings.Current.FontSize;
     }
 
-    // Only tracks Mirelia resamples are dithered, and that needs a fixed rate.
-    private void UpdateDitherEnabled() =>
-        DitherCheck.IsEnabled = RateBox.IsEnabled && (RateBox.SelectedItem as RateChoice)?.Rate is not null;
+    // Mirelia only resamples, and so only dithers or uses a resampler plugin,
+    // under a fixed output rate.
+    private void UpdateFixedRateEnabled()
+    {
+        bool fixedRate = RateBox.IsEnabled && (RateBox.SelectedItem as RateChoice)?.Rate is not null;
+        DitherCheck.IsEnabled = fixedRate;
+        ResamplerBox.IsEnabled = fixedRate;
+    }
 
     private void OnCancel(object? sender, RoutedEventArgs e) => Close(false);
 
@@ -124,6 +147,7 @@ public partial class PreferencesDialog : Window
             DeviceId = (DeviceBox.SelectedItem as DeviceChoice)?.Id,
             Exclusive = ExclusiveCheck.IsChecked == true,
             OutputSampleRate = (RateBox.SelectedItem as RateChoice)?.Rate,
+            ResamplerPluginId = (ResamplerBox.SelectedItem as ResamplerChoice)?.Id,
             DitherResampled = DitherCheck.IsChecked == true,
             ReplayGain = RgBox.SelectedItem as ReplayGainMode? ?? ReplayGainMode.Off,
             Theme = ThemeBox.SelectedItem as AppTheme? ?? AppTheme.Auto,
