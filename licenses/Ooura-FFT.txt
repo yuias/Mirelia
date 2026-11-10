@@ -1,0 +1,8 @@
+Quoted verbatim from the header comment of fft/fft4g.h in r8brain-free-src, which wraps the Ooura FFT functions.
+
+Functions from the FFT package by: Copyright(C) 1996-2001 Takuya OOURA
+http://www.kurims.kyoto-u.ac.jp/~ooura/fft.html
+
+Modified and used with permission granted by the license. Modifications
+include a one-time `ip` and `w` arrays initialization for the rdft()
+function, which are then passed to it as `const` arrays.

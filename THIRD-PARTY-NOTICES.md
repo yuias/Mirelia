@@ -100,6 +100,19 @@ option; the Zlib text is included for bytemuck's benefit at
 at build time only and contribute no code to the shipped library. `Microsoft.Windows.CsWin32` (MIT) is the same case on the managed
 side: it generates the WPD interop used by MTP sync and ships nothing.
 
+### Sample resampler plugin
+
+Linked into `mirelia_r8brain.dll`, the sample resampler plugin that ships in
+`plugins/dsp/`. The build fetches the unmodified sources at a pinned commit
+(see `native/plugins/r8brain-resampler/CMakeLists.txt`).
+
+| Component | Version | License | Text |
+| --- | --- | --- | --- |
+| r8brain-free-src (Aleksey Vaneev) | 7.7 | MIT | [r8brain-free-src.txt](licenses/r8brain-free-src.txt) |
+| Ooura FFT (Takuya OOURA), compiled in through r8brain-free-src | — | Permissive notice in the source | [Ooura-FFT.txt](licenses/Ooura-FFT.txt) |
+
+Sample rate converter designed by Aleksey Vaneev of Voxengo.
+
 ## Runtime
 
 The Windows archive build is framework-dependent: the target machine needs the
