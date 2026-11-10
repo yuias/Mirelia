@@ -26,7 +26,7 @@ use crate::output::{
     DeviceInfo, DitherControl, OutputBackend, OutputError, OutputStream, RenderInfo, ShareMode,
     StreamFormat, StreamOptions,
 };
-use crate::resample::Converter;
+use crate::resample::{ResampleStage, ResamplerFactory, SelectedResampler};
 use crate::spsc::{self, Consumer, Producer, SpscCore};
 use crate::{DitherMode, EngineConfig, Position, State, host_time_ns};
 
@@ -227,6 +227,9 @@ pub struct Engine {
     // it is owned by the backend's own thread(s) instead.
     ev_device: Arc<SpscCore<EngineEvent>>,
     ev_device_rx: Consumer<EngineEvent>,
+    // Kept apart from the device state: `close_device` and `open_device` leave
+    // the selection alone, so a device recovery does not lose it.
+    resampler: Option<Arc<SelectedResampler>>,
 }
 
 impl Engine {
@@ -248,6 +251,7 @@ impl Engine {
             ev_render,
             ev_device_rx: spsc::consumer(ev_device.clone()),
             ev_device,
+            resampler: None,
         }
     }
 
@@ -467,6 +471,14 @@ impl Engine {
         Ok(())
     }
 
+    /// Selects the resampler used for tracks whose rate differs from the
+    /// output rate; `None` selects the built-in one. A running worker keeps its
+    /// selection until the next load into [`Slot::Current`] starts a new one.
+    /// Selecting again also re-enables a plugin that failed earlier.
+    pub fn set_resampler(&mut self, factory: Option<Arc<dyn ResamplerFactory>>) {
+        self.resampler = factory.map(|f| Arc::new(SelectedResampler::new(f)));
+    }
+
     /// Snapshot of the current position.
     pub fn position(&self) -> Position {
         let s = &self.shared;
@@ -602,6 +614,7 @@ impl Engine {
             leftover_pos: 0,
             output_rate: fmt.sample_rate,
             converter: None,
+            resampler: self.resampler.clone(),
             convert_in: Vec::new(),
         };
 
@@ -643,7 +656,10 @@ struct WorkerState {
     /// Rate of the stream the ring feeds.
     output_rate: u32,
     /// Present while the current track's rate differs from `output_rate`.
-    converter: Option<Converter>,
+    converter: Option<ResampleStage>,
+    /// The engine's resampler selection when this worker started; `None` uses
+    /// the built-in resampler.
+    resampler: Option<Arc<SelectedResampler>>,
     /// Swap buffer: holds the source-rate block while `leftover` receives the
     /// converted output.
     convert_in: Vec<f32>,
@@ -661,7 +677,8 @@ fn reset_converter(w: &mut WorkerState) {
     match &mut w.converter {
         Some(c) if c.in_rate() == rate => c.reset(),
         slot => {
-            *slot = Some(Converter::new(
+            *slot = Some(ResampleStage::new(
+                w.resampler.clone(),
                 rate,
                 w.output_rate,
                 usize::from(w.current.info().channels),
@@ -685,6 +702,12 @@ fn worker_loop(
     start_track(&mut w, &mut tags, &mut events, &ring, TAG_TRACK_START, None);
 
     loop {
+        // Report a plugin failure the stage absorbed. Each call that can record
+        // one returns here before the stage can be replaced.
+        if let Some(code) = w.converter.as_mut().and_then(ResampleStage::take_failure) {
+            push_event(&mut events, EventKind::Error, w.params.user_token, code);
+        }
+
         // Commands first; they beat production.
         loop {
             match cmd.try_recv() {
@@ -1079,6 +1102,7 @@ fn render_callback(
 mod tests {
     use super::*;
     use crate::output::OutputStream;
+    use crate::resample::{Converter, KN_ERR_PLUGIN, ResamplerError, StreamResampler};
     use std::path::{Path, PathBuf};
     use std::time::Instant;
 
@@ -2284,5 +2308,231 @@ mod tests {
         render(&e, &step, out_for(frames - target, 44_100));
         let out = step.sink.lock().unwrap()[mark..].to_vec();
         assert_follows_ideal(&out, target, 44_100);
+    }
+
+    // ---- a selected resampler plugin ---------------------------------------
+
+    type CallLog = Arc<std::sync::Mutex<Vec<(&'static str, Option<String>)>>>;
+
+    /// A factory of in-process stand-ins for a plugin. Each one wraps the
+    /// built-in converter, so a passing run must match a built-in run exactly.
+    #[derive(Default)]
+    struct FakeFactory {
+        /// Number of `create` calls, including unsupported ones.
+        creates: std::sync::atomic::AtomicUsize,
+        /// Answer every `create` with `Unsupported`.
+        unsupported: bool,
+        /// 1-based number of the `process` call that fails, counted over the
+        /// factory's lifetime.
+        fail_process_call: Option<usize>,
+        /// Source frames the failing plugin had accepted before it failed.
+        fed_at_failure: Arc<std::sync::atomic::AtomicUsize>,
+        /// Every call a plugin received, with the name of the calling thread.
+        calls: CallLog,
+    }
+
+    impl ResamplerFactory for FakeFactory {
+        fn create(
+            &self,
+            in_rate: u32,
+            out_rate: u32,
+            channels: usize,
+        ) -> Result<Box<dyn StreamResampler>, ResamplerError> {
+            self.creates.fetch_add(1, Ordering::Relaxed);
+            record_call(&self.calls, "create");
+            if self.unsupported {
+                return Err(ResamplerError::Unsupported);
+            }
+
+            Ok(Box::new(FakePlugin {
+                inner: Converter::new(in_rate, out_rate, channels),
+                channels,
+                fed: 0,
+                process_calls: 0,
+                fail_process_call: self.fail_process_call,
+                fed_at_failure: self.fed_at_failure.clone(),
+                calls: self.calls.clone(),
+            }))
+        }
+    }
+
+    struct FakePlugin {
+        inner: Converter,
+        channels: usize,
+        fed: usize,
+        process_calls: usize,
+        fail_process_call: Option<usize>,
+        fed_at_failure: Arc<std::sync::atomic::AtomicUsize>,
+        calls: CallLog,
+    }
+
+    fn record_call(calls: &CallLog, what: &'static str) {
+        let thread = std::thread::current().name().map(str::to_owned);
+        calls.lock().unwrap().push((what, thread));
+    }
+
+    impl StreamResampler for FakePlugin {
+        fn process(&mut self, input: &[f32], out: &mut Vec<f32>) -> Result<(), ResamplerError> {
+            record_call(&self.calls, "process");
+            self.process_calls += 1;
+            if self.fail_process_call == Some(self.process_calls) {
+                self.fed_at_failure.store(self.fed, Ordering::Relaxed);
+                return Err(ResamplerError::Failed);
+            }
+
+            self.fed += input.len() / self.channels;
+            self.inner.process(input, out);
+            Ok(())
+        }
+
+        fn flush(&mut self, out: &mut Vec<f32>) -> Result<(), ResamplerError> {
+            record_call(&self.calls, "flush");
+            self.inner.flush(out);
+            Ok(())
+        }
+
+        fn pending_frames(&self) -> u64 {
+            self.inner.pending_frames()
+        }
+
+        fn reset(&mut self) -> Result<(), ResamplerError> {
+            record_call(&self.calls, "reset");
+            self.fed = 0;
+            self.inner.reset();
+            Ok(())
+        }
+    }
+
+    impl Drop for FakePlugin {
+        fn drop(&mut self) {
+            record_call(&self.calls, "drop");
+        }
+    }
+
+    /// Drains pending events into `seen` without waiting.
+    fn drain_events(e: &mut Engine, seen: &mut Vec<EngineEvent>) {
+        let mut out = [EngineEvent::default(); 16];
+        loop {
+            let n = e.poll_events(&mut out);
+            seen.extend_from_slice(&out[..n]);
+            if n == 0 {
+                return;
+            }
+        }
+    }
+
+    /// What a built-in run of the whole cosine owes: the reference for a
+    /// plugin that behaves like the built-in.
+    fn builtin_run(rate: u32, frames: usize) -> Vec<f32> {
+        let mut expected = Vec::new();
+        let mut converter = Converter::new(rate, 48_000, 1);
+        converter.process(&cosine(rate, frames), &mut expected);
+        converter.flush(&mut expected);
+        expected
+    }
+
+    #[test]
+    fn plugin_resampler_output_equals_builtin_through_a_passing_fake() {
+        let frames = 20_000;
+        let wav = write_wav(44_100, 1, &cosine(44_100, frames));
+        let factory = Arc::new(FakeFactory::default());
+        let (mut e, sink) = fixed_capturing_engine(EngineConfig::default());
+        e.set_resampler(Some(factory.clone()));
+        let mut seen = Vec::new();
+        e.load(Slot::Current, params_for(&wav, 1)).unwrap();
+        prefill(&mut e, &mut seen);
+        e.play().unwrap();
+        wait_for_idle(&e);
+        drain_events(&mut e, &mut seen);
+
+        assert!(factory.creates.load(Ordering::Relaxed) > 0);
+        assert!(!seen.iter().any(|ev| ev.kind == EventKind::Error), "{seen:?}");
+        assert_eq!(rendered_sound(e, &sink), builtin_run(44_100, frames));
+    }
+
+    #[test]
+    fn plugin_resampler_failure_mid_track_keeps_playing_and_reports() {
+        let frames = 40_000;
+        let wav = write_wav(44_100, 1, &cosine(44_100, frames));
+        let factory = Arc::new(FakeFactory {
+            fail_process_call: Some(3),
+            ..FakeFactory::default()
+        });
+        let (mut e, sink) = fixed_capturing_engine(EngineConfig::default());
+        e.set_resampler(Some(factory.clone()));
+        let mut seen = Vec::new();
+        e.load(Slot::Current, params_for(&wav, 1)).unwrap();
+        prefill(&mut e, &mut seen);
+        e.play().unwrap();
+        assert!(wait_for_event(&mut e, &mut seen, EventKind::TrackEnded, Duration::from_secs(10)));
+        wait_for_idle(&e);
+        drain_events(&mut e, &mut seen);
+
+        let reports: Vec<_> = seen
+            .iter()
+            .filter(|ev| ev.kind == EventKind::Error)
+            .map(|ev| ev.code)
+            .collect();
+        assert_eq!(reports, [KN_ERR_PLUGIN]);
+
+        // The plugin owed `out(fed)` frames when it died, which became silence;
+        // the built-in then converted the rest as a run of its own.
+        let fed = factory.fed_at_failure.load(Ordering::Relaxed);
+        assert!(fed > 0 && fed < frames, "failed after {fed} source frames");
+        let out = rendered_from_first_sound(e, &sink);
+        let sound_end = out.iter().rposition(|&s| s != 0.0).unwrap() + 1;
+        assert_eq!(sound_end, out_for(fed, 44_100) + out_for(frames - fed, 44_100));
+        assert_follows_ideal(&out[out_for(fed, 44_100)..sound_end], fed, 44_100);
+    }
+
+    #[test]
+    fn plugin_resampler_unsupported_create_reports_nothing() {
+        let frames = 20_000;
+        let wav = write_wav(44_100, 1, &cosine(44_100, frames));
+        let factory = Arc::new(FakeFactory {
+            unsupported: true,
+            ..FakeFactory::default()
+        });
+        let (mut e, sink) = fixed_capturing_engine(EngineConfig::default());
+        e.set_resampler(Some(factory.clone()));
+        let mut seen = Vec::new();
+        e.load(Slot::Current, params_for(&wav, 1)).unwrap();
+        prefill(&mut e, &mut seen);
+        e.play().unwrap();
+        wait_for_idle(&e);
+        drain_events(&mut e, &mut seen);
+
+        assert!(factory.creates.load(Ordering::Relaxed) > 0);
+        assert!(!seen.iter().any(|ev| ev.kind == EventKind::Error), "{seen:?}");
+        assert_eq!(rendered_sound(e, &sink), builtin_run(44_100, frames));
+    }
+
+    #[test]
+    fn plugin_resampler_calls_run_only_on_the_decode_worker() {
+        let frames = 30_000;
+        let wav = write_wav(44_100, 1, &cosine(44_100, frames));
+        let factory = Arc::new(FakeFactory::default());
+        let (mut e, sink) = fixed_capturing_engine(EngineConfig::default());
+        e.set_resampler(Some(factory.clone()));
+        let mut seen = Vec::new();
+        e.load(Slot::Current, params_for(&wav, 1)).unwrap();
+        prefill(&mut e, &mut seen);
+
+        // A seek resets the stage, and the end of the track flushes it.
+        seen.clear();
+        e.seek(5_000).unwrap();
+        prefill(&mut e, &mut seen);
+        e.play().unwrap();
+        wait_for_idle(&e);
+
+        // Dropping the engine joins the worker, which drops the plugin.
+        drop(rendered_from_first_sound(e, &sink));
+        let calls = factory.calls.lock().unwrap();
+        for what in ["create", "process", "flush", "reset", "drop"] {
+            assert!(calls.iter().any(|(call, _)| *call == what), "no {what} call");
+        }
+        for (what, thread) in calls.iter() {
+            assert_eq!(thread.as_deref(), Some("mirelia-decode"), "{what}");
+        }
     }
 }
