@@ -622,6 +622,10 @@ public partial class SyncDialog : Window
             return null;
         }
 
+        // The previous outcome, error or plan, no longer describes anything.
+        WarningText.IsVisible = false;
+        InvalidatePlan();
+
         if (string.IsNullOrWhiteSpace(MusicRootBox.Text))
         {
             SummaryText.Text = "Choose a music folder first.";
@@ -634,10 +638,11 @@ public partial class SyncDialog : Window
             return null;
         }
 
-        await SaveCurrentAsync();
         PreviewButton.IsEnabled = false;
+        SummaryText.Text = "Reading the destination…";
         try
         {
+            await SaveCurrentAsync();
             _plan = await _library.PlanSyncAsync(_current, ReadForceOptions());
             ShowPlan(_plan);
             SyncButton.IsEnabled = !_plan.IsEmpty && _plan.FitsInFreeSpace;
