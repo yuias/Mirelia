@@ -19,6 +19,7 @@
 // when it configures.
 
 using System.Diagnostics;
+using System.Text.Json;
 using System.Xml.Linq;
 using SkiaSharp;
 
@@ -31,9 +32,9 @@ const string PlaceholderPublisherDisplayName = "Publisher Display Name";
 
 string? outputOption = null;
 string? versionOption = null;
-string packageName = PlaceholderPackageName;
-string publisher = PlaceholderPublisher;
-string publisherDisplayName = PlaceholderPublisherDisplayName;
+string? packageName = null;
+string? publisher = null;
+string? publisherDisplayName = null;
 bool skipNative = false;
 bool allowPlaceholderIdentity = false;
 
@@ -74,6 +75,39 @@ if (!OperatingSystem.IsWindows())
     return 1;
 }
 
+string root = FindRepoRoot();
+
+// The Partner Center identity belongs to the publishing account, so it lives in
+// an untracked file. A flag overrides the matching key, which lets CI pass the
+// values from secrets without writing the file.
+string identityPath = Path.Combine(root, "packaging", "msix", "identity.json");
+if (File.Exists(identityPath))
+{
+    using JsonDocument identity = JsonDocument.Parse(File.ReadAllText(identityPath));
+    foreach (JsonProperty property in identity.RootElement.EnumerateObject())
+    {
+        switch (property.Name)
+        {
+            case "packageName":
+                packageName ??= property.Value.GetString();
+                break;
+            case "publisher":
+                publisher ??= property.Value.GetString();
+                break;
+            case "publisherDisplayName":
+                publisherDisplayName ??= property.Value.GetString();
+                break;
+            default:
+                Console.Error.WriteLine($"package-msix: unknown key in {identityPath}: {property.Name}");
+                return 2;
+        }
+    }
+}
+
+packageName ??= PlaceholderPackageName;
+publisher ??= PlaceholderPublisher;
+publisherDisplayName ??= PlaceholderPublisherDisplayName;
+
 bool placeholderIdentity = packageName == PlaceholderPackageName
     || publisher == PlaceholderPublisher
     || publisherDisplayName == PlaceholderPublisherDisplayName;
@@ -84,11 +118,10 @@ if (placeholderIdentity && !allowPlaceholderIdentity)
         """
         package-msix: the package identity is still the placeholder.
 
-        Pass the values Partner Center issued for this app:
-
-          --package-name           <Identity Name>
-          --publisher              <Identity Publisher, e.g. CN=00000000-...>
-          --publisher-display-name <PublisherDisplayName>
+        Copy packaging/msix/identity.example.json to
+        packaging/msix/identity.json and fill in the values Partner Center
+        issued for this app, or pass them as --package-name, --publisher and
+        --publisher-display-name, which override the file.
 
         To build an unsubmittable package for local testing instead, pass
         --allow-placeholder-identity.
@@ -97,7 +130,6 @@ if (placeholderIdentity && !allowPlaceholderIdentity)
 }
 
 string rid = "win-x64";
-string root = FindRepoRoot();
 string version = ToFourPartVersion(versionOption ?? ReadVersion(Path.Combine(root, "Directory.Build.props")));
 string stem = placeholderIdentity ? $"Mirelia-{version}-placeholder-identity" : $"Mirelia-{version}";
 

@@ -119,12 +119,12 @@ package instead.
 An MSIX for the Microsoft Store, self-contained and unsigned, Windows only:
 
 ```sh
-dotnet run scripts/package-msix.cs -- \
-  --package-name <name> --publisher <dn> --publisher-display-name <name>
+dotnet run scripts/package-msix.cs
 ```
 
 Writes `artifacts/Mirelia-<version>.msix`. The identity values come from Partner
-Center; see [docs/msix-packaging.md](docs/msix-packaging.md) for those, for the
+Center and are read from the untracked `packaging/msix/identity.json` or from
+flags; see [docs/msix-packaging.md](docs/msix-packaging.md) for those, for the
 `runFullTrust` justification, and for how a packaged install treats the library
 file.
 

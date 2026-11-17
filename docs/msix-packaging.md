@@ -9,10 +9,7 @@ MSIX packaging is Windows only. The macOS build is covered by
 ## Build pipeline
 
 ```sh
-dotnet run scripts/package-msix.cs -- \
-  --package-name           <Identity Name from Partner Center> \
-  --publisher              "CN=<publisher GUID from Partner Center>" \
-  --publisher-display-name "<PublisherDisplayName from Partner Center>"
+dotnet run scripts/package-msix.cs
 ```
 
 This builds the Rust backend, publishes the app and the CLI, generates the
@@ -24,10 +21,27 @@ result is `artifacts/Mirelia-<version>.msix`.
 | `--output <dir>` | Write somewhere other than `artifacts/` |
 | `--version <x.y.z>` | Override the version from `Directory.Build.props` |
 | `--skip-native` | Reuse the existing `cargo build --release` output and the built r8brain plugin |
+| `--package-name <name>` | Identity Name; overrides `identity.json` |
+| `--publisher <dn>` | Identity Publisher; overrides `identity.json` |
+| `--publisher-display-name <name>` | PublisherDisplayName; overrides `identity.json` |
 | `--allow-placeholder-identity` | Build with the placeholder identity, for local testing |
 
-The three identity flags are mandatory. Their defaults are obvious placeholders
-and the script refuses to pack with them unless
+The package identity comes from `packaging/msix/identity.json`, which git
+ignores because the values belong to the publishing account. Copy
+`packaging/msix/identity.example.json` to that name and replace the values with
+the Identity Name, Publisher and PublisherDisplayName from Partner Center:
+
+```json
+{
+  "packageName": "Publisher.Mirelia",
+  "publisher": "CN=00000000-0000-0000-0000-000000000000",
+  "publisherDisplayName": "Publisher Display Name"
+}
+```
+
+Each identity flag overrides the matching key, so CI can pass the values from
+secrets without the file. A value set in neither place stays an obvious
+placeholder, and the script refuses to pack with one unless
 `--allow-placeholder-identity` is passed, which also marks the file name, so a
 placeholder identity cannot reach a submission by accident.
 
@@ -169,8 +183,8 @@ Add-AppxPackage <package.msix>
 ## Store submission notes
 
 - **Publisher identity** and **Package Identity Name** are assigned by Partner
-  Center when the app name is reserved. They are script parameters with no real
-  defaults; take the values from the app's identity page.
+  Center when the app name is reserved. Take the values from the app's identity
+  page and put them in `packaging/msix/identity.json` or pass them as flags.
 - **Version.** The Store reserves the fourth part, so it has to be zero. The
   script appends `.0` to the three-part version in `Directory.Build.props`.
 - **Privacy policy URL** is mandatory for desktop products under Store policy

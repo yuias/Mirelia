@@ -62,6 +62,9 @@ native/audio-core-rs/target/
 # CMake out-of-source builds
 build/
 
+# Partner Center identity of the publishing account
+packaging/msix/identity.json
+
 # Claude CodeCoverage
 .claude/
 CLAUDE.local.md
